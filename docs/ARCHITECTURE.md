@@ -9,7 +9,8 @@ implemented yet; update this file when they are.
 ez2digitize/
   app.py        GUI entry point (creates QApplication, main window)
   ui/           PySide6 widgets, viewers, Qt adapters for core objects
-  core/         headless logic: project model, stages, manifests, runner
+  core/         headless logic: project model, capture bundles, stages
+                and manifests, process runner
   backends/     (planned) one module per external tool: builds command
                 lines, parses progress and errors, detects version
 ```
@@ -19,12 +20,15 @@ adapters (a `QObject` that forwards runner events as signals). The same core
 code is used by a headless CLI *(planned)*, which is how regression datasets
 run in CI and on the reference machines.
 
-## Project folder *(planned, Phase 2)*
+## Project folder (`core/project.py`, `core/capture.py`)
 
 ```
 my-scan/
-  project.json        schema_version, name, settings, chosen preset
-  images/             imported photos or extracted video frames
+  project.json        schema_version, name, preset, settings
+  captures/
+    20261005-203200/  one capture bundle per import
+      capture.json    source, device, and name/size/SHA-256 of every file
+      IMG_0001.jpg    original files, copied byte for byte
   masks/              one mask per image (same file stem), optional
   stages/
     01-features/
@@ -36,33 +40,58 @@ my-scan/
   exports/            user-facing outputs (OBJ, GLB, STL, PLY)
 ```
 
-## Stage manifest *(planned, Phase 2)*
+- `project.json` changes bump `SCHEMA_VERSION` and add a step to
+  `MIGRATIONS`. Opening an older project migrates it and keeps the old file
+  as `project.json.v<N>.bak`; a project from a newer app version is refused.
+- A bundle is assembled in `captures/.importing-<id>/` and renamed when
+  complete, so an interrupted import never appears as a bundle. Files with
+  the same name get a numeric suffix; `original_name` keeps the name they
+  arrived with. `CaptureBundle.verify()` re-hashes the files.
+- JSON files are written atomically (temporary file, fsync, rename).
+
+## Stage manifest (`core/stage.py`)
 
 Each stage folder has a `stage.json`:
 
+- stage name, a run id (new on every run) and status (succeeded, failed,
+  cancelled)
 - backend name and exact version
 - full command line (argument list)
 - parameters after preset resolution
-- hashes of inputs (files from earlier stages, images, masks)
-- start/end time, exit code, peak memory where available
-- GPU driver version (Mesa version on Linux)
+- input fingerprints: `sha256:` for a file, `capture:` for a bundle (from
+  the hashes already in its `capture.json`), `tree:` for a folder such as
+  the masks, `run:<run id>` for an earlier stage
+- start/end time, wall and CPU time, exit code, peak memory where available
+- host: OS, release, architecture, app version. *(planned)* GPU driver
+  version (Mesa version on Linux), with the first GPU backend.
 
-A stage is skipped when a successful manifest exists whose inputs and
-parameters hash to the same value. Changing a stage invalidates every stage
-after it.
+The cache key hashes the stage name, backend, parameters and inputs, but
+not the command line, which holds absolute paths (moving a project must
+not invalidate it). A stage is skipped when its manifest says it succeeded
+with the same key; otherwise its folder is emptied and it runs again in
+that folder. Because later stages reference earlier ones by run id,
+re-running a stage invalidates every stage after it without hashing its
+outputs.
 
-## Process runner *(planned, Phase 2)*
+## Process runner (`core/runner.py`)
 
-- Lives in `core`, built on `subprocess.Popen` with an argument list; no
-  shell.
+- Built on `subprocess.Popen` with an argument list; no shell.
 - Each backend process starts in its own process group
-  (`start_new_session=True` on POSIX) so cancel can kill the whole tree
-  (`SIGTERM`, then `SIGKILL` after a timeout). Windows will need a job object.
-- stdout/stderr are read on a background thread, written to the stage's
-  `log.txt`, and passed line by line to the backend module's progress parser.
-- The runner emits plain Python events (started, log line, progress, finished,
-  failed). The UI wraps them in Qt signals; the CLI prints them.
-- Only one heavy stage runs at a time: the 8 GB M1 cannot fit two.
+  (`start_new_session=True`) so cancel kills the whole tree: `SIGTERM`,
+  then `SIGKILL` after a grace period. Anything a finished process leaves
+  behind holding its output open is killed too. POSIX only for now;
+  Windows will need a job object.
+- stdout and stderr are merged (universal newlines, so `\r` progress lines
+  are split), written to the stage's `log.txt`, and passed line by line to
+  the backend module's progress parser.
+- The runner emits plain Python events (`Started`, `Output`, `Progress`)
+  on the calling thread, in order. The UI runs it on a worker thread and
+  wraps the events in Qt signals; the CLI prints them.
+- Peak memory: `ru_maxrss` from `wait4`. On Linux a child inherits its
+  parent's high-water mark, so when the value isn't above the app's own
+  peak the runner uses `VmHWM` samples taken every 0.5 s instead.
+- *(planned)* Only one heavy stage runs at a time: the 8 GB M1 cannot fit
+  two. That is the pipeline scheduler's job, not the runner's.
 
 ## Pipeline *(planned)*
 

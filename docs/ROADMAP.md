@@ -139,8 +139,9 @@ path is investigated separately.
 Photos or video of a small object in, a textured mesh out, inside a GUI,
 installable on Linux as an AppImage.
 
-- Project model: folder with `project.json`, `images/`, `masks/`, per-stage
-  output folders with manifests.
+- Project model: folder with `project.json`, `captures/` (capture bundles),
+  `masks/`, per-stage output folders with manifests. Done in
+  `ez2digitize.core` (`project`, `capture`, `stage`).
 - Import photos or video. Video: ffmpeg frame extraction, keeping the
   sharpest frame per window rather than uniform sampling.
 - Basic checks: resolution, EXIF focal length (missing EXIF is a warning,
@@ -150,7 +151,8 @@ installable on Linux as an AppImage.
 - Camera grouping: one intrinsics set per camera/lens.
 - Pipeline runner: subprocess stages with live logs, progress parsing,
   cancel, and **minimal caching** (skip a stage if its inputs and parameters
-  are unchanged).
+  are unchanged). Runner, manifests and caching done in `ez2digitize.core`
+  (`runner`, `stage`); backend modules with their progress parsers to do.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the

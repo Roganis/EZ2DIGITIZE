@@ -11,7 +11,9 @@ Phases are ordered by dependency. No durations are given on purpose.
 | Topic | Decision | Consequences |
 |---|---|---|
 | Primary platform | AMD GPU on Linux | AppImage is the first installer. ROCm is available for optional PyTorch/ONNX extras, but the core pipeline must not need it (Brush uses Vulkan via wgpu; COLMAP and OpenMVS run on CPU). |
-| Secondary platform | macOS on Apple Silicon (M1 available) | Tested from Phase 1 so portability problems surface early. Brush runs on Metal. |
+| Reference machine (high end) | Radeon RX 7900 GRE (RDNA3, 16 GB VRAM), Arch Linux, current Mesa | Defines the "high" preset. Because Arch is rolling, it only tests the newest libraries: the AppImage must be built on an older base (e.g. Ubuntu 22.04 container) and smoke-tested there in CI. |
+| Secondary platform | macOS on Apple Silicon | Tested from Phase 1 so portability problems surface early. Brush runs on Metal. |
+| Reference machine (low end) | M1, 8 GB unified memory | Defines the "low memory" preset: CPU and GPU share 8 GB, so stages must never run concurrently, images are downscaled for densification, and splat count is capped. If the pipeline works here, it works on most machines. |
 | Windows, NVIDIA, Intel | No test hardware yet | Build in CI, but label them community-tested until someone with the hardware validates a release. |
 | Use case | Small objects first | Masking, crop box, real-world scale, and two-sided ("flip") scans become core features. Rooms and outdoor scenes come later. |
 | Output priority | Mesh is the real goal, splat is secondary | The MVP's success criterion is a mesh. Splat training reuses the same poses and is added once the mesh path works. |
@@ -80,7 +82,9 @@ No GUI. Run the tools by hand on the AMD Linux machine (primary) and the M1
    low-texture object.
 
 **Per run, record:** wall time, peak RAM, peak VRAM, registered
-images / total, mean reprojection error, and screenshots.
+images / total, mean reprojection error, and screenshots. On the M1, also
+record whether macOS started swapping; on 8 GB that is the first limit
+you will hit.
 
 **Questions to answer:**
 
@@ -267,8 +271,4 @@ fails, they can see which stage failed and why.
 
 ## Open questions
 
-1. Which AMD GPU (model, VRAM) and which Linux distribution and Mesa version
-   does the reference machine run? This sets the baseline for presets and for
-   the AppImage's minimum glibc.
-2. How much RAM does the M1 have? Unified memory is shared between CPU and
-   GPU, which limits OpenMVS and Brush at the same time.
+None currently.

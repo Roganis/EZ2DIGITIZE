@@ -25,11 +25,16 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize.backends.common import BackendError, BackendMissing, find_tool
+from ez2digitize.backends.common import (
+    BackendError,
+    BackendMissing,
+    find_tool,
+    result_parameters,
+)
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
@@ -195,7 +200,7 @@ def densify(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters={**asdict(options), "masked": masks is not None},
+        parameters={**result_parameters(options), "masked": masks is not None},
         inputs=inputs,
         parse_line=OpenMVSProgress(),
         use_pty=True,
@@ -226,7 +231,7 @@ def reconstruct_mesh(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters=asdict(options),
+        parameters=result_parameters(options),
         inputs={"dense": stage_input(dense)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
@@ -259,7 +264,7 @@ def refine_mesh(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters=asdict(options),
+        parameters=result_parameters(options),
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
@@ -293,7 +298,7 @@ def texture_mesh(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters=asdict(options),
+        parameters=result_parameters(options),
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,

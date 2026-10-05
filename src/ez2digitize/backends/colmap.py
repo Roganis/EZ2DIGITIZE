@@ -28,12 +28,17 @@ import re
 import shutil
 import struct
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from ez2digitize.backends.colmap_model import read_cameras, read_image_cameras
-from ez2digitize.backends.common import BackendError, BackendMissing, find_tool
+from ez2digitize.backends.common import (
+    BackendError,
+    BackendMissing,
+    find_tool,
+    result_parameters,
+)
 from ez2digitize.core.capture import CaptureBundle
 from ez2digitize.core.files import fingerprint, write_uniform_png
 from ez2digitize.core.project import Project
@@ -129,6 +134,20 @@ class UndistortOptions:
     max_image_size: int = 3200
 
 
+# Peak memory per feature-extraction thread at max_image_size 3200: COLMAP
+# 4.2.1's CPU SIFT, measured on 12 MP photos (7.8 GB with 4 threads). It
+# scales with the image area. COLMAP defaults to one thread per core, which
+# on a 16-core desktop asks for 30 GB or more.
+FEATURE_MEMORY_PER_THREAD = 2.0 * 1024**3
+MEMORY_SHARE = 0.75  # of the available memory, leaving room for everything else
+
+
+def feature_threads(max_image_size: int, available: int, cpus: int) -> int:
+    """Threads for feature extraction that fit in `available` bytes of memory."""
+    per_thread = FEATURE_MEMORY_PER_THREAD * (max_image_size / 3200) ** 2
+    return max(1, min(cpus, int(available * MEMORY_SHARE // per_thread)))
+
+
 # --- stages --------------------------------------------------------------------
 
 
@@ -191,7 +210,7 @@ def extract_features(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters={**asdict(options), "masked": masks is not None},
+        parameters={**result_parameters(options), "masked": masks is not None},
         inputs=inputs,
         parse_line=ColmapProgress(total_images=len(names)),
         prepare=prepare,
@@ -230,7 +249,7 @@ def match_features(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters=asdict(options),
+        parameters=result_parameters(options),
         inputs={"features": stage_input(features)},
         parse_line=ColmapProgress(),
         prepare=prepare,
@@ -263,7 +282,7 @@ def map_sparse(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters=asdict(options),
+        parameters=result_parameters(options),
         inputs={"matching": stage_input(matching)},
         parse_line=ColmapProgress(total_images=total_images),
         prepare=lambda folder: (folder / "sparse").mkdir(),
@@ -298,7 +317,7 @@ def undistort(
             "--max_image_size",
             str(options.max_image_size),
         ],  # fmt: skip
-        parameters={**asdict(options), "model": model.name},
+        parameters={**result_parameters(options), "model": model.name},
         inputs={"mapping": stage_input(mapping)},
         parse_line=ColmapProgress(),
     )
@@ -367,7 +386,7 @@ def undistort_masks(
             "--max_image_size",
             str(options.max_image_size),
         ],  # fmt: skip
-        parameters={**asdict(options), "model": model.name},
+        parameters={**result_parameters(options), "model": model.name},
         inputs={"mapping": stage_input(mapping), "masks": tree_input(masks)},
         parse_line=ColmapProgress(),
         prepare=prepare,

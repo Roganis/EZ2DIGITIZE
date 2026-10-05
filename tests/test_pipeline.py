@@ -260,3 +260,16 @@ def test_same_file_name_in_two_captures_skips_openmvs_masks(
     assert result.sparse.masks is None
     notices = [e.message for e in events if isinstance(e, Notice)]
     assert any("densifying without masks" in n and "same file name" in n for n in notices)
+
+
+def test_feature_threads_are_capped_by_memory(
+    project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pipeline, "cpu_threads", lambda: 16)
+    monkeypatch.setattr(pipeline, "available_memory", lambda: 21 * 1024**3)
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    log = (project.stage_dir("features") / "log.txt").read_text()
+    assert "--FeatureExtraction.num_threads 7" in log
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any(n.startswith("finding features with 7 of 16 CPU threads") for n in notices)

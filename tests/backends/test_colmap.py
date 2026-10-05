@@ -276,3 +276,26 @@ def test_progress_glog_prefixes(prefix: str) -> None:
     assert ColmapProgress()(prefix + "Processed file [2/4]") == Progress(
         "Extracting features 2/4", 0.5
     )
+
+
+@pytest.mark.parametrize(
+    ("max_size", "available_gib", "cpus", "threads"),
+    [
+        (3200, 21, 16, 7),  # the GRE: 21 GiB free, 16 threads -> 7, not 16
+        (3200, 64, 16, 16),  # plenty of memory: all cores
+        (3200, 6, 8, 2),  # an 8 GB M1
+        (3200, 1, 8, 1),  # never below one thread
+        (1600, 6, 8, 8),  # quarter the area, quarter the memory per thread
+    ],
+)
+def test_feature_threads(max_size: int, available_gib: int, cpus: int, threads: int) -> None:
+    assert colmap.feature_threads(max_size, available_gib * 1024**3, cpus) == threads
+
+
+def test_thread_count_is_not_part_of_the_cache_key(project: Project, tmp_path: Path) -> None:
+    bundle = _bundle(project, tmp_path, "a.jpg")
+    one = colmap.extract_features(TOOL, project, [bundle], options=FeatureOptions(threads=1))
+    many = colmap.extract_features(TOOL, project, [bundle], options=FeatureOptions(threads=16))
+    assert one.cache_key() == many.cache_key()
+    assert "threads" not in one.parameters
+    assert _opt(many, "--FeatureExtraction.num_threads") == "16"

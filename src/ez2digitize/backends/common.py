@@ -16,7 +16,9 @@ import os
 import shutil
 import sys
 from collections.abc import Iterable
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 
 class BackendError(Exception):
@@ -61,3 +63,13 @@ def find_tool(
 
 def _is_executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
+
+
+def result_parameters(options: Any) -> dict[str, Any]:
+    """A stage's option dataclass as the parameters that decide its result.
+
+    Thread counts are left out: they don't change the output, and they are
+    picked per machine (see core.resources), so including them would make a
+    stage re-run whenever the free memory changes.
+    """
+    return {k: v for k, v in asdict(options).items() if k != "threads"}

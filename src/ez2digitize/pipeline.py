@@ -21,13 +21,14 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ez2digitize.backends import colmap, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.project import Project
+from ez2digitize.core.resources import GIB, available_memory, cpu_threads
 from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
@@ -268,8 +269,20 @@ def _sparse(
     run = _Run(project, _stages(settings, masked=masks is not None), on_event, cancel, force_from)
     sfm = tools.colmap
 
+    feature_options = settings.features
+    if feature_options.threads is None:
+        cpus, available = cpu_threads(), available_memory()
+        threads = colmap.feature_threads(feature_options.max_image_size, available, cpus)
+        feature_options = replace(feature_options, threads=threads)
+        if threads < cpus:
+            run.emit(
+                Notice(
+                    f"finding features with {threads} of {cpus} CPU threads, to stay within "
+                    f"the {available / GIB:.1f} GB of free memory"
+                )
+            )
     features = run(
-        colmap.extract_features(sfm, project, bundles, masks=masks, options=settings.features)
+        colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
     )
     matching_options = settings.matching or _auto_matching(bundles)
     matching = run(colmap.match_features(sfm, project, features, options=matching_options))

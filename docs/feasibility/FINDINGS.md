@@ -92,6 +92,23 @@ CC BY 4.0).
   The incremental mapper with distortion refinement off
   (`--Mapper.ba_refine_extra_params 0`) also placed all 62 images: refining
   the distortion from a narrow-angle lens is what broke it apart.
+- **The GRE run** (31 GiB RAM, fixed AppImage, Medium detail = level 1,
+  refine on, 63 images including `Preview.jpg`), against the 4-thread
+  container (global mapper, no refine):
+
+  | Step | GRE | Container | |
+  |---|---|---|---|
+  | Features | 55 s, 13.6 GB | 339 s, 7.8 GB | thread cap kept it in RAM |
+  | Matching | 17 s | 71 s | |
+  | Mapping (global) | 10 s | 25 s | 62/62 placed |
+  | Densify | 498 s, 2.7 GB | 2042 s, 2.7 GB | the bottleneck |
+  | Mesh | 39 s, 1.9 GB | 96 s, 1.9 GB | |
+  | Refine | 248 s, 4.8 GB | – | |
+  | Texture | 36 s, 3.5 GB | | |
+
+  About 15 minutes end to end on the GRE with refine, 11 without: CPU-only
+  OpenMVS at level 1 is usable for small objects (decision (a): leaning
+  yes, level 1 default). Densify is where a GPU path would pay off.
 - Other steps (container, 4 threads): matching 73 s / 210 MB, mapping
   (incremental) 346 s / 162 MB, undistortion 5 s / 270 MB.
 - The folder also holds `Preview.jpg`, a collage of the set, which folder

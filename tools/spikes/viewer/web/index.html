@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EZ2DIGITIZE viewer spike</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #202124; }
+    #hud {
+      position: fixed; left: 8px; top: 8px; padding: 4px 8px;
+      font: 12px/1.4 system-ui, sans-serif; color: #e8eaed;
+      background: rgba(0, 0, 0, 0.5); border-radius: 4px; white-space: pre;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/",
+        "@sparkjsdev/spark": "./vendor/spark/spark.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">loading…</div>
+  <script type="module" src="./viewer.js"></script>
+</body>
+</html>

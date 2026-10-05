@@ -50,6 +50,12 @@ pytest-qt       MIT
 ruff            MIT
 uv              MIT or Apache-2.0
 
+Viewer spike (tools/spikes/viewer; fetched by fetch_vendor.py, not committed).
+Would become bundled components if the web viewer is adopted:
+
+three.js        MIT                 https://github.com/mrdoob/three.js (0.186.1)
+Spark           MIT                 https://github.com/sparkjsdev/spark (2.3.1)
+
 Phase 1 feasibility harness (tools/feasibility, "feasibility" dependency
 group). Never part of the app; listed because they run on contributors'
 machines:

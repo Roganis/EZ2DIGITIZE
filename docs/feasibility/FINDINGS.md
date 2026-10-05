@@ -38,6 +38,13 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 
 - Where it failed and whether the failure was detectable from the numbers: ...
 
+### Viewer (`tools/spikes/viewer`)
+
+- Splat from Brush: load time, fps, smooth to rotate? (GRE / M1): ...
+- Textured mesh and dense cloud from OpenMVS: ...
+- 3M-splat stress file: ...
+- Memory of the QtWebEngine processes: ...
+
 ### Masking
 
 - Model used, time per image, images where masks were wrong: ...
@@ -49,7 +56,7 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 | (a) OpenMVS on CPU fast enough for small objects? Default resolution level? | | |
 | (b) Masking model and runtime | | |
 | (c) Python packaging acceptable? | Not covered by these scripts (separate spike) | |
-| (d) Viewer approach | Not covered by these scripts (separate spike) | |
+| (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); works on software rendering, needs fps/memory on the GRE and M1 | |
 
 ## Notes from validating the harness
 

@@ -66,7 +66,7 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests", "tools/feasibility"]
+files = ["src", "tests", "tools/feasibility", "tools/spikes"]
 mypy_path = "src:tools/feasibility"
 explicit_package_bases = true
 

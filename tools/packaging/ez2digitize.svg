@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#1f2a36"/>
+  <!-- a cube built from a point cloud: three faces, dots fading into solid -->
+  <path d="M128 44 L208 88 L128 132 L48 88 Z" fill="#f08a2c"/>
+  <path d="M48 88 L128 132 L128 220 L48 176 Z" fill="#c7621a"/>
+  <path d="M208 88 L208 176 L128 220 L128 132 Z" fill="#8f4512"/>
+  <g fill="#ffd8ad">
+    <circle cx="128" cy="62" r="5"/><circle cx="160" cy="80" r="5"/><circle cx="96" cy="80" r="5"/>
+    <circle cx="128" cy="98" r="5"/><circle cx="184" cy="92" r="4"/><circle cx="72" cy="92" r="4"/>
+  </g>
+  <path d="M128 132 L128 220 M48 88 L128 132 L208 88" stroke="#1f2a36" stroke-width="4" fill="none"/>
+</svg>

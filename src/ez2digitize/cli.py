@@ -8,6 +8,7 @@
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
+    ez2d check                              # which COLMAP and OpenMVS are used
 
 The same code the GUI uses; this is how regression datasets run on the
 reference machines and in CI.
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 from ez2digitize.backends import colmap, openmvs
-from ez2digitize.backends.common import BackendError
+from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core.capture import CaptureError, import_folder, import_masks, list_bundles
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.core.runner import CancelToken, Output, Progress
@@ -47,6 +48,12 @@ from ez2digitize.pipeline import (
     run_mesh,
     run_sparse,
 )
+
+
+def commands() -> tuple[str, ...]:
+    """The CLI's command names (the packaged app's launcher dispatches on them)."""
+    sub = next(a for a in _parser()._actions if isinstance(a, argparse._SubParsersAction))
+    return tuple(sub.choices)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -107,6 +114,11 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--formats", type=_formats, default=("obj", "glb"), metavar="FORMATS")
     export.set_defaults(func=_cmd_export)
 
+    check = sub.add_parser("check", help="find the reconstruction tools and check they run")
+    check.add_argument("--colmap", type=Path, help="COLMAP executable")
+    check.add_argument("--openmvs-dir", type=Path, help="folder with the OpenMVS tools")
+    check.set_defaults(func=_cmd_check)
+
     status = sub.add_parser("status", help="show captures and stage results")
     status.add_argument("project", type=Path)
     status.set_defaults(func=_cmd_status)
@@ -133,6 +145,31 @@ def _cmd_import(args: argparse.Namespace) -> int:
             copied = import_masks(project, bundle, args.masks)
             print(f"  {copied} of {len(bundle.images)} masks imported")
     return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    """Exit 0 only if both tools run and are the pinned versions."""
+    ok = True
+    for name, locate, where, pinned in (
+        ("COLMAP", lambda: colmap.locate(args.colmap), "path", colmap.PINNED_VERSION),
+        ("OpenMVS", lambda: openmvs.locate(args.openmvs_dir), "bin_dir", openmvs.PINNED_VERSION),
+    ):
+        try:
+            tool = locate()
+        except BackendError as exc:
+            print(f"{name}: {exc}")
+            ok = False
+            continue
+        bundled = " (bundled)" if _is_bundled(getattr(tool, where)) else ""
+        state = "ok" if tool.supported else f"not the tested version {pinned}"
+        print(f"{name} {tool.version}: {state}, {getattr(tool, where)}{bundled}")
+        ok = ok and tool.supported
+    return 0 if ok else 1
+
+
+def _is_bundled(path: Path) -> bool:
+    bundled = bundled_bin_dir()
+    return bundled is not None and path.is_relative_to(bundled)
 
 
 def _cmd_status(args: argparse.Namespace) -> int:

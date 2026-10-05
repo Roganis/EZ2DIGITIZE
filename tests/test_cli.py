@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,3 +51,37 @@ def test_format_list_parsing() -> None:
     assert _formats("none") == ()
     with pytest.raises(argparse.ArgumentTypeError, match="unknown format 'stl'"):
         _formats("obj,stl")
+
+
+def _tool(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\necho '{text}'\n")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
+def test_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    colmap = _tool(tmp_path / "colmap", "COLMAP 4.2.1 (Commit abc)")
+    for name in ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh", "RefineMesh",
+                 "TextureMesh"):  # fmt: skip
+        _tool(tmp_path / "mvs" / name, "12:00:00 [App     ] OpenMVS x64 v2.4.0")
+    monkeypatch.setenv("EZ2D_COLMAP", str(colmap))
+    monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "mvs"))
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert f"COLMAP 4.2.1: ok, {colmap}" in out and "OpenMVS 2.4.0: ok" in out
+
+    _tool(colmap, "COLMAP 3.9.1 -- SfM")
+    monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "nothing"))
+    assert main(["check"]) == 1
+    out = capsys.readouterr().out
+    assert "not the tested version 4.2.1" in out and "OpenMVS: OpenMVS not found" in out
+
+
+def test_commands_list_matches_parser() -> None:
+    from ez2digitize.cli import commands
+
+    assert set(commands()) == {"new", "import", "run", "export", "check", "status"}

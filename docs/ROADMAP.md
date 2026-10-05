@@ -164,7 +164,8 @@ installable on Linux as an AppImage.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification.
 - Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
-- AppImage with pinned backend binaries.
+- AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
+  workflow): GUI and CLI in one file, backends bundled.
 
 **Done when:** a non-expert on a clean Linux machine with an AMD GPU
 installs the AppImage, drops in photos or a video of a small object, presses

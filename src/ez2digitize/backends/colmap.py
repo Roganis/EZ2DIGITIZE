@@ -424,7 +424,9 @@ def best_model(sparse_dir: Path) -> Path | None:
 
 # --- progress ------------------------------------------------------------------
 
-_GLOG_PREFIX = re.compile(r"^[IWEF]\d{8} [\d:.]+\s+\d+ [\w.]+:\d+\] ")
+# glog: severity, date (yyyymmdd or mmdd), time, thread id (decimal, or hex on macOS),
+# file:line.
+_GLOG_PREFIX = re.compile(r"^[IWEF]\d{4,8} [\d:.]+\s+\S+ [\w.+-]+:\d+\] ")
 _COUNTED = re.compile(
     r"^(Processed file|Processing file|Processing image|Processing batch|Undistorting image)"
     r" \[(\d+)/(\d+)\]"

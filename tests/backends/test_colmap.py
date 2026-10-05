@@ -262,3 +262,17 @@ def test_progress_mapper(line: str) -> None:
 def test_progress_global_mapper_headings() -> None:
     lines = ["=" * 78, "Running rotation averaging", "=" * 78, "something else"]
     assert _feed(ColmapProgress(), lines) == [Progress("Running rotation averaging")]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "I20261005 14:12:21.089553  9866 feature_extraction.cc:271] ",  # Linux
+        "I20261005 17:58:01.123456 0x16b8f3000 feature_extraction.cc:271] ",  # macOS
+        "I1005 17:58:01.123456 12345 feature_extraction.cc:271] ",  # older glog
+    ],
+)
+def test_progress_glog_prefixes(prefix: str) -> None:
+    assert ColmapProgress()(prefix + "Processed file [2/4]") == Progress(
+        "Extracting features 2/4", 0.5
+    )

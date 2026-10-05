@@ -89,7 +89,9 @@ jobs:
           EZ2D_COLMAP: build/backends/prefix/bin/colmap
           EZ2D_OPENMVS_DIR: build/backends/prefix/bin
           EZ2D_REQUIRE_BACKENDS: "1"
-        run: uv run --all-groups pytest tests/backends -rs
+        # The backend tests don't use Qt; without pytest-qt they also run on
+        # runners without the libraries Qt needs (libEGL on Ubuntu).
+        run: uv run --all-groups pytest tests/backends -rs -p no:pytestqt
 
       - name: Summary
         if: always()

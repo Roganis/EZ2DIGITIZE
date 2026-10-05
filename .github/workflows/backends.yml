@@ -43,11 +43,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build gfortran nasm autoconf autoconf-archive automake \
-            libtool bison flex pkg-config zip unzip curl linux-libc-dev
+            libtool bison flex pkg-config zip unzip curl linux-libc-dev \
+            libgl-dev libglew-dev  # only to satisfy COLMAP's configure checks
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config libomp
+        # glew: only to satisfy COLMAP's configure checks
+        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config libomp glew
 
       # vcpkg's binary cache. Saved even when the build fails, so a failure late
       # in a multi-hour build doesn't throw away the dependencies built so far.

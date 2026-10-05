@@ -35,10 +35,12 @@ Prerequisites:
 
 - **Linux (Ubuntu/Debian):** `build-essential cmake ninja-build gfortran nasm
   autoconf autoconf-archive automake libtool bison flex pkg-config zip unzip
-  curl`. On Arch: `base-devel cmake ninja gcc-fortran nasm autoconf-archive
-  bison flex zip unzip`.
+  curl libgl-dev libglew-dev`. On Arch: `base-devel cmake ninja gcc-fortran
+  nasm autoconf-archive bison flex zip unzip libglvnd glew`. COLMAP 4.2.1
+  insists on finding OpenGL and GLEW even for a headless build, but doesn't
+  link them then; the script fails if the binaries end up depending on them.
 - **macOS:** Xcode command line tools, then `brew install cmake ninja nasm
-  autoconf autoconf-archive automake libtool pkg-config libomp`. Apple's
+  autoconf autoconf-archive automake libtool pkg-config libomp glew`. Apple's
   compiler has no OpenMP; OpenMVS uses it for many parallel loops and
   silently builds without it, which would make the M1 timings not
   comparable. The script builds against Homebrew's `libomp`, then

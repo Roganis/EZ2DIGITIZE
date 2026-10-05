@@ -70,7 +70,14 @@ fetch() {  # fetch <dir> <git url> <tag>
 OPENMP_ARGS=()
 if [ "$OS" = macos ]; then
   LIBOMP=$(brew --prefix libomp)
-  OPENMP_ARGS=(-DOpenMP_ROOT="$LIBOMP")
+  # CMake can't detect OpenMP for AppleClang on its own; spell it out.
+  OMP_FLAGS="-Xpreprocessor -fopenmp -I$LIBOMP/include"
+  OPENMP_ARGS=(
+    -DOpenMP_ROOT="$LIBOMP"
+    -DOpenMP_C_FLAGS="$OMP_FLAGS" -DOpenMP_CXX_FLAGS="$OMP_FLAGS"
+    -DOpenMP_C_LIB_NAMES=omp -DOpenMP_CXX_LIB_NAMES=omp
+    -DOpenMP_omp_LIBRARY="$LIBOMP/lib/libomp.dylib"
+  )
 fi
 
 PREFIX=$WORK/prefix
@@ -78,6 +85,9 @@ rm -rf "$PREFIX"
 mkdir -p "$PREFIX/bin" "$PREFIX/licenses"
 TOOLCHAIN=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 
+# COLMAP 4.2.1 requires OpenGL and GLEW at configure time even for a headless
+# build; they are only linked with the GUI or GPU features, which are off. The
+# dev packages are installed just to satisfy the lookup (checked below).
 log "COLMAP $COLMAP_VERSION"
 fetch colmap https://github.com/colmap/colmap.git "$COLMAP_VERSION"
 cmake -S colmap -B colmap-build -G Ninja \
@@ -149,6 +159,10 @@ log "smoke test"
 if [ "$OS" = linux ]; then
   GLIBC=$(objdump -T "$PREFIX"/bin/* 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)
   DYNAMIC=$(for f in "$PREFIX"/bin/*; do ldd "$f" | awk '{print $1}'; done | sort -u | tr '\n' ' ')
+  if echo "$DYNAMIC" | grep -Eq 'libGL|libGLEW|libX11'; then
+    echo "error: headless binaries link graphics libraries: $DYNAMIC" >&2
+    exit 1
+  fi
 else
   GLIBC=none
   DYNAMIC=$(for f in "$PREFIX"/bin/*; do otool -L "$f" | tail -n +2 | awk '{print $1}'; done | sort -u | tr '\n' ' ')

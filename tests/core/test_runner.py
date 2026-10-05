@@ -286,3 +286,26 @@ def test_pty_delivers_buffered_output_while_running(tmp_path: Path) -> None:
         assert [line for line, _ in seen] == [expected, "end"]
         first_line_at = seen[0][1]
         assert (first_line_at < 1.0) == use_pty
+
+
+def test_log_file_is_current_while_running(tmp_path: Path) -> None:
+    log = tmp_path / "log.txt"
+    seen_in_file: list[bool] = []
+
+    def on_event(event: Event) -> None:
+        if isinstance(event, Output) and event.line == "first":
+            # The process is still running (it sleeps next); the line must be on disk.
+            time.sleep(0.3)
+            seen_in_file.append("first" in log.read_text())
+
+    run_process(
+        py("""
+            import time
+            print("first", flush=True)
+            time.sleep(1.5)
+            print("second")
+        """),
+        log_path=log,
+        on_event=on_event,
+    )
+    assert seen_in_file == [True]

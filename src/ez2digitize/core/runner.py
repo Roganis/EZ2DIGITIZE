@@ -170,6 +170,11 @@ def run_process(
 
         def handle(line: str) -> None:
             log.write(line + "\n")
+            if lines.empty():
+                # Keep log.txt current: it is what the user reads when a step
+                # hangs or the session dies. Flushing only when caught up keeps
+                # bursts of output cheap.
+                log.flush()
             tail.append(line)
             emit(Output(line))
             if parse_line is not None and (progress := parse_line(line)) is not None:

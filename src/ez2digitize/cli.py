@@ -4,6 +4,8 @@
 
     ez2d new ~/scans/skull
     ez2d import ~/scans/skull ~/Pictures/skull-photos
+    ez2d photos ~/scans/skull               # photo checks
+    ez2d photos ~/scans/skull --exclude Preview.jpg
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d status ~/scans/skull
@@ -25,7 +27,14 @@ from typing import TextIO, cast
 
 from ez2digitize.backends import colmap, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
-from ez2digitize.core.capture import CaptureError, import_folder, import_masks, list_bundles
+from ez2digitize.core import photos
+from ez2digitize.core.capture import (
+    CaptureBundle,
+    CaptureError,
+    import_folder,
+    import_masks,
+    list_bundles,
+)
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.core.runner import CancelToken, Output, Progress
 from ez2digitize.core.stage import load_manifest
@@ -84,6 +93,20 @@ def _parser() -> argparse.ArgumentParser:
         help="folder of masks in COLMAP naming (<image name>.png), for a single folder",
     )
     imp.set_defaults(func=_cmd_import)
+
+    checks = sub.add_parser(
+        "photos", help="check the photos; leave some out of the reconstruction or bring them back"
+    )
+    checks.add_argument("project", type=Path)
+    checks.add_argument(
+        "--exclude",
+        nargs="+",
+        default=[],
+        metavar="PHOTO",
+        help="photos to leave out: file name, or <capture id>/<file name> if ambiguous",
+    )
+    checks.add_argument("--include", nargs="+", default=[], metavar="PHOTO", help="bring back")
+    checks.set_defaults(func=_cmd_photos)
 
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
@@ -144,7 +167,64 @@ def _cmd_import(args: argparse.Namespace) -> int:
         if args.masks is not None:
             copied = import_masks(project, bundle, args.masks)
             print(f"  {copied} of {len(bundle.images)} masks imported")
+    _check_photos(project)
     return 0
+
+
+def _cmd_photos(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    for refs, excluded in ((args.exclude, True), (args.include, False)):
+        for bundle, names in _resolve_photos(list_bundles(project), refs):
+            bundle.set_excluded(names, excluded)
+            verb = "left out" if excluded else "brought back"
+            print(f"{verb}: {', '.join(f'{bundle.id}/{n}' for n in names)}")
+    _check_photos(project)
+    return 0
+
+
+def _resolve_photos(
+    bundles: Sequence[CaptureBundle], refs: Sequence[str]
+) -> list[tuple[CaptureBundle, list[str]]]:
+    """Group `file` or `<capture id>/<file>` references by bundle."""
+    found: dict[str, tuple[CaptureBundle, list[str]]] = {}
+    for ref in refs:
+        capture, _, name = ref.rpartition("/")
+        matches = [
+            b
+            for b in bundles
+            if (not capture or b.id == capture) and any(f.name == name for f in b.files)
+        ]
+        if not matches:
+            raise CaptureError(f"no photo {ref!r} in this project")
+        if len(matches) > 1:
+            ids = ", ".join(b.id for b in matches)
+            raise CaptureError(f"{name!r} is in several captures ({ids}); use <capture id>/{name}")
+        found.setdefault(matches[0].id, (matches[0], []))[1].append(name)
+    return list(found.values())
+
+
+def _check_photos(project: Project) -> None:
+    """Inspect photos not inspected yet, then print the findings."""
+    bundles = list_bundles(project)
+    for bundle in bundles:
+        if photos.needs_inspection(bundle):
+            print(f"checking the photos of capture {bundle.id}...", flush=True)
+            photos.inspect_bundle(bundle)
+    findings = photos.check_project(bundles)
+    excluded = [f"{b.id}/{f.name}" for b in bundles for f in b.excluded]
+    if excluded:
+        print(f"left out ({len(excluded)}): {', '.join(excluded)}")
+    if not findings:
+        print("photo checks: nothing to report")
+        return
+    print(f"photo checks: {len(findings)} to look at")
+    for finding in findings:
+        where = f" [{finding.capture}]" if finding.capture else ""
+        print(f"  {finding.level}{where}: {finding.message}")
+        if len(finding.files) > 1:
+            shown = ", ".join(finding.files[:10])
+            more = f" and {len(finding.files) - 10} more" if len(finding.files) > 10 else ""
+            print(f"    {shown}{more}")
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -179,6 +259,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"captures: {len(bundles)}")
     for bundle in bundles:
         kinds = f"{len(bundle.images)} images, {len(bundle.videos)} videos"
+        if bundle.excluded:
+            kinds += f" ({len(bundle.excluded)} left out)"
         print(f"  {bundle.id}  {bundle.source:<8} {kinds}")
     print("stages:")
     for stage in STAGES:

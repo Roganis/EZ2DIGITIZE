@@ -26,6 +26,17 @@ PySide6 / Shiboken6 (Qt for Python)
             modules that are GPL-3.0 only. Both are compatible with this
             project's license.
 
+Pillow
+  License:  MIT-CMU (HPND)
+  Source:   https://github.com/python-pillow/Pillow
+  Notes:    Photo checks (size, EXIF, sharpness; ez2digitize.core.photos).
+            Its wheels bundle (Linux, 12.x): libjpeg-turbo (IJG/BSD-3-Clause),
+            libpng (libpng), libtiff (libtiff), libwebp and libsharpyuv
+            (BSD-3-Clause), libavif (BSD-2-Clause), OpenJPEG (BSD-2-Clause),
+            FreeType (FTL), HarfBuzz (MIT), LittleCMS (MIT), Brotli (MIT),
+            zstd (BSD-3-Clause), liblzma (0BSD), libxcb and libXau (MIT).
+            Their license texts are in the wheel's dist-info/licenses.
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
@@ -71,7 +82,7 @@ group). Never part of the app; listed because they run on contributors'
 machines:
 
 numpy           BSD-3-Clause
-Pillow          MIT-CMU (HPND)
+Pillow          (bundled with the app, see section 1)
 rembg           MIT
 scipy           BSD-3-Clause (k-d trees for the reconstruction evaluation)
 onnxruntime     MIT

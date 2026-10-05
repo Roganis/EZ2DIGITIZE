@@ -179,6 +179,9 @@ class MainWindow(QMainWindow):
 
     def _stop_running(self, question: str) -> bool:
         """Ask before abandoning a running reconstruction; cancel it if confirmed."""
+        if self.page is not None:
+            # Seconds at most; the inspection thread must not outlive its page.
+            self.page.photo_checks.wait()
         if self.page is None or not self.page.runner.running:
             return True
         answer = QMessageBox.question(

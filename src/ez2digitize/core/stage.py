@@ -158,7 +158,8 @@ def file_input(path: Path) -> str:
 
 
 def capture_input(bundle: CaptureBundle) -> str:
-    return "capture:" + fingerprint([(f.name, f.sha256) for f in bundle.files])
+    """Fingerprint of the files a bundle contributes (excluded ones are left out)."""
+    return "capture:" + fingerprint([(f.name, f.sha256) for f in bundle.used])
 
 
 def tree_input(folder: Path) -> str:

@@ -65,6 +65,36 @@ def test_load_round_trip(project: Project, tmp_path: Path) -> None:
     assert [p.name for p in loaded.videos] == ["c.mp4"]
 
 
+def test_excluded_files_are_kept_but_not_used(project: Project, tmp_path: Path) -> None:
+    files = [_write(tmp_path / "in" / n, n.encode()) for n in ("a.jpg", "b.jpg", "c.mp4")]
+    bundle = import_files(project, files, source="folder", now=NOW)
+    bundle.set_excluded(["b.jpg", "c.mp4"])
+    loaded = CaptureBundle.load(bundle.root)
+    assert [p.name for p in loaded.images] == ["a.jpg"]
+    assert loaded.videos == []
+    assert [f.name for f in loaded.excluded] == ["b.jpg", "c.mp4"]
+    assert (loaded.root / "b.jpg").read_bytes() == b"b.jpg"  # still there, untouched
+    assert loaded.verify() == []
+    loaded.set_excluded(["b.jpg"], excluded=False)
+    assert [p.name for p in CaptureBundle.load(bundle.root).images] == ["a.jpg", "b.jpg"]
+    with pytest.raises(CaptureError, match="no file 'z.jpg'"):
+        loaded.set_excluded(["z.jpg"])
+
+
+def test_capture_json_without_excluded_field_uses_every_file(
+    project: Project, tmp_path: Path
+) -> None:
+    bundle = import_files(project, [_write(tmp_path / "a.jpg", b"a")], source="folder", now=NOW)
+    data = json.loads((bundle.root / "capture.json").read_text())
+    del data["files"][0]["excluded"]
+    (bundle.root / "capture.json").write_text(json.dumps(data))
+    assert [p.name for p in CaptureBundle.load(bundle.root).images] == ["a.jpg"]
+    data["files"][0]["excluded"] = "yes"
+    (bundle.root / "capture.json").write_text(json.dumps(data))
+    with pytest.raises(CaptureError, match="excluded"):
+        CaptureBundle.load(bundle.root)
+
+
 def test_name_collisions_get_suffix(project: Project, tmp_path: Path) -> None:
     a = _write(tmp_path / "day1" / "IMG_0001.jpg", b"one")
     b = _write(tmp_path / "day2" / "img_0001.JPG", b"two")

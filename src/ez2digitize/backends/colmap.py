@@ -156,11 +156,11 @@ def feature_threads(max_image_size: int, available: int, cpus: int) -> int:
 
 
 def image_names(bundles: Sequence[CaptureBundle]) -> list[str]:
-    """COLMAP image names (`<capture id>/<file>`) of every image in `bundles`."""
+    """COLMAP image names (`<capture id>/<file>`) of the images `bundles` use."""
     names = []
     unreadable = []
     for bundle in bundles:
-        for f in bundle.files:
+        for f in bundle.used:
             if f.kind != "image":
                 continue
             if Path(f.name).suffix.lower() not in READABLE_SUFFIXES:

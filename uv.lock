@@ -241,6 +241,7 @@ wheels = [
 name = "ez2digitize"
 source = { editable = "." }
 dependencies = [
+    { name = "pillow" },
     { name = "pyside6" },
 ]
 
@@ -253,7 +254,6 @@ dev = [
 ]
 feasibility = [
     { name = "numpy" },
-    { name = "pillow" },
     { name = "rembg", extra = ["cpu"] },
     { name = "scipy" },
 ]
@@ -262,7 +262,10 @@ packaging = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pyside6", specifier = ">=6.8" }]
+requires-dist = [
+    { name = "pillow", specifier = ">=11.0" },
+    { name = "pyside6", specifier = ">=6.8" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -273,7 +276,6 @@ dev = [
 ]
 feasibility = [
     { name = "numpy", specifier = ">=2.0" },
-    { name = "pillow", specifier = ">=11.0" },
     { name = "rembg", extras = ["cpu"], specifier = ">=2.0.60" },
     { name = "scipy", specifier = ">=1.13" },
 ]

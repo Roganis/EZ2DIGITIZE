@@ -51,8 +51,8 @@ when the tool is missing.
    import PySide6 (enforced by ruff TID251). Everything else must run headless
    so the pipeline works from a CLI and in CI.
 3. **Every stage writes a manifest** (`stage.json`): backend name, version and
-   build (executable hash), exact command line, parameters, input hashes, timing, exit code. Caching and
-   resume are decided from manifests only.
+   build (executable hash), exact command line, parameters, input hashes,
+   timing, exit code. Caching and resume are decided from manifests only.
 4. **Projects are versioned folders.** `project.json` has a `schema_version`;
    any format change bumps it and adds a migration.
 5. **Masks are first-class project data** and are passed to every stage that

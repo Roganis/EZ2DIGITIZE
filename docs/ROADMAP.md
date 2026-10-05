@@ -146,6 +146,9 @@ installable on Linux as an AppImage.
   sharpest frame per window rather than uniform sampling.
 - Basic checks: resolution, EXIF focal length (missing EXIF is a warning,
   not an error), blur score relative to the rest of the set, mixed cameras.
+  Done (`ez2digitize.core.photos`, the GUI's photo checks tab, `ez2d
+  photos`), plus odd-sized files (a collage in the skull set), duplicates
+  and too few photos; flagged photos can be left out and brought back.
 - Automatic masking with the model chosen in Phase 1, with a quick review
   grid where the user can drop bad masks.
 - Camera grouping: one intrinsics set per camera/lens.

@@ -3,6 +3,7 @@
 """The project page driving the real pipeline with fake backends."""
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -29,10 +30,11 @@ def photos(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def page(qtbot: QtBot, tmp_path: Path, fake_tools: Tools) -> ProjectPage:
+def page(qtbot: QtBot, tmp_path: Path, fake_tools: Tools) -> Iterator[ProjectPage]:
     page = ProjectPage(Project.create(tmp_path / "project"), lambda: fake_tools)
     qtbot.addWidget(page)
-    return page
+    yield page
+    assert page.photo_checks.wait()
 
 
 def _states(page: ProjectPage) -> dict[str, str]:

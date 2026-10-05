@@ -30,7 +30,9 @@ my-scan/
   project.json        schema_version, name, preset, settings
   captures/
     20261005-203200/  one capture bundle per import
-      capture.json    source, device, and name/size/SHA-256 of every file
+      capture.json    source, device, and name/size/SHA-256 of every file,
+                      what the photo checks learned about it, whether it is
+                      left out
       IMG_0001.jpg    original files, copied byte for byte
   masks/              one mask per image (same file stem), optional
   stages/
@@ -50,7 +52,35 @@ my-scan/
   complete, so an interrupted import never appears as a bundle. Files with
   the same name get a numeric suffix; `original_name` keeps the name they
   arrived with. `CaptureBundle.verify()` re-hashes the files.
+- A file can be left out of the reconstruction (`excluded` in capture.json,
+  `CaptureBundle.set_excluded`) without touching it, and brought back.
+  `bundle.images` and `bundle.videos` are the files in use, and a bundle's
+  cache fingerprint covers only those, so leaving a photo out re-runs the
+  pipeline from feature extraction and bringing it back reuses the old run.
 - JSON files are written atomically (temporary file, fsync, rename).
+
+## Photo checks (`core/photos.py`)
+
+Each photo is inspected once, on import or when a project from an older
+version is shown: pixel size, EXIF make, model, lens and focal length, and a
+sharpness score (variance of the Laplacian at 1024 px, decoded at a reduced
+JPEG scale; about 25 ms a photo on 4 threads). The result is stored in the
+file's capture.json entry (`metadata["photo"]`, with a version so a changed
+inspection runs again). The checks only compare these numbers:
+
+| Finding | When |
+|---|---|
+| can't be read (error) | Pillow can't decode it |
+| different size | not the size of most photos in its capture (screenshots, collages, another camera) |
+| low resolution | under 1000 px on the short side |
+| no focal length | none in EXIF, for the whole capture or only some photos |
+| several cameras | more than one body, lens or zoom setting (focal lengths within 5 % count as one) in a capture, which COLMAP calibrates as one camera |
+| blurry | sharpness under 0.35 of the capture's median (5 photos or more) |
+| imported twice | identical files |
+| few photos | under 20 in the project |
+
+Findings are advice; the user leaves photos out from the GUI's photo checks
+tab or with `ez2d photos --exclude`.
 
 ## Stage manifest (`core/stage.py`)
 
@@ -155,6 +185,9 @@ outputs.
   mesh format, refine, masks), Run/Cancel, a list of steps with their
   state, overall progress, the tools' output, and on failure the end of the
   failed step's log with a button to open the full log.
+- `PhotoChecks` (`ui/photo_checks.py`), in a tab beside the log: inspects
+  new photos on a thread, then lists findings with their photos; unchecking
+  a photo leaves it out, a "Left out" group brings photos back.
 - `MainWindow` switches between a welcome page and the project page, and
   asks before closing or quitting during a run (which cancels it).
   `BackendsDialog` stores the COLMAP and OpenMVS locations in `QSettings`;

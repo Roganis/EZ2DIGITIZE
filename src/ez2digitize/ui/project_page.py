@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -35,6 +36,7 @@ from ez2digitize.core.capture import CaptureError, import_folder, list_bundles
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.pipeline import STAGES, MeshResult, MeshSettings, Tools
+from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 
 STAGE_LABELS = {
@@ -182,9 +184,15 @@ class ProjectPage(QWidget):
         self.log.setFont(QFont("monospace"))
         self.log.setPlaceholderText("Output of the reconstruction tools appears here.")
 
+        self.photo_checks = PhotoChecks(project)
+        self.photo_checks.exclusions_changed.connect(self._show_counts)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.photo_checks, "Photo checks")
+        self.tabs.addTab(self.log, "Log")
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(self.log)
+        splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
         layout = QVBoxLayout(self)
@@ -207,6 +215,12 @@ class ProjectPage(QWidget):
 
     def refresh(self) -> None:
         """Re-read the project folder: captures, masks, earlier stage results."""
+        self._show_counts()
+        self.photo_checks.refresh()
+        if not self.runner.running:
+            self._show_previous_stages()
+
+    def _show_counts(self) -> None:
         bundles = list_bundles(self.project)
         images = sum(len(b.images) for b in bundles)
         self.title.setText(self.project.name)
@@ -221,8 +235,6 @@ class ProjectPage(QWidget):
             "" if has_masks else "This project has no masks; import them with the photos."
         )
         self._update_buttons()
-        if not self.runner.running:
-            self._show_previous_stages()
 
     def _show_previous_stages(self) -> None:
         self.stages.clear()
@@ -287,6 +299,7 @@ class ProjectPage(QWidget):
             message += f" Skipped {len(skipped)} that are not photos or videos."
         self.status.setText(message)
         self.refresh()
+        self.tabs.setCurrentWidget(self.photo_checks)
         self.project_changed.emit()
 
     def start_run(self) -> None:
@@ -303,6 +316,7 @@ class ProjectPage(QWidget):
         self.last_failure = None
         self.result_label.clear()
         self.log.clear()
+        self.tabs.setCurrentWidget(self.log)
         self.stages.clear()
         self._stage_items.clear()
         self.overall.setValue(0)
@@ -344,6 +358,7 @@ class ProjectPage(QWidget):
     # --- runner signals -----------------------------------------------------
 
     def _on_running_changed(self, running: bool) -> None:
+        self.photo_checks.set_locked(running)
         self._update_buttons()
 
     def _on_stage_started(self, stage: str, index: int, count: int) -> None:

@@ -88,6 +88,16 @@ def test_locate_errors(tmp_path: Path, fake_tool: FakeTool) -> None:
 # --- command builders -------------------------------------------------------------
 
 
+def test_excluded_images_are_left_out(project: Project, tmp_path: Path) -> None:
+    bundle = _bundle(project, tmp_path, "a.jpg", "b.jpg")
+    before = colmap.extract_features(TOOL, project, [bundle]).cache_key()
+    bundle.set_excluded(["b.jpg"])
+    assert image_names([bundle]) == [f"{bundle.id}/a.jpg"]
+    assert colmap.extract_features(TOOL, project, [bundle]).cache_key() != before
+    bundle.set_excluded(["b.jpg"], excluded=False)
+    assert colmap.extract_features(TOOL, project, [bundle]).cache_key() == before
+
+
 def test_image_names(project: Project, tmp_path: Path) -> None:
     a = _bundle(project, tmp_path, "b.JPG", "a.png", "clip.mp4")
     assert image_names([a]) == [f"{a.id}/b.JPG", f"{a.id}/a.png"]

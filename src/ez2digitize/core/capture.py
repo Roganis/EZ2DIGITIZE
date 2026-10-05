@@ -14,9 +14,16 @@ byte for byte, plus a `capture.json`:
       "source_info": {...},          # free-form, e.g. the imported folder
       "files": [
         {"name": "IMG_0001.jpg", "original_name": "IMG_0001.jpg",
-         "kind": "image", "size": 4123456, "sha256": "...", "metadata": {}}
+         "kind": "image", "size": 4123456, "sha256": "...", "metadata": {},
+         "excluded": false}
       ]
     }
+
+`metadata` holds what was learned about a file: the photo checks store
+their inspection under `metadata["photo"]` (see core.photos). `excluded`
+marks a file the user left out of the reconstruction; the file itself stays
+in the bundle, untouched, so it can be brought back. Readers older than
+this field ignore it (and use every file).
 
 Folder import, video, phone upload and the Android app all produce this
 format; the pipeline only reads bundles. A bundle is assembled in a hidden
@@ -28,7 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +82,7 @@ class CaptureFile:
     size: int
     sha256: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    excluded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +92,7 @@ class CaptureFile:
             "size": self.size,
             "sha256": self.sha256,
             "metadata": self.metadata,
+            "excluded": self.excluded,
         }
 
     @classmethod
@@ -100,6 +109,9 @@ class CaptureFile:
             raise CaptureError(f"{name}: 'size' and 'sha256' are required")
         original = data.get("original_name", name)
         metadata = data.get("metadata", {})
+        excluded = data.get("excluded", False)
+        if not isinstance(excluded, bool):
+            raise CaptureError(f"{name}: 'excluded' must be true or false")
         return cls(
             name=name,
             original_name=original if isinstance(original, str) else name,
@@ -107,6 +119,7 @@ class CaptureFile:
             size=size,
             sha256=sha,
             metadata=metadata if isinstance(metadata, dict) else {},
+            excluded=excluded,
         )
 
 
@@ -163,12 +176,34 @@ class CaptureBundle:
         write_json_atomic(self.root / CAPTURE_FILE, self.to_dict())
 
     @property
+    def used(self) -> list[CaptureFile]:
+        """The files the reconstruction uses: all but the excluded ones."""
+        return [f for f in self.files if not f.excluded]
+
+    @property
     def images(self) -> list[Path]:
-        return [self.root / f.name for f in self.files if f.kind == "image"]
+        """Images the reconstruction uses."""
+        return [self.root / f.name for f in self.used if f.kind == "image"]
 
     @property
     def videos(self) -> list[Path]:
-        return [self.root / f.name for f in self.files if f.kind == "video"]
+        """Videos the reconstruction uses."""
+        return [self.root / f.name for f in self.used if f.kind == "video"]
+
+    @property
+    def excluded(self) -> list[CaptureFile]:
+        return [f for f in self.files if f.excluded]
+
+    def set_excluded(self, names: Iterable[str], excluded: bool = True) -> None:
+        """Leave files out of the reconstruction (or bring them back) and save."""
+        wanted = set(names)
+        known = {f.name for f in self.files}
+        if unknown := sorted(wanted - known):
+            raise CaptureError(f"capture {self.id} has no file {unknown[0]!r}")
+        for entry in self.files:
+            if entry.name in wanted:
+                entry.excluded = excluded
+        self.save()
 
     def verify(self) -> list[str]:
         """Re-hash every file; return a description of each problem found."""

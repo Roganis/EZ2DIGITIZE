@@ -27,6 +27,35 @@ def test_new_import_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     assert "features    -" in out
 
 
+def test_photo_checks_and_exclusion(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from PIL import Image
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for i in range(6):
+        Image.new("RGB", (1200, 1000), (i * 40, 90, 90)).save(photos / f"{i}.jpg")
+    Image.new("RGB", (300, 200)).save(photos / "Preview.jpg")
+    (photos / "broken.jpg").write_bytes(b"not an image")
+    scan = str(tmp_path / "scan")
+    assert main(["new", scan]) == 0
+    assert main(["import", scan, str(photos)]) == 0
+    out = capsys.readouterr().out
+    assert "error [" in out and "broken.jpg can't be read" in out
+    assert "Preview.jpg is a different size from the others (1200×1000)" in out
+
+    assert main(["photos", scan, "--exclude", "Preview.jpg", "broken.jpg"]) == 0
+    out = capsys.readouterr().out
+    assert "left out: " in out and "/Preview.jpg" in out
+    assert "broken" not in out.split("photo checks:")[1]
+    assert main(["status", scan]) == 0
+    assert "6 images, 0 videos (2 left out)" in capsys.readouterr().out
+
+    assert main(["photos", scan, "--include", "Preview.jpg"]) == 0
+    assert "brought back" in capsys.readouterr().out
+    assert main(["photos", scan, "--exclude", "nope.jpg"]) == 1
+    assert "no photo 'nope.jpg'" in capsys.readouterr().err
+
+
 def test_errors_are_reported_not_raised(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["status", str(tmp_path / "missing")]) == 1
     assert "error:" in capsys.readouterr().err
@@ -84,4 +113,4 @@ def test_check(
 def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
-    assert set(commands()) == {"new", "import", "run", "export", "check", "status"}
+    assert set(commands()) == {"new", "import", "photos", "run", "export", "check", "status"}

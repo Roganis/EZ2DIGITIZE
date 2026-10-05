@@ -38,7 +38,13 @@ Prerequisites:
   curl`. On Arch: `base-devel cmake ninja gcc-fortran nasm autoconf-archive
   bison flex zip unzip`.
 - **macOS:** Xcode command line tools, then `brew install cmake ninja nasm
-  autoconf autoconf-archive automake libtool pkg-config`.
+  autoconf autoconf-archive automake libtool pkg-config libomp`. Apple's
+  compiler has no OpenMP; OpenMVS uses it for many parallel loops and
+  silently builds without it, which would make the M1 timings not
+  comparable. The script builds against Homebrew's `libomp`, then
+  copies it into the archive's `lib/` and points the binaries at it
+  (`@executable_path/../lib`), so the archive doesn't need Homebrew; the
+  build fails if any Homebrew path is left.
 
 ## CI
 

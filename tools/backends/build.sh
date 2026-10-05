@@ -65,6 +65,14 @@ fetch() {  # fetch <dir> <git url> <tag>
   fi
 }
 
+# Apple's compiler has no OpenMP; use Homebrew's libomp and ship it in lib/
+# (rewritten below), so the archive doesn't depend on Homebrew.
+OPENMP_ARGS=()
+if [ "$OS" = macos ]; then
+  LIBOMP=$(brew --prefix libomp)
+  OPENMP_ARGS=(-DOpenMP_ROOT="$LIBOMP")
+fi
+
 PREFIX=$WORK/prefix
 rm -rf "$PREFIX"
 mkdir -p "$PREFIX/bin" "$PREFIX/licenses"
@@ -81,6 +89,7 @@ cmake -S colmap -B colmap-build -G Ninja \
   -DCUDA_ENABLED=OFF -DHIP_ENABLED=OFF -DGUI_ENABLED=OFF -DOPENGL_ENABLED=OFF \
   -DONNX_ENABLED=OFF -DCGAL_ENABLED=OFF -DDOWNLOAD_ENABLED=OFF -DTESTS_ENABLED=OFF \
   -DCCACHE_ENABLED=OFF \
+  ${OPENMP_ARGS[@]+"${OPENMP_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/colmap-install"
 cmake --build colmap-build --parallel "$JOBS"
 cmake --install colmap-build
@@ -94,11 +103,34 @@ cmake -S openmvs -B openmvs-build -G Ninja \
   -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
   -DVCPKG_INSTALLED_DIR="$WORK/openmvs-vcpkg_installed" \
   -DOpenMVS_USE_CUDA=OFF -DOpenMVS_USE_PYTHON=OFF -DOpenMVS_BUILD_VIEWER=OFF \
+  -DOpenMVS_USE_OPENMP=ON \
+  ${OPENMP_ARGS[@]+"${OPENMP_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/openmvs-install"
 cmake --build openmvs-build --parallel "$JOBS"
 for tool in InterfaceCOLMAP DensifyPointCloud ReconstructMesh RefineMesh TextureMesh; do
   cp "$(find openmvs-build/bin -type f -name "$tool" | head -1)" "$PREFIX/bin/"
 done
+
+if [ "$OS" = macos ]; then
+  log "relocating libomp"
+  mkdir -p "$PREFIX/lib"
+  cp "$LIBOMP/lib/libomp.dylib" "$PREFIX/lib/libomp.dylib"
+  chmod u+w "$PREFIX/lib/libomp.dylib"
+  install_name_tool -id "@rpath/libomp.dylib" "$PREFIX/lib/libomp.dylib"
+  codesign --force --sign - "$PREFIX/lib/libomp.dylib"
+  for exe in "$PREFIX"/bin/*; do
+    for dep in $(otool -L "$exe" | awk 'NR > 1 {print $1}' | grep 'libomp\.dylib$' || true); do
+      install_name_tool -change "$dep" "@executable_path/../lib/libomp.dylib" "$exe"
+    done
+    codesign --force --sign - "$exe"   # editing the binary invalidated its signature
+  done
+  # Anything still pointing into Homebrew would break on machines without it.
+  if otool -L "$PREFIX"/bin/* "$PREFIX"/lib/* | grep -E '/opt/homebrew|/usr/local/(opt|Cellar)'; then
+    echo "error: binaries still depend on Homebrew paths (above)" >&2
+    exit 1
+  fi
+  cp "$LIBOMP/LICENSE"* "$PREFIX/licenses/llvm-openmp.txt" 2>/dev/null || true
+fi
 
 log "licenses"
 cp colmap/LICENSE.txt "$PREFIX/licenses/colmap.txt" 2>/dev/null || cp colmap/COPYING.txt "$PREFIX/licenses/colmap.txt"

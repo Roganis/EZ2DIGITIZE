@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# A new push supersedes a running build. The cache-save step still runs on
+# cancellation, so the dependencies built so far are kept.
+concurrency:
+  group: backends-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -41,7 +47,7 @@ jobs:
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config
+        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config libomp
 
       # vcpkg's binary cache. Saved even when the build fails, so a failure late
       # in a multi-hour build doesn't throw away the dependencies built so far.
@@ -52,6 +58,9 @@ jobs:
           key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
           restore-keys: backends-vcpkg-${{ runner.os }}-
 
+      # Before the build, so the summary step can run even when the build fails.
+      - uses: astral-sh/setup-uv@v6
+
       - name: Build
         run: tools/backends/build.sh
 
@@ -61,8 +70,6 @@ jobs:
         with:
           path: build/backends/vcpkg-cache
           key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
-
-      - uses: astral-sh/setup-uv@v6
 
       - name: Smoke test with the benchmark harness
         run: |

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local test projects and reconstruction outputs
+/scratch/
+*.ez2d-project/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

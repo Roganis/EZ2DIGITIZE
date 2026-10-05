@@ -1,0 +1,67 @@
+[project]
+name = "ez2digitize"
+description = "Turn photos or video of small objects into textured meshes and Gaussian splats, on any GPU vendor."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES"]
+requires-python = ">=3.12"
+dynamic = ["version"]
+dependencies = [
+    "PySide6>=6.8",
+]
+
+[project.gui-scripts]
+ez2digitize = "ez2digitize.app:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-qt>=4.4",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/ez2digitize/__init__.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle, pyflakes
+    "I",            # isort
+    "B",            # bugbear
+    "UP",           # pyupgrade
+    "SIM",          # simplify
+    "PTH",          # use pathlib
+    "S603", "S607", # subprocess calls: reviewed explicitly
+    "TID251",       # banned imports (see below)
+]
+
+# Architecture rule: only the UI layer and the app entry point may import Qt.
+# Everything else must stay usable headless (CLI, regression tests).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"PySide6".msg = "Qt is only allowed in ez2digitize.ui and ez2digitize.app; keep core headless."
+
+[tool.ruff.lint.per-file-ignores]
+"src/ez2digitize/ui/**" = ["TID251"]
+"src/ez2digitize/app.py" = ["TID251"]
+"tests/**" = ["TID251", "S"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["pytestqt.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"

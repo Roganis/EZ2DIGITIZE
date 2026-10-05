@@ -1,0 +1,51 @@
+EZ2DIGITIZE - Third-party components and licenses
+=================================================
+
+EZ2DIGITIZE itself is licensed under GPL-3.0-or-later (see LICENSE).
+
+This file lists every third-party component, grouped by how it reaches the
+user. Update it in the same commit that adds, removes or re-versions a
+component. Before each release, check it against what the installer
+actually contains.
+
+Rules (see CLAUDE.md):
+  - Every bundled component must have a GPL-3.0-compatible license.
+  - Never bundle components under non-commercial (NC) or other
+    non-free licenses; users may install those themselves as plugins.
+  - For every bundled GPL/LGPL/AGPL binary, the exact corresponding source
+    is published alongside the release.
+
+
+1. Bundled Python dependencies (shipped in the installer)
+----------------------------------------------------------
+
+PySide6 / Shiboken6 (Qt for Python)
+  License:  LGPL-3.0-only (also offered under GPL-2.0/GPL-3.0 and commercial terms)
+  Source:   https://code.qt.io/cgit/pyside/pyside-setup.git/
+  Notes:    Bundles Qt 6 libraries, which are LGPL-3.0 except for some add-on
+            modules that are GPL-3.0 only. Both are compatible with this
+            project's license.
+
+
+2. External backends (invoked as separate processes)
+----------------------------------------------------
+
+None are bundled yet. Planned (Phase 1 evaluates them):
+
+COLMAP          BSD-3-Clause        https://github.com/colmap/colmap
+OpenMVS         AGPL-3.0            https://github.com/cdcseacave/openMVS
+                (depends on CGAL, parts of which are GPL-3.0+)
+Brush           Apache-2.0          https://github.com/ArthurBrussee/brush
+FFmpeg          LGPL-2.1+ or GPL-2.0+ depending on build configuration
+                                    https://ffmpeg.org/
+
+
+3. Development-only tools (never distributed)
+---------------------------------------------
+
+hatchling       MIT
+mypy            MIT
+pytest          MIT
+pytest-qt       MIT
+ruff            MIT
+uv              MIT or Apache-2.0

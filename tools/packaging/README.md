@@ -61,7 +61,7 @@ uv run --group packaging python tools/packaging/build_macos.py \
 ```
 
 PyInstaller builds `EZ2DIGITIZE.app` with the same entry point (the GUI, or
-the CLI: `EZ2DIGITIZE.app/Contents/MacOS/ez2digitize check`). The backends
+the CLI: `EZ2DIGITIZE.app/Contents/MacOS/EZ2DIGITIZE check`). The backends
 go into `Contents/Resources/backends`, not `Contents/Frameworks`: code
 signing treats everything in Frameworks as nested code and refuses plain
 files there. Their binaries are already ad-hoc signed by the backend build

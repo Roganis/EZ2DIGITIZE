@@ -7,7 +7,7 @@
         --brush build/brush --smoke build/synthetic/images
 
 Steps: PyInstaller `.app` (windowed, the same entry point as the AppImage,
-so `EZ2DIGITIZE.app/Contents/MacOS/ez2digitize run ...` is the CLI), the
+so `EZ2DIGITIZE.app/Contents/MacOS/EZ2DIGITIZE run ...` is the CLI), the
 backend archive unpacked into `Contents/Resources/backends` (its binaries
 are already ad-hoc signed and find their libomp through
 `@executable_path/../lib`), Brush next to them, the whole app signed
@@ -27,7 +27,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from build_appimage import EXCLUDED_MODULES, NAME, REPO, output, run, smoke
+from build_appimage import EXCLUDED_MODULES, REPO, output, run, smoke
 
 from ez2digitize import __version__
 
@@ -38,7 +38,7 @@ BUNDLE_ID = "org.ez2digitize.app"
 def pyinstaller_app(out: Path) -> Path:
     cmd: list[str | Path] = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
-        "--windowed", "--name", NAME, "--osx-bundle-identifier", BUNDLE_ID,
+        "--windowed", "--name", APP_NAME, "--osx-bundle-identifier", BUNDLE_ID,
         "--distpath", out / "dist", "--workpath", out / "work", "--specpath", out,
         "--paths", REPO / "src",
     ]  # fmt: skip
@@ -48,12 +48,9 @@ def pyinstaller_app(out: Path) -> Path:
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd.append(Path(__file__).resolve().parent / "entry.py")
     run(cmd)
-    built = out / "dist" / f"{NAME}.app"
-    app = out / "dist" / f"{APP_NAME}.app"
-    if app.exists():
-        shutil.rmtree(app)
-    built.rename(app)
-    return app
+    # Named EZ2DIGITIZE directly: macOS file systems ignore case, so a rename
+    # from ez2digitize.app would be a no-op (or worse).
+    return out / "dist" / f"{APP_NAME}.app"
 
 
 def add_backends(app: Path, archive: Path) -> dict[str, object]:
@@ -106,7 +103,7 @@ def main() -> int:
     report["zip"] = archive.name
     report["size_mb"] = round(archive.stat().st_size / 2**20, 1)
     if args.smoke:
-        exe = app / "Contents" / "MacOS" / NAME
+        exe = app / "Contents" / "MacOS" / APP_NAME
         report["smoke"] = smoke(exe, args.smoke.resolve(), brush=args.brush is not None)
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

@@ -191,7 +191,8 @@ fails, they can see which stage failed and why.
   an "advanced" panel showing the actual values.
 - Error translation for common failures: too few registered images, several
   disconnected models (often "the two sides didn't connect"), out-of-memory,
-  missing backend.
+  missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
+  notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
   viewable in the embedded viewer.
 - "Export diagnostics" button: logs, manifests and system info zipped for

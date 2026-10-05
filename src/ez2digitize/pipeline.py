@@ -32,6 +32,7 @@ from ez2digitize.core.resources import GIB, available_memory, cpu_threads
 from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
+from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
@@ -115,8 +116,16 @@ class PipelineError(Exception):
 
 
 class StageFailed(PipelineError):
+    """A stage's tool failed; `explanation` says why in plain words, when known."""
+
     def __init__(self, manifest: StageManifest, log: Path, tail: list[str]) -> None:
-        super().__init__(f"stage {manifest.stage} failed (exit code {manifest.exit_code})")
+        self.explanation = explain(manifest.stage, manifest.exit_code, tail)
+        where = f"stage {manifest.stage} failed (exit code {manifest.exit_code})"
+        if self.explanation is None:
+            message = where
+        else:
+            message = f"{self.explanation.title} ({where}). {self.explanation.advice}"
+        super().__init__(message)
         self.manifest = manifest
         self.log = log
         self.tail = tail

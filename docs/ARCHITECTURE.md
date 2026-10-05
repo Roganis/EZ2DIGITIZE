@@ -247,6 +247,11 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 - Errors: `StageFailed` carries the manifest, log path and last lines of the
   log; `PipelineCancelled` after a cancel; `PipelineError` for anything that
   stops the run before or between stages (no captures, no model).
+  `diagnosis.explain` matches a failed stage's exit status and log tail
+  against known signatures (out of memory, including the OOM killer's
+  SIGKILL; disk full; no initial pair or empty pose graph; unreadable
+  images; no dense points; empty mesh; crashes and illegal instructions)
+  and `StageFailed`'s message leads with the explanation and what to try.
 - Masks reach OpenMVS through the `mask-undistort` stage (after
   `undistort`, only when the project has masks). COLMAP's
   `image_undistorter_standalone` warps them with each image's camera and the

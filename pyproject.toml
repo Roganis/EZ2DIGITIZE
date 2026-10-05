@@ -13,6 +13,9 @@ dependencies = [
 [project.gui-scripts]
 ez2digitize = "ez2digitize.app:main"
 
+[project.scripts]
+ez2d = "ez2digitize.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.13",

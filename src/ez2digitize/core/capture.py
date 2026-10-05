@@ -280,6 +280,28 @@ def import_folder(
     return bundle, skipped
 
 
+def import_masks(project: Project, bundle: CaptureBundle, masks: Path) -> int:
+    """Copy masks for `bundle`'s images into `masks/<bundle id>/`.
+
+    Masks are looked up by the name each image arrived with, in COLMAP's
+    naming (`IMG_0001.jpg.png`, or `IMG_0001.png`), and stored under the
+    image's name in the bundle. Returns how many images got a mask.
+    """
+    target = project.masks_dir / bundle.id
+    copied = 0
+    for entry in bundle.files:
+        if entry.kind != "image":
+            continue
+        original = Path(entry.original_name)
+        for candidate in (masks / f"{original.name}.png", masks / f"{original.stem}.png"):
+            if candidate.is_file():
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate, target / f"{entry.name}.png")
+                copied += 1
+                break
+    return copied
+
+
 def _new_bundle_id(captures_dir: Path, now: datetime) -> str:
     base = now.strftime("%Y%m%d-%H%M%S")
     candidate, n = base, 1

@@ -179,3 +179,22 @@ def test_load_rejects_invalid_capture_json(
     path.write_text(json.dumps(data))
     with pytest.raises(CaptureError):
         CaptureBundle.load(bundle.root)
+
+
+def test_import_masks(project: Project, tmp_path: Path) -> None:
+    from ez2digitize.core.capture import import_masks
+
+    a = _write(tmp_path / "day1" / "IMG_1.jpg", b"1")
+    b = _write(tmp_path / "day2" / "IMG_1.jpg", b"2")  # renamed IMG_1-2.jpg in the bundle
+    c = _write(tmp_path / "day2" / "IMG_3.jpg", b"3")
+    bundle = import_files(project, [a, b, c], source="folder", now=NOW)
+    masks = tmp_path / "masks"
+    _write(masks / "IMG_1.jpg.png", b"m1")
+    _write(masks / "IMG_3.png", b"m3")  # extension replaced: also accepted
+    assert import_masks(project, bundle, masks) == 3
+    target = project.masks_dir / bundle.id
+    assert sorted(p.name for p in target.iterdir()) == [
+        "IMG_1-2.jpg.png",
+        "IMG_1.jpg.png",
+        "IMG_3.jpg.png",
+    ]

@@ -13,12 +13,15 @@ ez2digitize/
                 and manifests, process runner
   backends/     one module per external tool: finds it, checks its version,
                 builds stage command lines, parses progress
+  pipeline.py   chains the backend stages over a project (sparse, dense)
+  cli.py        headless command line (`ez2d`) over the same pipeline
 ```
 
-`core` and `backends` never import Qt. The UI observes them through Qt
-adapters (a `QObject` that forwards runner events as signals). The same core
-code is used by a headless CLI *(planned)*, which is how regression datasets
-run in CI and on the reference machines.
+Dependencies point one way: `core` <- `backends` <- `pipeline` <- `cli`/`ui`.
+Nothing but `ui` and `app` imports Qt. The UI observes the pipeline through
+Qt adapters (a `QObject` that forwards pipeline events as signals). The CLI
+uses the same code, which is how regression datasets run in CI and on the
+reference machines.
 
 ## Project folder (`core/project.py`, `core/capture.py`)
 
@@ -31,11 +34,11 @@ my-scan/
       IMG_0001.jpg    original files, copied byte for byte
   masks/              one mask per image (same file stem), optional
   stages/
-    01-features/
+    features/
       stage.json      manifest (see below)
       log.txt
       ...outputs
-    02-matching/
+    matching/
     ...
   exports/            user-facing outputs (OBJ, GLB, STL, PLY)
 ```
@@ -118,14 +121,30 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
-## Pipeline *(planned)*
+## Pipeline (`pipeline.py`)
 
-Mesh path (Phase 2):
+Mesh path (Phase 2); the stages in brackets are done:
 
 ```
-import -> checks -> masks -> features -> matching -> mapping -> undistort
-       -> crop box (user) -> OpenMVS densify -> mesh -> texture -> export
+import -> checks -> masks -> [features -> matching -> mapping -> undistort]
+       -> crop box (user) -> [mvs-import -> densify -> mesh -> (refine) -> texture]
+       -> export
 ```
+
+- `run_sparse` and `run_dense` are the two halves around the crop box;
+  `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
+  stage is reused and `force_from` re-runs a stage and everything after it.
+- Matching is sequential when every capture is a video, else exhaustive.
+  The best model is the one with the most registered images; a `Notice`
+  event reports split models and low registration.
+- Only one pipeline runs per process (`PipelineBusy` otherwise): the 8 GB
+  M1 can't fit two reconstructions.
+- Errors: `StageFailed` carries the manifest, log path and last lines of the
+  log; `PipelineCancelled` after a cancel; `PipelineError` for anything that
+  stops the run before or between stages (no captures, no model).
+- *(planned)* Masks for OpenMVS: COLMAP's masks must be warped to the
+  undistorted images first, so densify runs unmasked for now (on the
+  synthetic scene that costs about 5x the time).
 
 Splat path (Phase 3) branches after `undistort`:
 

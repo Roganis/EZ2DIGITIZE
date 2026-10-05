@@ -18,6 +18,7 @@ M1 Mac with 8 GB (secondary, low end). Changes must not assume CUDA.
 ```sh
 uv sync                  # install everything (Python 3.12, from .python-version)
 uv run ez2digitize       # run the app
+uv run ez2d --help       # headless CLI: new, import, run, status
 uv run pytest            # tests (Qt runs offscreen, see tests/conftest.py)
 uv run ruff check        # lint;  --fix to autofix
 uv run ruff format       # format

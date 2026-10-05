@@ -40,6 +40,28 @@ APPIMAGETOOL = (
 APPIMAGE_RUNTIME = (
     "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
 )
+# Libraries that must come from the host system, not the bundle (Linux). They
+# read host configuration (fonts, X keymaps, GTK themes, D-Bus), or are needed
+# at the host's version by host libraries we load, like the GPU driver (Mesa
+# needs the host's libstdc++). The bundle is built on the oldest supported
+# distro, so the host's copies are always the same version or newer.
+# Same idea as the AppImage project's excludelist.
+HOST_LIBRARIES = (
+    # fonts: an older fontconfig can't parse a newer distro's /etc/fonts
+    "libfontconfig.so.1", "libfreetype.so.6", "libharfbuzz.so.0",
+    # C++ runtime: host GPU drivers need the host's (newer) version
+    "libstdc++.so.6", "libgcc_s.so.1",
+    # X11 and keyboard data
+    "libX11.so.6", "libX11-xcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0",
+    # system services
+    "libdbus-1.so.3", "libsystemd.so.0", "libselinux.so.1",
+    # GTK stack, only used by Qt's GTK theme plugin (removed below)
+    "libgtk-3.so.0", "libgdk-3.so.0", "libgdk_pixbuf-2.0.so.0", "libatk-1.0.so.0",
+    "libatk-bridge-2.0.so.0", "libatspi.so.0", "libcairo.so.2", "libcairo-gobject.so.2",
+    "libpango-1.0.so.0", "libpangocairo-1.0.so.0", "libpangoft2-1.0.so.0",
+)  # fmt: skip
+HOST_PLUGINS = ("PySide6/Qt/plugins/platformthemes/libqgtk3.so",)
+
 WEBENGINE_MODULES = (
     "PySide6.QtWebEngineCore",
     "PySide6.QtWebEngineWidgets",
@@ -104,6 +126,18 @@ def pyinstaller(variant: str, out: Path, brush: Path | None) -> Path:
     run(cmd)
     dist = out / "dist"
     return dist / f"{name}.app" if sys.platform == "darwin" else dist / name
+
+
+def prune_host_libraries(onedir: Path) -> list[str]:
+    """Delete libraries the host must provide (see HOST_LIBRARIES)."""
+    internal = onedir / "_internal"
+    removed = []
+    for path in sorted(internal.rglob("*")):
+        rel = path.relative_to(internal).as_posix()
+        if path.name in HOST_LIBRARIES or rel in HOST_PLUGINS:
+            path.unlink()
+            removed.append(rel)
+    return removed
 
 
 def executable(bundle: Path) -> Path:
@@ -191,11 +225,14 @@ def main() -> int:
     variants = ["core", "viewer"] if args.variant == "both" else [args.variant]
     for variant in variants:
         bundle = pyinstaller(variant, out, brush)
+        pruned = prune_host_libraries(bundle) if sys.platform.startswith("linux") else []
+        print(f"removed {len(pruned)} host libraries: {' '.join(pruned)}")
         size, files = tree_size(bundle)
         entry: dict[str, Any] = {
             "variant": variant, "format": "app" if bundle.suffix == ".app" else "onedir",
             "size_mb": mb(size), "files": files,
             "self_test": self_test(executable(bundle), args.headless),
+            "host_libraries_removed": pruned,
         }  # fmt: skip
         results.append(entry)
         if sys.platform == "darwin":

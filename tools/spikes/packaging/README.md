@@ -44,7 +44,10 @@ ez2digitize-viewer.app/Contents/MacOS/ez2digitize-viewer path/to/model.ply
 | viewer | AppImage | 285 MB | 1 | 2.17 s |
 
 All four self-tests passed: the window (or a QtWebEngine page) came up and
-the bundled `brush_app --version` ran. Startup is time to window shown and
+the bundled `brush_app --version` ran. The first CI run (before host
+libraries were removed) built and passed the self-tests on both Ubuntu
+22.04 and Apple Silicon macOS; on CI the AppImages took 0.4 s (core) and
+1.1 s (viewer) to start. Startup is time to window shown and
 exit, headless. The AppImage times are pessimistic: without FUSE in the
 container, every start extracts the whole image first
 (`APPIMAGE_EXTRACT_AND_RUN`); with FUSE the image is mounted instead.
@@ -71,10 +74,22 @@ measured yet; they come from the backend CI builds). So 300-400 MB.
 - **glibc baseline:** PyInstaller copies system libraries from the build
   machine (pango, libstdc++, libsystemd, libxkbcommon...). Built on Ubuntu
   24.04, the bundle needs glibc ≥ 2.38, so it would not run on Ubuntu 22.04
-  or Debian 12. Build on the oldest distro to support; the CI workflow uses
-  Ubuntu 22.04 (glibc 2.35). PySide6 6.11 wheels need glibc ≥ 2.28 anyway.
-  Libraries that should come from the host system (libsystemd, libselinux,
-  GTK, GPU drivers) are better excluded than bundled.
+  or Debian 12. Build on the oldest distro to support: the CI build on
+  Ubuntu 22.04 needs glibc ≥ 2.35. PySide6 6.11 wheels need glibc ≥ 2.28
+  anyway.
+- **Host libraries must not be bundled.** The first CI AppImage, run on
+  Arch, printed dozens of `Fontconfig error: ... invalid attribute
+  'xsi:nil'` lines: the bundled fontconfig from Ubuntu 22.04 (2.13) can't
+  parse Arch's newer `/etc/fonts`. The same class of problem hits the GPU
+  driver: host Mesa needs the host's (newer) `libstdc++`, and a bundled
+  older copy loaded first makes the driver fail, so rendering falls back to
+  software. `build.py` now deletes these libraries from the bundle
+  (`HOST_LIBRARIES`: fontconfig, FreeType, HarfBuzz, libstdc++/libgcc_s,
+  X11/xkbcommon, D-Bus, systemd, SELinux, and Qt's GTK theme plugin with the
+  GTK stack it pulls in). Because the bundle is built on the oldest
+  supported distro, the host's copies are always the same version or newer.
+  Checked with `LD_DEBUG=libs`: both variants now load these from the
+  system, self-tests pass, and the AppImages got 7-8 MB smaller.
 - **Bundled backends** live in `sys._MEIPASS/backends` (`_internal/` on
   Linux, `Contents/Frameworks` in a `.app`). The app must call them by
   absolute path from there, never via `PATH`.

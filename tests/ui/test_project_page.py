@@ -68,7 +68,8 @@ def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> 
     ]  # fmt: skip
     assert page.status.text() == "Finished"
     assert page.overall.value() == 1000
-    assert "scene_textured.ply" in page.result_label.text()
+    assert page.result_label.text().startswith(f"Textured mesh saved in {page.project.exports_dir}")
+    assert page.last_result.exports and page._result_folder() is not None
     assert "fake colmap feature_extractor" in page.log.toPlainText()
     assert "Note: 3 of 3 images registered" in page.log.toPlainText()
     assert "--resolution-level 2" in (page.project.stage_dir("densify") / "log.txt").read_text()

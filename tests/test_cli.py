@@ -31,3 +31,22 @@ def test_errors_are_reported_not_raised(tmp_path: Path, capsys: pytest.CaptureFi
     assert "error:" in capsys.readouterr().err
     (tmp_path / "x").mkdir()
     assert main(["import", str(tmp_path / "p"), "a", "b", "--masks", str(tmp_path)]) == 2
+
+
+def test_export_without_mesh_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["new", str(tmp_path / "scan")]) == 0
+    assert main(["export", str(tmp_path / "scan"), "--formats", "glb"]) == 1
+    assert "build the mesh first" in capsys.readouterr().err
+
+
+def test_format_list_parsing() -> None:
+    import argparse
+
+    from ez2digitize.cli import _formats
+
+    assert _formats("obj,GLB") == ("obj", "glb")
+    assert _formats("none") == ()
+    with pytest.raises(argparse.ArgumentTypeError, match="unknown format 'stl'"):
+        _formats("obj,stl")

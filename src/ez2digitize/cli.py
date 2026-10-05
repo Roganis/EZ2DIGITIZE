@@ -7,6 +7,7 @@
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d status ~/scans/skull
+    ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
 
 The same code the GUI uses; this is how regression datasets run on the
 reference machines and in CI.
@@ -19,7 +20,7 @@ import sys
 import threading
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, cast
 
 from ez2digitize.backends import colmap, openmvs
 from ez2digitize.backends.common import BackendError
@@ -27,6 +28,7 @@ from ez2digitize.core.capture import CaptureError, import_folder, import_masks, 
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.core.runner import CancelToken, Output, Progress
 from ez2digitize.core.stage import load_manifest
+from ez2digitize.export import FORMATS, ExportError, ExportFormat, export_mesh
 from ez2digitize.pipeline import (
     STAGES,
     MeshResult,
@@ -51,7 +53,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         result: int = args.func(args)
-    except (ProjectError, CaptureError, BackendError, PipelineError) as exc:
+    except (ProjectError, CaptureError, BackendError, PipelineError, ExportError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return result
@@ -85,7 +87,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--mapper", choices=["incremental", "global"], default="incremental")
     run.add_argument("--level", type=int, help="OpenMVS resolution level (0 = full size)")
     run.add_argument("--refine", action="store_true", help="run RefineMesh (slow)")
-    run.add_argument("--export", choices=["ply", "obj", "glb"], default="ply")
+    run.add_argument(
+        "--export",
+        type=_formats,
+        default=("obj", "glb"),
+        metavar="FORMATS",
+        help="formats to export, comma-separated: obj, glb, ply, or none (default obj,glb)",
+    )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
     run.add_argument("--threads", type=int, help="limit CPU threads of every tool")
     run.add_argument("--force-from", choices=STAGES, help="re-run this stage and all after it")
@@ -93,6 +101,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--openmvs-dir", type=Path, help="folder with the OpenMVS tools")
     run.add_argument("-v", "--verbose", action="store_true", help="print the tools' output")
     run.set_defaults(func=_cmd_run)
+
+    export = sub.add_parser("export", help="export the textured mesh again")
+    export.add_argument("project", type=Path)
+    export.add_argument("--formats", type=_formats, default=("obj", "glb"), metavar="FORMATS")
+    export.set_defaults(func=_cmd_export)
 
     status = sub.add_parser("status", help="show captures and stage results")
     status.add_argument("project", type=Path)
@@ -208,9 +221,29 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         print("textured mesh:")
-        for path in result.files:
+        for path in result.exports or result.files:
             print(f"  {path}")
     return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if not args.formats:
+        print("error: no formats", file=sys.stderr)
+        return 2
+    for path in export_mesh(project, args.formats):
+        print(path)
+    return 0
+
+
+def _formats(text: str) -> tuple[ExportFormat, ...]:
+    if text.strip().lower() == "none":
+        return ()
+    names = [n.strip().lower() for n in text.split(",") if n.strip()]
+    unknown = [n for n in names if n not in FORMATS]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown format {unknown[0]!r}; use {', '.join(FORMATS)}")
+    return tuple(cast(ExportFormat, n) for n in names)
 
 
 def _settings(args: argparse.Namespace) -> MeshSettings:
@@ -228,7 +261,8 @@ def _settings(args: argparse.Namespace) -> MeshSettings:
         densify=densify,
         mesh=openmvs.MeshOptions(threads=threads),
         refine=openmvs.RefineOptions(threads=threads) if args.refine else None,
-        texture=openmvs.TextureOptions(export_type=args.export, threads=threads),
+        texture=openmvs.TextureOptions(threads=threads),
+        export_formats=args.export,
         use_masks=not args.no_masks,
     )
 

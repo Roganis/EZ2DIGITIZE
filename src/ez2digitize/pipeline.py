@@ -31,6 +31,7 @@ from ez2digitize.core.project import Project
 from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
+from ez2digitize.export import ExportError, ExportFormat, export_mesh
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
@@ -65,6 +66,8 @@ class MeshSettings:
     texture: openmvs.TextureOptions = field(default_factory=openmvs.TextureOptions)
     # Use the project's masks (feature extraction and densification) if it has any.
     use_masks: bool = True
+    # Formats exported to exports/ after texturing; empty: no export.
+    export_formats: tuple[ExportFormat, ...] = ("obj", "glb")
 
 
 # --- events --------------------------------------------------------------------
@@ -141,6 +144,8 @@ class MeshResult:
     sparse: SparseResult
     textured: StageManifest
     files: list[Path]
+    # The exported files (OBJ, MTL, textures, GLB...), if any were asked for.
+    exports: list[Path] = field(default_factory=list)
 
 
 # --- running -------------------------------------------------------------------
@@ -324,6 +329,8 @@ def _dense(
     force_from: str | None,
 ) -> MeshResult:
     masked = sparse.masks is not None
+    if settings.export_formats and settings.texture.export_type != "ply":
+        raise PipelineError("exporting needs the texture step's PLY output (export_type 'ply')")
     run = _Run(project, _stages(settings, masked=masked), on_event, cancel, force_from)
     mvs = tools.openmvs
 
@@ -341,7 +348,16 @@ def _dense(
         for p in folder.iterdir()
         if p.name.startswith("scene_textured") and p.suffix.lower() not in (".mvs", ".log")
     )
-    return MeshResult(sparse=sparse, textured=textured, files=files)
+    exports: list[Path] = []
+    if settings.export_formats:
+        names = ", ".join(f.upper() for f in settings.export_formats)
+        run.emit(Notice(f"exporting {names}"))
+        try:
+            exports = export_mesh(project, settings.export_formats, stage=textured.stage)
+        except ExportError as exc:
+            raise PipelineError(str(exc)) from exc
+        run.emit(Notice(f"exported to {exports[0].parent if exports else project.exports_dir}"))
+    return MeshResult(sparse=sparse, textured=textured, files=files, exports=exports)
 
 
 def _existing_sparse(project: Project, settings: MeshSettings) -> SparseResult:

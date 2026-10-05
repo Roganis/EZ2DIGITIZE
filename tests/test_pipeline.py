@@ -63,14 +63,28 @@ def test_run_mesh_runs_every_stage_in_order(project: Project, tools: Tools) -> N
     assert result.sparse.registered_images == 3 and result.sparse.total_images == 3
     assert [p.name for p in result.files] == ["scene_textured.ply", "scene_textured0.png"]
     notices = [e.message for e in events if isinstance(e, Notice)]
-    assert notices == ["3 of 3 images registered (model 0)"]
+    assert notices[:2] == ["3 of 3 images registered (model 0)", "exporting OBJ, GLB"]
+    assert notices[2].startswith(f"exported to {project.exports_dir}")
     assert any(isinstance(e, StageOutput) and isinstance(e.event, Output) for e in events)
+    names = sorted(p.name for p in result.exports)
+    assert names == ["project.glb", "project.mtl", "project.obj", "project_texture0.png"]
 
-    # Unchanged: everything reused.
+    # Unchanged: everything reused, including the export.
     events, handler = _collect()
-    pipeline.run_mesh(project, tools, on_event=handler)
+    again = pipeline.run_mesh(project, tools, on_event=handler)
     finished = [e for e in events if isinstance(e, StageFinished)]
     assert len(finished) == 8 and all(e.reused for e in finished)
+    assert again.exports == result.exports
+    assert len(list(project.exports_dir.iterdir())) == 1
+
+
+def test_export_can_be_skipped_and_needs_ply(project: Project, tools: Tools) -> None:
+    from ez2digitize.backends.openmvs import TextureOptions
+
+    result = pipeline.run_mesh(project, tools, MeshSettings(export_formats=()))
+    assert result.exports == [] and not any(project.exports_dir.iterdir())
+    with pytest.raises(PipelineError, match="PLY output"):
+        pipeline.run_mesh(project, tools, MeshSettings(texture=TextureOptions("glb")))
 
 
 def test_refine_is_optional(project: Project, tools: Tools) -> None:

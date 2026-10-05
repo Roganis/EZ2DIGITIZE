@@ -121,6 +121,25 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
+## Export (`export.py`, `core/meshio.py`)
+
+- The texture step always writes OpenMVS's textured PLY. Exporting
+  converts it in-process (architecture rule 1 allows mesh export there) into
+  `exports/<timestamp>/`: `obj/<name>.obj` + `.mtl` + texture images,
+  `<name>.glb` with the textures embedded, and/or a copy of the PLY, plus
+  `export.json` (formats, the texture run it came from, counts).
+- The pipeline exports after texturing (OBJ and GLB by default). An export
+  of the same texture run in the same formats is reused, not repeated.
+- `core/meshio.py` is standard library only: `struct` reads the PLY in one
+  pass, and glTF vertices are split only on texture seams (a per-vertex
+  fast path, a dict for seam corners). A 2-million-face mesh converts in
+  about 15 s per format in a CI-class container, at 300-400 MB peak.
+- GLB materials are unlit (`KHR_materials_unlit`): photogrammetry
+  textures already contain the lighting. GLBs pass the Khronos glTF
+  validator without errors or warnings.
+- *(planned, Phase 4)* Scale, orientation and cleanup before export; STL
+  and 3MF for printing.
+
 ## GUI (`ui/`)
 
 - `PipelineRunner` (`ui/pipeline_runner.py`) is the Qt adapter: it runs a
@@ -147,8 +166,8 @@ Mesh path (Phase 2); the stages in brackets are done:
 ```
 import -> checks -> masks -> [features -> matching -> mapping -> undistort
        -> mask-undistort]
-       -> crop box (user) -> [mvs-import -> densify -> mesh -> (refine) -> texture]
-       -> export
+       -> crop box (user) -> [mvs-import -> densify -> mesh -> (refine) -> texture
+       -> export]
 ```
 
 - `run_sparse` and `run_dense` are the two halves around the crop box;

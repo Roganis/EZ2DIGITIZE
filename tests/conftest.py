@@ -70,7 +70,18 @@ out = Path(args[args.index("-o") + 1])
 out.write_text("mvs")
 out.with_suffix(".ply").write_text("ply")
 if tool == "TextureMesh":
-    (out.parent / "scene_textured0.png").write_bytes(b"png")
+    # A one-triangle textured PLY in OpenMVS's layout, and its texture.
+    import struct
+    header = (
+        "ply\\nformat binary_little_endian 1.0\\ncomment TextureFile scene_textured0.png\\n"
+        "element vertex 3\\nproperty float x\\nproperty float y\\nproperty float z\\n"
+        "element face 1\\nproperty list uchar uint vertex_indices\\n"
+        "property list uchar float texcoord\\nend_header\\n"
+    )
+    body = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)
+    body += struct.pack("<B3IB6f", 3, 0, 1, 2, 6, 0, 0, 1, 0, 0, 1)
+    out.with_suffix(".ply").write_bytes(header.encode() + body)
+    (out.parent / "scene_textured0.png").write_bytes(b"\\x89PNG fake")
 """
 
 

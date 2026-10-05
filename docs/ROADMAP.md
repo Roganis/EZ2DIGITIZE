@@ -163,7 +163,7 @@ installable on Linux as an AppImage.
   `ez2digitize.ui`).
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification.
-- Export OBJ (+MTL + textures) and GLB.
+- Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
 - AppImage with pinned backend binaries.
 
 **Done when:** a non-expert on a clean Linux machine with an AMD GPU

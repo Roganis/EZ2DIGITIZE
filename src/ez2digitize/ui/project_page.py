@@ -52,7 +52,13 @@ STAGE_LABELS = {
 
 # Detail -> OpenMVS resolution level (each level halves the image size).
 DETAIL_LEVELS = (("High", 0), ("Medium", 1), ("Low", 2))
-EXPORT_TYPES = (("PLY", "ply"), ("OBJ", "obj"), ("GLB", "glb"))
+# What the finished mesh is exported as, into the project's exports/ folder.
+EXPORT_CHOICES = (
+    ("OBJ and GLB", ("obj", "glb")),
+    ("GLB", ("glb",)),
+    ("OBJ", ("obj",)),
+    ("PLY (as OpenMVS writes it)", ("ply",)),
+)
 LOG_MAX_LINES = 5000
 
 ToolsFactory = Callable[[], Tools]
@@ -103,16 +109,20 @@ class ProjectPage(QWidget):
             self.detail.addItem(label, level)
         self.detail.setCurrentIndex(1)
         self.detail.setToolTip("Image size used for the dense point cloud; High is slowest")
-        self.export_type = QComboBox()
-        for label, kind in EXPORT_TYPES:
-            self.export_type.addItem(label, kind)
+        self.export_formats = QComboBox()
+        for label, formats in EXPORT_CHOICES:
+            self.export_formats.addItem(label, formats)
+        self.export_formats.setToolTip(
+            "OBJ (with MTL and texture images) for most 3D programs; GLB is a single "
+            "file for viewers and the web"
+        )
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
         self.use_masks = QCheckBox("Use masks")
         self.use_masks.setChecked(True)
         settings_box = QGroupBox("Settings")
         form = QFormLayout(settings_box)
         form.addRow("Detail:", self.detail)
-        form.addRow("Mesh format:", self.export_type)
+        form.addRow("Save as:", self.export_formats)
         form.addRow(self.refine)
         form.addRow(self.use_masks)
 
@@ -232,7 +242,7 @@ class ProjectPage(QWidget):
         self.run_button.setEnabled(not running and has_photos)
         self.cancel_button.setEnabled(running)
         self.import_button.setEnabled(not running)
-        for widget in (self.detail, self.export_type, self.refine):
+        for widget in (self.detail, self.export_formats, self.refine):
             widget.setEnabled(not running)
         self.use_masks.setEnabled(not running and any(self.project.masks_dir.rglob("*.png")))
         self.open_result_button.setVisible(self.last_result is not None)
@@ -257,7 +267,7 @@ class ProjectPage(QWidget):
             refine=openmvs.RefineOptions(resolution_level=level)
             if self.refine.isChecked()
             else None,
-            texture=openmvs.TextureOptions(export_type=self.export_type.currentData()),
+            export_formats=tuple(self.export_formats.currentData()),
             use_masks=self.use_masks.isChecked(),
         )
 
@@ -313,9 +323,19 @@ class ProjectPage(QWidget):
         self.runner.cancel()
 
     def open_result_folder(self) -> None:
-        if self.last_result is not None and self.last_result.files:
-            folder = self.last_result.files[0].parent
+        folder = self._result_folder()
+        if folder is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def _result_folder(self) -> Path | None:
+        """The export folder (holding obj/ and the GLB), else the texture stage's."""
+        result = self.last_result
+        if result is None:
+            return None
+        if result.exports:
+            first = result.exports[0]
+            return first.parent.parent if first.parent.name in ("obj", "ply") else first.parent
+        return result.files[0].parent if result.files else None
 
     def open_failure_log(self) -> None:
         if self.last_failure is not None and self.last_failure.log is not None:
@@ -363,10 +383,9 @@ class ProjectPage(QWidget):
     def _on_succeeded(self, result: MeshResult) -> None:
         self.last_result = result
         self.overall.setValue(1000)
-        mesh = next((p for p in result.files if p.name.startswith("scene_textured.")), None)
-        shown = mesh or (result.files[0] if result.files else None)
         self.status.setText("Finished")
-        self.result_label.setText(f"Textured mesh: {shown}" if shown else "Finished.")
+        folder = self._result_folder()
+        self.result_label.setText(f"Textured mesh saved in {folder}" if folder else "Finished.")
         self._update_buttons()
 
     def _on_failed(self, failure: Failure) -> None:

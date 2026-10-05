@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tarfile
@@ -43,6 +44,8 @@ def pyinstaller_app(out: Path) -> Path:
     ]  # fmt: skip
     for module in EXCLUDED_MODULES:
         cmd += ["--exclude-module", module]
+    for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
+        cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd.append(Path(__file__).resolve().parent / "entry.py")
     run(cmd)
     built = out / "dist" / f"{NAME}.app"

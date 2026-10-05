@@ -46,23 +46,39 @@ segno
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
 
-None are bundled yet. Planned (Phase 1 evaluates them). tools/backends/build.sh
-builds the pinned versions with all their dependencies linked statically; each
-archive carries a licenses/ folder with the copyright file of every library
-linked in:
+The AppImage and the macOS app bundle COLMAP and OpenMVS, built by
+tools/backends/build.sh with all their dependencies linked statically, and
+the Brush release binary. Their license texts are inside the app, in
+backends/licenses/ (the copyright file of every library linked in), and the
+app shows this file under Help -> Licenses.
 
 COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
 OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
-                (depends on CGAL, parts of which are GPL-3.0+)
+                (depends on CGAL, parts of which are GPL-3.0+), with the
+                upstream fix in tools/backends/patches applied
 Brush 0.3.0     Apache-2.0          https://github.com/ArthurBrussee/brush
-                The release binary is bundled in the AppImage (unmodified,
-                with its LICENSE under backends/licenses/brush). Its Rust
-                dependencies' notices are not in the release; collecting
-                them (cargo-about) is a Phase 6 release task.
+                The release binary, unmodified, with its LICENSE under
+                backends/licenses/brush. Its Rust dependencies' notices are
+                not in the release; collecting them (cargo-about) is a Phase
+                6 release task.
+GCC runtime     GPL-3.0 with the GCC Runtime Library Exception
+                (libgomp, libgfortran, libquadmath; AppImage only, copied
+                from the build machine for the backends)
+libomp          Apache-2.0 with LLVM exceptions (macOS app only, Homebrew's)
 FFmpeg          LGPL-2.1+ or GPL-2.0+ depending on build configuration
                                     https://ffmpeg.org/
                 Used for video import (decoding, JPEG frames). Not bundled
                 yet: the user's installed FFmpeg is run as a process.
+
+
+Source for the bundled backends. COLMAP and OpenMVS in the apps are built
+from the tags, the vcpkg release and the patches pinned in
+tools/backends/build.sh, which records them in backends/BUILDINFO.json; all
+of it is in this repository and the upstream projects. Development builds
+(CI artifacts) point there. For releases, the exact corresponding source
+(both projects, the patches, vcpkg and every port's sources) is published
+next to the binaries (Phase 6); until then, anyone who got a binary can ask
+for it through the project's issue tracker.
 
 
 3. Development-only tools (never distributed)

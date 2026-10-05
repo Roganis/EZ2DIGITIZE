@@ -99,6 +99,8 @@ def pyinstaller(out: Path) -> Path:
     ]  # fmt: skip
     for module in EXCLUDED_MODULES:
         cmd += ["--exclude-module", module]
+    for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
+        cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd.append(HERE / "entry.py")
     run(cmd)
     return out / "dist" / NAME

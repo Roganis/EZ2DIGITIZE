@@ -137,7 +137,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "upload", "photos", "run", "export", "check", "diagnostics", "status"
+        "new", "import", "upload", "photos", "run", "export", "check", "diagnostics",
+        "licenses", "status",
     }  # fmt: skip
 
 
@@ -169,3 +170,11 @@ def test_run_with_quality(
     assert main(["run", scan, "--level", "0", "--export", "none", *tools]) == 0
     out = capsys.readouterr().out
     assert "quality: Fast" in out and "Dense point cloud: full size photos" in out
+
+
+def test_licenses(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["licenses"]) == 0
+    out = capsys.readouterr().out
+    assert "Source for the bundled backends" in out and "No bundled backends" in out
+    assert main(["licenses", "--gpl"]) == 0
+    assert "GNU GENERAL PUBLIC LICENSE" in capsys.readouterr().out

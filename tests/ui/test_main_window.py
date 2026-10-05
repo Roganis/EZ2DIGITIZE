@@ -92,3 +92,14 @@ def test_backends_dialog_saves_and_checks(
     dialog.save()
     assert settings.value(COLMAP_KEY) == str(tmp_path / "missing-colmap")
     assert settings.value(OPENMVS_KEY) == str(fake_tools.openmvs.bin_dir)
+
+
+def test_licenses_dialog(qtbot: QtBot) -> None:
+    from ez2digitize.ui.licenses_dialog import LicensesDialog
+
+    dialog = LicensesDialog()
+    qtbot.addWidget(dialog)
+    assert dialog.tabs.count() == 2
+    third_party = dialog.tabs.widget(0)
+    assert "OpenMVS v2.4.0  AGPL-3.0" in third_party.toPlainText()  # type: ignore[union-attr]
+    assert "No bundled backends" in dialog.summary.text()

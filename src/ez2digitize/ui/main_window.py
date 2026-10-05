@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ez2digitize import __version__
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.ui.backends_dialog import BackendsDialog, locate_ffmpeg, locate_tools
+from ez2digitize.ui.licenses_dialog import LicensesDialog
 from ez2digitize.ui.project_page import ProjectPage, ToolsFactory
 
 ABOUT_TEXT = f"""<h3>EZ2DIGITIZE {__version__}</h3>
@@ -29,8 +30,8 @@ Gaussian splats.</p>
 under the terms of the GNU General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option) any
 later version. It comes with ABSOLUTELY NO WARRANTY.</p>
-<p>Third-party components and their licenses are listed in
-THIRD_PARTY_LICENSES.</p>"""
+<p>Third-party components, their licenses and where to get their source
+are under Help &rarr; Licenses.</p>"""
 
 LAST_PROJECT_KEY = "projects/last"
 
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
             "Save the project's logs and settings (not the photos) for a bug report"
         )
         self.diagnostics_action.triggered.connect(self._export_diagnostics)
+        licenses_action = help_menu.addAction("&Licenses…")
+        licenses_action.triggered.connect(lambda: LicensesDialog(self).exec())
         about_action = help_menu.addAction("&About EZ2DIGITIZE")
         about_action.triggered.connect(self.show_about)
 

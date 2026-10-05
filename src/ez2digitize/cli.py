@@ -30,7 +30,7 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import diagnostics, presets, video
+from ez2digitize import diagnostics, licenses, presets, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -209,6 +209,10 @@ def _parser() -> argparse.ArgumentParser:
     diag.add_argument("-o", "--output", type=Path, help="zip file (default: in the current folder)")
     diag.set_defaults(func=_cmd_diagnostics)
 
+    lic = sub.add_parser("licenses", help="third-party components, licenses and sources")
+    lic.add_argument("--gpl", action="store_true", help="print EZ2DIGITIZE's own license")
+    lic.set_defaults(func=_cmd_licenses)
+
     status = sub.add_parser("status", help="show captures and stage results")
     status.add_argument("project", type=Path)
     status.set_defaults(func=_cmd_status)
@@ -353,6 +357,13 @@ def _check_photos(project: Project) -> None:
             shown = ", ".join(finding.files[:10])
             more = f" and {len(finding.files) - 10} more" if len(finding.files) > 10 else ""
             print(f"    {shown}{more}")
+
+
+def _cmd_licenses(args: argparse.Namespace) -> int:
+    name = licenses.LICENSE if args.gpl else licenses.THIRD_PARTY
+    print(licenses.license_text(name) or f"{name} is missing from this copy")
+    print(licenses.summary())
+    return 0
 
 
 def _cmd_diagnostics(args: argparse.Namespace) -> int:

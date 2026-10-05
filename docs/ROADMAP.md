@@ -264,7 +264,11 @@ fails, they can see which stage failed and why.
   the reconstruction's until the scale step exists.
 - License notice for OpenMVS (AGPL-3.0) and its dependencies (some CGAL
   components are GPL) in `THIRD_PARTY_LICENSES`, with a source offer for the
-  exact bundled versions.
+  exact bundled versions. Done: `THIRD_PARTY_LICENSES` lists what the apps
+  bundle (backends, GCC runtime, libomp) and says where their source is;
+  both packages carry it and LICENSE, shown under Help → Licenses (with the
+  bundled backends' versions and license folder) and by `ez2d licenses`.
+  Publishing the source archive with each release is Phase 6.
 
 ## Phase 5: UX and capture guidance
 

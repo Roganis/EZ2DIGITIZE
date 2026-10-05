@@ -186,6 +186,10 @@ fails, they can see which stage failed and why.
 - Hardware detection: GPU vendor and VRAM (enumerate adapters via
   Vulkan/wgpu rather than vendor tools), RAM, CPU cores; pick image
   downscale, OpenMVS resolution level and splat count cap from them.
+  Detection done (`ez2digitize.core.hardware`: `vulkaninfo`, sysfs VRAM for
+  amdgpu, `system_profiler` on macOS; RAM and cores in
+  `core.resources`), and feature threads are already capped by free memory.
+  Picking the default preset from it waits for the M1 numbers (Phase 1).
 - Full resume and invalidation of downstream stages when parameters change.
 - Quality presets (fast, balanced, high) mapped to concrete parameters, with
   an "advanced" panel showing the actual values. Done (`ez2digitize.presets`;
@@ -198,7 +202,9 @@ fails, they can see which stage failed and why.
 - Splat output: Brush training on the same poses and masks, `.ply` export,
   viewable in the embedded viewer.
 - "Export diagnostics" button: logs, manifests and system info zipped for
-  bug reports (images only if the user opts in).
+  bug reports (images only if the user opts in). Done
+  (`ez2digitize.diagnostics`, Help → Export Diagnostics and a button after
+  a failure, `ez2d diagnostics`); images are never included for now.
 - macOS `.app` build in CI, tested on the M1.
 - **Phone upload over Wi-Fi.** An "Add photos from phone" dialog shows a QR
   code; the phone opens it in its browser and gets a small upload page served

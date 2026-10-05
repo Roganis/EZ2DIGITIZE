@@ -83,6 +83,11 @@ class MainWindow(QMainWindow):
         tools_action.triggered.connect(self.edit_backends)
 
         help_menu = self.menuBar().addMenu("&Help")
+        self.diagnostics_action = help_menu.addAction("Export &Diagnostics…")
+        self.diagnostics_action.setToolTip(
+            "Save the project's logs and settings (not the photos) for a bug report"
+        )
+        self.diagnostics_action.triggered.connect(self._export_diagnostics)
         about_action = help_menu.addAction("&About EZ2DIGITIZE")
         about_action.triggered.connect(self.show_about)
 
@@ -173,11 +178,16 @@ class MainWindow(QMainWindow):
         if self.page is not None:
             self.page.choose_folder_to_import()
 
+    def _export_diagnostics(self) -> None:
+        if self.page is not None:
+            self.page.export_diagnostics()
+
     def _update_actions(self) -> None:
         has_page = self.page is not None
         running = has_page and self.page is not None and self.page.runner.running
         self.import_action.setEnabled(has_page and not running)
         self.close_action.setEnabled(has_page)
+        self.diagnostics_action.setEnabled(has_page)
 
     def _stop_running(self, question: str) -> bool:
         """Ask before abandoning a running reconstruction; cancel it if confirmed."""

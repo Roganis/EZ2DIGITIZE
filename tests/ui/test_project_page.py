@@ -230,3 +230,12 @@ def test_quality_is_saved_with_the_project(
     qtbot.addWidget(reopened)
     assert reopened.chosen_quality == "fast"
     assert reopened.photo_checks.wait()
+
+
+def test_export_diagnostics(page: ProjectPage, photos: Path, tmp_path: Path) -> None:
+    import zipfile
+
+    page.import_folder(photos)
+    path = page.export_diagnostics(tmp_path / "d.zip")
+    assert path is not None and zipfile.is_zipfile(path)
+    assert "Diagnostics saved" in page.status.text()

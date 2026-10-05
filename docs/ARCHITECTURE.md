@@ -84,6 +84,18 @@ Import video in the GUI).
   pinned yet (Phase 6).
 - The photo checks don't ask video frames for an EXIF focal length.
 
+## Diagnostics and hardware (`diagnostics.py`, `core/hardware.py`)
+
+- `write_diagnostics` zips what a bug report needs: project.json, every
+  capture.json, stage.json and export.json, each stage's logs (the last
+  2 MB of each), the photo checks' findings, the tools found and system
+  information. Never photos, videos or models. Logs hold file paths, which
+  the GUI and CLI point out.
+- `detect_gpus` lists GPUs from `vulkaninfo --summary` (name, type,
+  driver: the Mesa version on Linux), with VRAM from sysfs for amdgpu, or
+  from `system_profiler` on macOS (Apple GPUs share system memory).
+  Software renderers (llvmpipe) are flagged. `ez2d check` prints them.
+
 ## Photo checks (`core/photos.py`)
 
 Each photo is inspected once, on import or when a project from an older

@@ -135,7 +135,9 @@ def test_check(
 def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
-    assert set(commands()) == {"new", "import", "photos", "run", "export", "check", "status"}
+    assert set(commands()) == {
+        "new", "import", "photos", "run", "export", "check", "diagnostics", "status"
+    }  # fmt: skip
 
 
 def test_run_with_quality(

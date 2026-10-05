@@ -27,10 +27,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO, cast
 
-from ez2digitize import presets, video
+from ez2digitize import diagnostics, presets, video
 from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
-from ez2digitize.core import photos
+from ez2digitize.core import hardware, photos
 from ez2digitize.core.capture import (
     CaptureBundle,
     CaptureError,
@@ -162,6 +162,13 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--ffmpeg", type=Path, help="FFmpeg executable (for video import)")
     check.set_defaults(func=_cmd_check)
 
+    diag = sub.add_parser(
+        "diagnostics", help="zip the logs and settings (not the photos) for a bug report"
+    )
+    diag.add_argument("project", type=Path)
+    diag.add_argument("-o", "--output", type=Path, help="zip file (default: in the current folder)")
+    diag.set_defaults(func=_cmd_diagnostics)
+
     status = sub.add_parser("status", help="show captures and stage results")
     status.add_argument("project", type=Path)
     status.set_defaults(func=_cmd_status)
@@ -283,6 +290,14 @@ def _check_photos(project: Project) -> None:
             print(f"    {shown}{more}")
 
 
+def _cmd_diagnostics(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    target = args.output or Path.cwd() / diagnostics.default_name(project)
+    path = diagnostics.write_diagnostics(project, target)
+    print(f"wrote {path}: logs and settings, no photos (the logs contain file paths)")
+    return 0
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     """Exit 0 only if both tools run and are the pinned versions."""
     ok = True
@@ -308,6 +323,12 @@ def _cmd_check(args: argparse.Namespace) -> int:
     else:
         state = "ok" if video_tool.supported else f"older than {ffmpeg.SUPPORTED_MAJOR}.0"
         print(f"FFmpeg {video_tool.version} (for video import): {state}, {video_tool.path}")
+    gpus = hardware.detect_gpus()
+    for gpu in gpus:
+        note = " (software renderer: too slow for splats)" if gpu.is_cpu else ""
+        print(f"GPU: {hardware.describe(gpu)}{note}")
+    if not gpus:
+        print("GPU: none found (vulkaninfo missing or no Vulkan driver)")
     return 0 if ok else 1
 
 

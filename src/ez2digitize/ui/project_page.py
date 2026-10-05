@@ -7,10 +7,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -32,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import presets, video
+from ez2digitize import diagnostics, presets, video
 from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -213,10 +215,16 @@ class ProjectPage(QWidget):
         self.open_result_button.clicked.connect(self.open_result_folder)
         self.open_log_button = QPushButton("Open full log")
         self.open_log_button.clicked.connect(self.open_failure_log)
+        self.diagnostics_button = QPushButton("Export diagnostics…")
+        self.diagnostics_button.setToolTip(
+            "Save the logs and settings (not the photos) to attach to a bug report"
+        )
+        self.diagnostics_button.clicked.connect(self.export_diagnostics)
         result_row = QHBoxLayout()
         result_row.addWidget(self.result_label, 1)
         result_row.addWidget(self.open_result_button)
         result_row.addWidget(self.open_log_button)
+        result_row.addWidget(self.diagnostics_button)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -324,6 +332,7 @@ class ProjectPage(QWidget):
         self.open_log_button.setVisible(
             self.last_failure is not None and self.last_failure.log is not None
         )
+        self.diagnostics_button.setVisible(self.last_failure is not None)
 
     def _item(self, stage: str) -> QTreeWidgetItem:
         item = self._stage_items.get(stage)
@@ -469,6 +478,50 @@ class ProjectPage(QWidget):
             first = result.exports[0]
             return first.parent.parent if first.parent.name in ("obj", "ply") else first.parent
         return result.files[0].parent if result.files else None
+
+    def export_diagnostics(self, target: Path | None = None) -> Path | None:
+        """Save the diagnostics zip (asking where, unless `target` is given)."""
+        if target is None:
+            default = Path.home() / diagnostics.default_name(self.project)
+            chosen, _ = QFileDialog.getSaveFileName(
+                self, "Export diagnostics", str(default), "Zip files (*.zip)"
+            )
+            if not chosen:
+                return None
+            target = Path(chosen)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            path = diagnostics.write_diagnostics(self.project, target, tools=self._tool_report)
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.status.setText(
+            f"Diagnostics saved to {path}. It holds logs and settings, not photos; the "
+            "logs contain file paths."
+        )
+        return path
+
+    def _tool_report(self) -> dict[str, Any]:
+        report: dict[str, Any] = {}
+        try:
+            tools = self.tools_factory()
+        except BackendError as exc:
+            report["reconstruction"] = {"error": str(exc)}
+        else:
+            report["colmap"] = {"version": tools.colmap.version, "path": str(tools.colmap.path)}
+            report["openmvs"] = {
+                "version": tools.openmvs.version,
+                "path": str(tools.openmvs.bin_dir),
+            }
+        try:
+            tool = self.ffmpeg_factory()
+        except BackendError as exc:
+            report["ffmpeg"] = {"error": str(exc)}
+        else:
+            report["ffmpeg"] = {"version": tool.version, "path": str(tool.path)}
+        return report
 
     def open_failure_log(self) -> None:
         if self.last_failure is not None and self.last_failure.log is not None:

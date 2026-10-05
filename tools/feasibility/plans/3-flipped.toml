@@ -1,0 +1,29 @@
+# Dataset 3: two-sided scan. Capture the object, flip it upside down, capture
+# again. Put the two sets in subfolders of one images folder:
+#   ~/ez2d-data/flipped/images/upright/...
+#   ~/ez2d-data/flipped/images/flipped/...
+# Without masks COLMAP should produce two separate models (the mat no longer
+# agrees with the object); with masks, ideally one model with all photos.
+# File names must be unique across the two subfolders (OpenMVS masks are
+# matched by file name only); consecutive phone photo numbers are fine.
+# Answers: does the flip workflow work through masks?
+
+[dataset]
+name = "flipped"
+images = "~/ez2d-data/flipped/images"
+masks = "~/ez2d-data/flipped/masks"
+
+[[colmap]]
+label = "sift3200"
+max_image_size = 3200
+
+[[colmap]]
+label = "sift3200-masked"
+max_image_size = 3200
+masks = true
+
+[[openmvs]]
+label = "lvl1-masked"
+source = "sift3200-masked"
+resolution_level = 1
+masks = true

@@ -110,7 +110,8 @@ fetch openmvs https://github.com/cdcseacave/openMVS.git "$OPENMVS_VERSION"
 # OpenMVS asks for vcpkg's "opencv" with its default features, which on Linux
 # include the GTK GUI backend: a large GTK/X11 build (it failed on at-spi2-core)
 # for windows OpenMVS only opens in debug builds. Ask for OpenCV without
-# default features, keeping the image formats OpenMVS reads and writes.
+# default features, keeping what OpenMVS uses: calib3d (stereo matching,
+# speckle filter, rectification) and the image formats it reads and writes.
 python3 - openmvs/vcpkg.json <<'EOF'
 import json, sys
 path = sys.argv[1]
@@ -122,7 +123,7 @@ deps = [
 deps.append({
     "name": "opencv4",
     "default-features": False,
-    "features": ["eigen", "jpeg", "jpegxl", "openexr", "png", "tiff"],
+    "features": ["calib3d", "eigen", "jpeg", "jpegxl", "openexr", "png", "tiff"],
 })
 manifest["dependencies"] = deps
 json.dump(manifest, open(path, "w"), indent=2)

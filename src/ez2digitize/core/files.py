@@ -7,7 +7,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import struct
 import tempfile
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -70,3 +72,21 @@ def fingerprint(value: Any) -> str:
     """Hex SHA-256 of a JSON-serialisable value, independent of dict key order."""
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def write_uniform_png(path: Path, width: int, height: int, value: int) -> None:
+    """Write an 8-bit greyscale PNG where every pixel is `value` (e.g. a blank mask)."""
+    if not (0 <= value <= 255 and width > 0 and height > 0):
+        raise ValueError(f"invalid PNG: {width}x{height}, value {value}")
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    row = b"\0" + bytes([value]) * width  # filter type 0 (none), then the pixels
+    compressor = zlib.compressobj(9)
+    pixels = b"".join(compressor.compress(row) for _ in range(height)) + compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)  # 8-bit greyscale
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    )

@@ -32,7 +32,7 @@ from typing import Literal
 from ez2digitize.backends.common import BackendError, BackendMissing, find_tool
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
-from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input, tree_input
+from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
 
 NAME = "openmvs"
 PINNED_VERSION = "2.4.0"
@@ -159,14 +159,16 @@ def densify(
     project: Project,
     imported: StageManifest,
     *,
-    masks: Path | None = None,
+    masks: StageManifest | None = None,
     stage: str = "densify",
     options: DensifyOptions | None = None,
 ) -> StageSpec:
-    """DensifyPointCloud. `masks` holds `<image stem>.mask.png` per undistorted image.
+    """DensifyPointCloud, optionally masked.
 
-    Masks must match the undistorted images, so COLMAP's masks need warping
-    first; that is a separate stage (planned with the masking work).
+    `masks` is a `colmap.undistort_masks` stage: one `<stem>.mask.png` per
+    undistorted image, where 0 marks background to ignore. The mask paths
+    are saved into the dense scene relative to this stage's folder, which
+    resolves the same from the later sibling stages.
     """
     options = options or DensifyOptions()
     stage_dir = project.stage_dir(stage)
@@ -182,8 +184,13 @@ def densify(
         argv += ["--max-threads", str(options.threads)]
     inputs = {"scene": stage_input(imported)}
     if masks is not None:
-        argv += ["--mask-path", masks, "--ignore-mask-label", "0"]
-        inputs["masks"] = tree_input(masks)
+        argv += [
+            "--mask-path",
+            project.stage_dir(masks.stage) / "masks",
+            "--ignore-mask-label",
+            "0",
+        ]
+        inputs["masks"] = stage_input(masks)
     return StageSpec(
         name=stage,
         backend=mvs.backend,

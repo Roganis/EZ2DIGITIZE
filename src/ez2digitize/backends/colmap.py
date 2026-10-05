@@ -15,6 +15,7 @@ list. Masks follow COLMAP's own naming, `<masks>/<capture id>/IMG_0001.jpg.png`.
     matching/   database.db (a copy of the features one, then matched)
     mapping/    sparse/0, sparse/1, ... (one folder per model)
     undistort/  images/, sparse/ (pinhole model, input for OpenMVS and Brush)
+    mask-undistort/  masks/<image stem>.mask.png (masks warped like undistort/)
 
 Matching works on a copy of the database so the features stage's output is
 never modified and both stay valid for caching.
@@ -22,17 +23,19 @@ never modified and both stay valid for caching.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import struct
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
+from ez2digitize.backends.colmap_model import read_cameras, read_image_cameras
 from ez2digitize.backends.common import BackendError, BackendMissing, find_tool
 from ez2digitize.core.capture import CaptureBundle
-from ez2digitize.core.files import fingerprint
+from ez2digitize.core.files import fingerprint, write_uniform_png
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import (
@@ -299,6 +302,97 @@ def undistort(
         inputs={"mapping": stage_input(mapping)},
         parse_line=ColmapProgress(),
     )
+
+
+MASK_INPUT = "mask_cameras.txt"
+MASKS_OUT = "masks"
+
+
+def undistort_masks(
+    colmap: Colmap,
+    project: Project,
+    mapping: StageManifest,
+    *,
+    model: Path,
+    masks: Path,
+    stage: str = "mask-undistort",
+    options: UndistortOptions | None = None,
+) -> StageSpec:
+    """Masks warped like the images of `undistort`, named the way OpenMVS wants them.
+
+    `image_undistorter` only undistorts the photos. This stage runs
+    `image_undistorter_standalone` on the masks with each image's camera and
+    the same size limit, which is the same computation, so the masks line up
+    with the undistorted photos. Output: `<stage>/masks/<image stem>.mask.png`
+    for every registered image, OpenMVS's `--mask-path` naming. Images without
+    a mask get a white one (all kept), since OpenMVS needs one per image.
+
+    Masks are `<masks>/<image name>.png`, COLMAP's naming (see
+    `extract_features`). Use the same `options` as for `undistort`.
+    """
+    options = options or UndistortOptions()
+    stage_dir = project.stage_dir(stage)
+    cameras = read_cameras(model)
+    image_cameras = read_image_cameras(model)
+    _check_unique_stems(image_cameras)
+
+    def prepare(folder: Path) -> None:
+        staged = folder / "input"
+        staged.mkdir()
+        lines = []
+        for name, camera_id in sorted(image_cameras.items()):
+            camera = cameras[camera_id]
+            target = staged / f"{PurePosixPath(name).stem}.mask.png"
+            source = masks / f"{name}.png"
+            if source.is_file():
+                _link_or_copy(source, target)
+            else:
+                write_uniform_png(target, camera.width, camera.height, 255)
+            lines.append(f"{target.name} {camera.to_text()}")
+        (folder / MASK_INPUT).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (folder / MASKS_OUT).mkdir()
+
+    return StageSpec(
+        name=stage,
+        backend=colmap.backend,
+        argv=[
+            colmap.path,
+            "image_undistorter_standalone",
+            "--image_path",
+            stage_dir / "input",
+            "--input_file",
+            stage_dir / MASK_INPUT,
+            "--output_path",
+            stage_dir / MASKS_OUT,
+            "--max_image_size",
+            str(options.max_image_size),
+        ],  # fmt: skip
+        parameters={**asdict(options), "model": model.name},
+        inputs={"mapping": stage_input(mapping), "masks": tree_input(masks)},
+        parse_line=ColmapProgress(),
+        prepare=prepare,
+    )
+
+
+def _check_unique_stems(image_cameras: dict[str, int]) -> None:
+    # OpenMVS finds a mask by the image's file stem alone, in one folder.
+    seen: dict[str, str] = {}
+    for name in sorted(image_cameras):
+        stem = PurePosixPath(name).stem
+        if stem in seen:
+            raise BackendError(
+                f"{seen[stem]} and {name} have the same file name; OpenMVS can't tell "
+                f"their masks apart. Rename one of them, or run without masks."
+            )
+        seen[stem] = name
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    # A hard link costs no space; fall back to copying across file systems.
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copyfile(source, target)
 
 
 # --- results -------------------------------------------------------------------

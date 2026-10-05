@@ -154,8 +154,8 @@ installable on Linux as an AppImage.
   are unchanged). Runner, manifests and caching done in `ez2digitize.core`
   (`runner`, `stage`); COLMAP and OpenMVS modules with progress parsers in
   `ez2digitize.backends`; the pipeline that chains them in
-  `ez2digitize.pipeline`, with a headless CLI (`ez2d`). Still to do: warping
-  masks to the undistorted images for OpenMVS.
+  `ez2digitize.pipeline`, with a headless CLI (`ez2d`). Masks are warped to
+  the undistorted images and used by OpenMVS densification.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the

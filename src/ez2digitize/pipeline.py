@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The mesh pipeline: chains the backend stages over a project's captures.
 
-    sparse: features -> matching -> mapping -> undistort        (COLMAP)
+    sparse: features -> matching -> mapping -> undistort
+            [-> mask-undistort]                                  (COLMAP)
     dense:  mvs-import -> densify -> mesh [-> refine] -> texture (OpenMVS)
 
 The two halves run separately because the user adjusts the crop box on the
@@ -31,7 +32,7 @@ from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
 
-SPARSE_STAGES = ("features", "matching", "mapping", "undistort")
+SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
 STAGES = SPARSE_STAGES + DENSE_STAGES
 
@@ -62,7 +63,7 @@ class MeshSettings:
     # None skips RefineMesh (slow; worth it for fine detail).
     refine: openmvs.RefineOptions | None = None
     texture: openmvs.TextureOptions = field(default_factory=openmvs.TextureOptions)
-    # Use the project's masks for feature extraction when there are any.
+    # Use the project's masks (feature extraction and densification) if it has any.
     use_masks: bool = True
 
 
@@ -131,6 +132,8 @@ class SparseResult:
     registered_images: int
     total_images: int
     undistorted: StageManifest
+    # Masks warped to the undistorted images, for OpenMVS; None if unmasked.
+    masks: StageManifest | None = None
 
 
 @dataclass
@@ -221,7 +224,7 @@ def run_dense(
     """The textured mesh from the sparse result already in the project."""
     settings = settings or MeshSettings()
     with _exclusive():
-        sparse = _existing_sparse(project)
+        sparse = _existing_sparse(project, settings)
         return _dense(project, tools, settings, sparse, on_event, cancel, force_from)
 
 
@@ -257,7 +260,7 @@ def _sparse(
     except BackendError as exc:
         raise PipelineError(str(exc)) from exc
     masks = project.masks_dir if settings.use_masks and _has_masks(project.masks_dir) else None
-    run = _Run(project, _stages(settings), on_event, cancel, force_from)
+    run = _Run(project, _stages(settings, masked=masks is not None), on_event, cancel, force_from)
     sfm = tools.colmap
 
     features = run(
@@ -292,8 +295,22 @@ def _sparse(
     undistorted = run(
         colmap.undistort(sfm, project, mapping, model=model, options=settings.undistort)
     )
+    warped = None
+    if masks is not None:
+        try:
+            spec = colmap.undistort_masks(
+                sfm, project, mapping, model=model, masks=masks, options=settings.undistort
+            )
+        except BackendError as exc:
+            run.emit(Notice(f"densifying without masks: {exc}"))
+        else:
+            warped = run(spec)
     return SparseResult(
-        model=model, registered_images=registered, total_images=total, undistorted=undistorted
+        model=model,
+        registered_images=registered,
+        total_images=total,
+        undistorted=undistorted,
+        masks=warped,
     )
 
 
@@ -306,11 +323,14 @@ def _dense(
     cancel: CancelToken | None,
     force_from: str | None,
 ) -> MeshResult:
-    run = _Run(project, _stages(settings), on_event, cancel, force_from)
+    masked = sparse.masks is not None
+    run = _Run(project, _stages(settings, masked=masked), on_event, cancel, force_from)
     mvs = tools.openmvs
 
     imported = run(openmvs.import_colmap(mvs, project, sparse.undistorted))
-    dense = run(openmvs.densify(mvs, project, imported, options=settings.densify))
+    dense = run(
+        openmvs.densify(mvs, project, imported, masks=sparse.masks, options=settings.densify)
+    )
     mesh = run(openmvs.reconstruct_mesh(mvs, project, dense, options=settings.mesh))
     if settings.refine is not None:
         mesh = run(openmvs.refine_mesh(mvs, project, dense, mesh, options=settings.refine))
@@ -324,11 +344,20 @@ def _dense(
     return MeshResult(sparse=sparse, textured=textured, files=files)
 
 
-def _existing_sparse(project: Project) -> SparseResult:
+def _existing_sparse(project: Project, settings: MeshSettings) -> SparseResult:
     """The sparse result of an earlier run_sparse, from its manifests."""
     undistorted = load_manifest(project.stage_dir("undistort"))
     if undistorted is None or not undistorted.succeeded:
         raise PipelineError("run the sparse reconstruction first")
+    warped = load_manifest(project.stage_dir("mask-undistort"))
+    # Only masks made from the same mapping run as the undistorted images.
+    if not (
+        settings.use_masks
+        and warped is not None
+        and warped.succeeded
+        and warped.inputs.get("mapping") == undistorted.inputs.get("mapping")
+    ):
+        warped = None
     model_name = undistorted.parameters.get("model")
     model = project.stage_dir("mapping") / "sparse" / str(model_name)
     total = len(colmap.image_names(list_bundles(project)))
@@ -337,11 +366,17 @@ def _existing_sparse(project: Project) -> SparseResult:
         registered_images=colmap.registered_images(model),
         total_images=total,
         undistorted=undistorted,
+        masks=warped,
     )
 
 
-def _stages(settings: MeshSettings) -> tuple[str, ...]:
-    return tuple(s for s in STAGES if settings.refine is not None or s != "refine")
+def _stages(settings: MeshSettings, *, masked: bool) -> tuple[str, ...]:
+    skip = set()
+    if settings.refine is None:
+        skip.add("refine")
+    if not masked:
+        skip.add("mask-undistort")
+    return tuple(s for s in STAGES if s not in skip)
 
 
 def _auto_matching(bundles: list[CaptureBundle]) -> colmap.MatchOptions:

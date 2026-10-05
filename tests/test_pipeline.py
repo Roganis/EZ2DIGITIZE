@@ -47,19 +47,33 @@ if os.environ.get("FAKE_FAIL") == cmd:
     print("something went wrong", flush=True)
     sys.exit(1)
 if cmd == "feature_extractor":
-    Path(opt("--database_path")).write_text("db")
+    # The "database" is the image list, so the mapper knows the names.
+    Path(opt("--database_path")).write_text(Path(opt("--image_list_path")).read_text())
     print("Processed file [1/1]")
 elif cmd in ("mapper", "global_mapper"):
+    names = Path(opt("--database_path")).read_text().split()
     for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").split(",")):
         if not n:
             continue
         model = Path(opt("--output_path")) / str(i)
         model.mkdir(parents=True)
-        (model / "images.bin").write_bytes(struct.pack("<Q", int(n)))
+        # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
+        cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
+        (model / "cameras.bin").write_bytes(cameras)
+        images = struct.pack("<Q", int(n))
+        for image_id, name in enumerate(names[: int(n)], 1):
+            images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
+            images += name.encode() + b"\\0" + struct.pack("<Q", 0)
+        (model / "images.bin").write_bytes(images)
 elif cmd == "image_undistorter":
     out = Path(opt("--output_path"))
     (out / "images").mkdir()
     (out / "sparse").mkdir()
+elif cmd == "image_undistorter_standalone":
+    src, out = Path(opt("--image_path")), Path(opt("--output_path"))
+    for line in Path(opt("--input_file")).read_text().splitlines():
+        name = line.split()[0]
+        (out / name).write_bytes((src / name).read_bytes())
 """
 
 FAKE_OPENMVS = """
@@ -120,7 +134,8 @@ def test_run_mesh_runs_every_stage_in_order(project: Project, tools: Tools) -> N
     result = pipeline.run_mesh(project, tools, on_event=handler)
 
     started = [e for e in events if isinstance(e, StageStarted)]
-    assert [e.stage for e in started] == [s for s in pipeline.STAGES if s != "refine"]
+    unmasked = [s for s in pipeline.STAGES if s not in ("refine", "mask-undistort")]
+    assert [e.stage for e in started] == unmasked
     assert [(e.index, e.count) for e in started][:2] == [(1, 8), (2, 8)]
     assert result.sparse.registered_images == 3 and result.sparse.total_images == 3
     assert [p.name for p in result.files] == ["scene_textured.ply", "scene_textured0.png"]
@@ -142,7 +157,7 @@ def test_refine_is_optional(project: Project, tools: Tools) -> None:
     settings = MeshSettings(refine=RefineOptions())
     pipeline.run_mesh(project, tools, settings, on_event=handler)
     stages = [e.stage for e in events if isinstance(e, StageStarted)]
-    assert stages == list(pipeline.STAGES)
+    assert stages == [s for s in pipeline.STAGES if s != "mask-undistort"]
     texture_cmd = (project.stage_dir("texture") / "log.txt").read_text()
     assert "scene_refined.ply" in texture_cmd
 
@@ -264,3 +279,47 @@ def test_cancel_and_busy(project: Project, tools: Tools, monkeypatch: pytest.Mon
     # The lock is released afterwards.
     os.environ.pop("FAKE_SLEEP")
     pipeline.run_sparse(project, tools)
+
+
+def test_masks_reach_openmvs_warped_and_named_by_stem(project: Project, tools: Tools) -> None:
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir()
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"mask of a")
+    events, handler = _collect()
+    result = pipeline.run_mesh(project, tools, on_event=handler)
+
+    assert result.sparse.masks is not None
+    started = [e.stage for e in events if isinstance(e, StageStarted)]
+    assert started.index("mask-undistort") == started.index("undistort") + 1
+    warped = project.stage_dir("mask-undistort") / "masks"
+    assert sorted(p.name for p in warped.iterdir()) == ["a.mask.png", "b.mask.png", "c.mask.png"]
+    assert (warped / "a.mask.png").read_bytes() == b"mask of a"
+    assert (warped / "b.mask.png").read_bytes().startswith(b"\x89PNG")  # white: keep all
+    camera_list = (project.stage_dir("mask-undistort") / "mask_cameras.txt").read_text()
+    assert camera_list.splitlines()[0] == "a.mask.png SIMPLE_RADIAL 8 6 7.0 4.0 3.0 0.01"
+    densify_log = (project.stage_dir("densify") / "log.txt").read_text()
+    assert f"--mask-path {warped}" in densify_log
+
+    # Dense-only runs pick the masks up from the manifests; unmasked runs don't.
+    events, handler = _collect()
+    pipeline.run_dense(project, tools, on_event=handler)
+    assert all(e.reused for e in events if isinstance(e, StageFinished))
+    pipeline.run_dense(project, tools, MeshSettings(use_masks=False))
+    assert "--mask-path" not in (project.stage_dir("densify") / "log.txt").read_text()
+
+
+def test_same_file_name_in_two_captures_skips_openmvs_masks(
+    project: Project, tools: Tools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "a.jpg").write_bytes(b"another a")
+    second = import_files(project, [other / "a.jpg"], source="folder")
+    (project.masks_dir / second.id).mkdir(parents=True)
+    (project.masks_dir / second.id / "a.jpg.png").write_bytes(b"m")
+    monkeypatch.setenv("FAKE_MODELS", "4")
+    events, handler = _collect()
+    result = pipeline.run_mesh(project, tools, on_event=handler)
+    assert result.sparse.masks is None
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any("densifying without masks" in n and "same file name" in n for n in notices)

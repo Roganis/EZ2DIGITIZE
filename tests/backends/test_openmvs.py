@@ -77,12 +77,15 @@ def test_densify(project: Project) -> None:
     assert _opt(spec, "--resolution-level") == "1"
     assert "--mask-path" not in spec.argv and spec.parameters["masked"] is False
 
-    masks = project.stages_dir / "mask-warp"
-    masks.mkdir(parents=True)
     masked = openmvs.densify(
-        MVS, project, _manifest("mvs-import"), masks=masks, options=DensifyOptions(2, threads=3)
+        MVS,
+        project,
+        _manifest("mvs-import"),
+        masks=_manifest("mask-undistort", "w1"),
+        options=DensifyOptions(2, threads=3),
     )
-    assert _opt(masked, "--mask-path") == str(masks)
+    assert _opt(masked, "--mask-path") == str(project.stage_dir("mask-undistort") / "masks")
+    assert masked.inputs["masks"] == "run:w1"
     assert _opt(masked, "--ignore-mask-label") == "0"
     assert _opt(masked, "--max-threads") == "3"
     assert masked.cache_key() != spec.cache_key()

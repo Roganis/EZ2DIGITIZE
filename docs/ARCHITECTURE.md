@@ -126,7 +126,8 @@ outputs.
 Mesh path (Phase 2); the stages in brackets are done:
 
 ```
-import -> checks -> masks -> [features -> matching -> mapping -> undistort]
+import -> checks -> masks -> [features -> matching -> mapping -> undistort
+       -> mask-undistort]
        -> crop box (user) -> [mvs-import -> densify -> mesh -> (refine) -> texture]
        -> export
 ```
@@ -142,9 +143,18 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort]
 - Errors: `StageFailed` carries the manifest, log path and last lines of the
   log; `PipelineCancelled` after a cancel; `PipelineError` for anything that
   stops the run before or between stages (no captures, no model).
-- *(planned)* Masks for OpenMVS: COLMAP's masks must be warped to the
-  undistorted images first, so densify runs unmasked for now (on the
-  synthetic scene that costs about 5x the time).
+- Masks reach OpenMVS through the `mask-undistort` stage (after
+  `undistort`, only when the project has masks). COLMAP's
+  `image_undistorter_standalone` warps them with each image's camera and the
+  same size limit as `image_undistorter`, so they line up with the
+  undistorted photos (on the synthetic scene: IoU 0.98 with the originals,
+  the difference being a one-pixel interpolated border that keeps a little
+  more). The stage names them `<stem>.mask.png` as OpenMVS's `--mask-path`
+  wants and writes a white mask for images without one, since OpenMVS
+  needs one per image. Two images with the same file name in different
+  captures can't be told apart there; the pipeline then densifies without
+  masks and says so. On the synthetic scene, masked densify takes 61 s
+  instead of 236 s.
 
 Splat path (Phase 3) branches after `undistort`:
 

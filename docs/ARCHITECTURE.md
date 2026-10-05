@@ -81,9 +81,11 @@ outputs.
   then `SIGKILL` after a grace period. Anything a finished process leaves
   behind holding its output open is killed too. POSIX only for now;
   Windows will need a job object.
-- stdout and stderr are merged (universal newlines, so `\r` progress lines
-  are split), written to the stage's `log.txt`, and passed line by line to
-  the backend module's progress parser.
+- stdout and stderr are merged and split into lines (also at the lone `\r`
+  of redrawn progress lines), written to the stage's `log.txt`, and passed
+  line by line to the backend module's progress parser. OpenMVS buffers its
+  console output when it goes to a pipe, so its stages run under a
+  pseudo-terminal (`use_pty`).
 - The runner emits plain Python events (`Started`, `Output`, `Progress`)
   on the calling thread, in order. The UI runs it on a worker thread and
   wraps the events in Qt signals; the CLI prints them.

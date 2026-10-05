@@ -68,6 +68,9 @@ class StageSpec:
     inputs: Mapping[str, str] = field(default_factory=dict)
     env: Mapping[str, str] | None = None
     parse_line: LineParser | None = None
+    # Run under a pseudo-terminal: for tools whose output is block-buffered
+    # when it goes to a pipe (see runner.run_process).
+    use_pty: bool = False
     # Called with the (new, empty) stage folder just before the command runs,
     # to write files the command reads (image lists, copies of a database).
     prepare: Callable[[Path], None] | None = None
@@ -194,6 +197,7 @@ def run_stage(
         on_event=on_event,
         parse_line=spec.parse_line,
         cancel=cancel,
+        use_pty=spec.use_pty,
     )
     status: Status = "cancelled" if result.cancelled else "succeeded" if result.ok else "failed"
     manifest = StageManifest(

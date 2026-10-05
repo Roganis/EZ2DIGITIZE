@@ -15,6 +15,10 @@ also writes its log and temporary files. Scene files store image paths
 relative to the working folder of the tool that wrote them; all stage
 folders are siblings under `stages/`, so a path like
 `../undistort/images/x.jpg` resolves the same from each of them.
+
+The tools run under a pseudo-terminal: they write their console output
+through C stdio, which is block-buffered on a pipe, so the progress lines
+would otherwise only arrive when a tool exits.
 """
 
 from __future__ import annotations
@@ -146,6 +150,7 @@ def import_colmap(
         ],  # fmt: skip
         inputs={"undistorted": stage_input(undistorted)},
         parse_line=OpenMVSProgress(),
+        use_pty=True,
     )
 
 
@@ -186,6 +191,7 @@ def densify(
         parameters={**asdict(options), "masked": masks is not None},
         inputs=inputs,
         parse_line=OpenMVSProgress(),
+        use_pty=True,
     )
 
 
@@ -216,6 +222,7 @@ def reconstruct_mesh(
         parameters=asdict(options),
         inputs={"dense": stage_input(dense)},
         parse_line=OpenMVSProgress(),
+        use_pty=True,
     )
 
 
@@ -248,6 +255,7 @@ def refine_mesh(
         parameters=asdict(options),
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
+        use_pty=True,
     )
 
 
@@ -281,6 +289,7 @@ def texture_mesh(
         parameters=asdict(options),
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
+        use_pty=True,
     )
 
 

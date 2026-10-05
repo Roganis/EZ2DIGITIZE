@@ -5,8 +5,10 @@
 - Commands are argument lists, never a shell string.
 - Each process starts in its own process group (session), so cancelling
   kills the whole tree: SIGTERM, then SIGKILL after a grace period.
-- stdout and stderr are merged, written to a log file, and handed line by
-  line to an optional parser that turns them into progress events.
+- stdout and stderr are merged, split into lines (at \n, \r\n and the lone
+  \r of redrawn progress lines), written to a log file, and handed line by
+  line to an optional parser that turns them into progress events. Tools that
+  buffer output written to a pipe can be given a pseudo-terminal instead.
 - Events are delivered on the calling thread, in order. A GUI calls
   `run_process` from a worker thread and forwards the events as signals.
 
@@ -16,9 +18,12 @@ process tree and has no `wait4`.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import os
+import pty
 import queue
+import re
 import resource
 import shlex
 import signal
@@ -112,11 +117,16 @@ def run_process(
     parse_line: LineParser | None = None,
     cancel: CancelToken | None = None,
     term_grace_s: float = 10.0,
+    use_pty: bool = False,
 ) -> ProcessResult:
     """Run `argv` to completion (or cancellation) and return what happened.
 
     `env` entries are added to the current environment. The log file is
     overwritten. Raises ProcessStartError if the command can't be started.
+
+    `use_pty` gives the command a pseudo-terminal instead of a pipe. Tools
+    that write through C stdio (OpenMVS) buffer their output in blocks when
+    it isn't a terminal, so without it their progress arrives only at exit.
     """
     args = [str(a) for a in argv]
     if not args:
@@ -130,28 +140,31 @@ def run_process(
         log.write(f"$ {shlex.join(args)}\n\n")
         log.flush()
         started_at, start = utc_now(), time.monotonic()
+        if use_pty:
+            read_fd, child_out = pty.openpty()
+        else:
+            read_fd, child_out = os.pipe()
         try:
             proc = subprocess.Popen(  # noqa: S603 - argument list, never a shell
                 args,
                 cwd=cwd,
                 env={**os.environ, **env} if env else None,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                # Universal newlines also split the \r-only progress lines that
-                # many CLI tools print.
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
+                stdout=child_out,
+                stderr=child_out,
                 start_new_session=True,
             )
         except OSError as exc:
+            os.close(read_fd)
             log.write(f"cannot start {args[0]}: {exc}\n")
             raise ProcessStartError(f"cannot start {args[0]}: {exc}") from exc
+        finally:
+            # The child has its own copy; EOF comes once it (and anything it
+            # started) closes it.
+            os.close(child_out)
 
         lines: queue.Queue[str | None] = queue.Queue()
-        reader = threading.Thread(target=_pump, args=(proc, lines), daemon=True)
+        reader = threading.Thread(target=_pump, args=(read_fd, lines), daemon=True)
         reader.start()
         emit(Started(argv=args, pid=proc.pid))
 
@@ -260,13 +273,57 @@ def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
     return done.stdout + done.stderr
 
 
-def _pump(proc: subprocess.Popen[str], lines: queue.Queue[str | None]) -> None:
-    assert proc.stdout is not None
+def _pump(fd: int, lines: queue.Queue[str | None]) -> None:
+    """Read output from `fd` until EOF and queue it line by line, then None."""
+    splitter = _LineSplitter()
     try:
-        for line in proc.stdout:
-            lines.put(line.rstrip("\n"))
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:  # Linux reports EIO on a pty once the child is gone
+                break
+            if not chunk:
+                break
+            for line in splitter.feed(chunk):
+                lines.put(line)
+        for line in splitter.close():
+            lines.put(line)
     finally:
+        os.close(fd)
         lines.put(None)
+
+
+class _LineSplitter:
+    """Splits a byte stream into lines at \n, \r\n and lone \r.
+
+    Lone \r is how CLI tools redraw a progress line; each redraw becomes a
+    line. A pseudo-terminal turns \n into \r\n, which must stay one break,
+    so a trailing \r is held back until the next chunk shows what follows.
+    """
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._pending = ""
+
+    def feed(self, chunk: bytes) -> list[str]:
+        return self._split(self._pending + self._decoder.decode(chunk), final=False)
+
+    def close(self) -> list[str]:
+        return self._split(self._pending + self._decoder.decode(b"", final=True), final=True)
+
+    def _split(self, text: str, *, final: bool) -> list[str]:
+        if not final and text.endswith("\r"):
+            text, self._pending = text[:-1], "\r"
+        else:
+            self._pending = ""
+        parts = re.split(r"\r\n|\r|\n", text)
+        rest = parts.pop()
+        if final:
+            if rest:
+                parts.append(rest)
+        else:
+            self._pending = rest + self._pending
+        return parts
 
 
 def _kill_group(pid: int, term_grace_s: float) -> tuple[int, resource.struct_rusage]:

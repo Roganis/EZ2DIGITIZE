@@ -237,3 +237,52 @@ def test_run_quick_errors(tmp_path: Path) -> None:
         run_quick([tmp_path / "missing"])
     with pytest.raises(ProcessStartError, match="did not answer"):
         run_quick(py("import time; time.sleep(5)"), timeout_s=0.2)
+
+
+@pytest.mark.parametrize(
+    ("chunks", "lines"),
+    [
+        ([b"a\nb\n"], ["a", "b"]),
+        ([b"a\r\nb"], ["a", "b"]),
+        ([b"a\r", b"\nb\n"], ["a", "b"]),  # \r\n split across reads
+        ([b"10%\r20%\r", b"done\n"], ["10%", "20%", "done"]),
+        ([b"\xc3", b"\xa9t\xc3\xa9\n"], ["été"]),  # UTF-8 split across reads
+        ([b"no newline at end"], ["no newline at end"]),
+        ([b"a\n\nb\n"], ["a", "", "b"]),
+    ],
+)
+def test_line_splitter(chunks: list[bytes], lines: list[str]) -> None:
+    from ez2digitize.core.runner import _LineSplitter
+
+    splitter = _LineSplitter()
+    out = [line for chunk in chunks for line in splitter.feed(chunk)]
+    assert out + splitter.close() == lines
+
+
+def test_pty_delivers_buffered_output_while_running(tmp_path: Path) -> None:
+    # Python, like C stdio, buffers stdout in blocks unless it is a terminal.
+    code = """
+        import sys, time
+        print("tty" if sys.stdout.isatty() else "pipe")
+        time.sleep(1.5)
+        print("end")
+    """
+    for use_pty, expected in ((False, "pipe"), (True, "tty")):
+        seen: list[tuple[str, float]] = []
+        start = time.monotonic()
+
+        def on_event(event: Event) -> None:
+            if isinstance(event, Output):
+                seen.append((event.line, time.monotonic() - start))  # noqa: B023
+
+        result = run_process(
+            py(code),
+            log_path=tmp_path / "log.txt",
+            on_event=on_event,
+            use_pty=use_pty,
+            env={"PYTHONUNBUFFERED": ""},  # empty means unset
+        )
+        assert result.ok
+        assert [line for line, _ in seen] == [expected, "end"]
+        first_line_at = seen[0][1]
+        assert (first_line_at < 1.0) == use_pty

@@ -65,18 +65,35 @@ def read_cameras(model_dir: Path) -> dict[int, Camera]:
     return cameras
 
 
-def read_image_cameras(model_dir: Path) -> dict[str, int]:
-    """Camera id of every registered image, by image name."""
+@dataclass(frozen=True)
+class ImagePose:
+    """A registered image: world-to-camera rotation (unit quaternion w, x, y, z)
+    and translation, as COLMAP stores them, and its camera."""
+
+    camera_id: int
+    qvec: tuple[float, float, float, float]
+    tvec: tuple[float, float, float]
+
+
+def read_images(model_dir: Path) -> dict[str, ImagePose]:
+    """Pose and camera of every registered image, by image name."""
     images = {}
     with _open(model_dir / "images.bin") as fh:
         for _ in range(int(_read(fh, "<Q")[0])):
             # image_id, rotation (qw, qx, qy, qz), translation (x, y, z), camera_id
-            camera_id = int(_read(fh, "<I7dI")[-1])
+            values = _read(fh, "<I7dI")
             name = _read_name(fh)
             num_points = int(_read(fh, "<Q")[0])
             fh.seek(num_points * 24, 1)  # x, y (double), point3D_id (uint64)
-            images[name] = camera_id
+            q = tuple(float(v) for v in values[1:5])
+            t = tuple(float(v) for v in values[5:8])
+            images[name] = ImagePose(int(values[8]), (q[0], q[1], q[2], q[3]), (t[0], t[1], t[2]))
     return images
+
+
+def read_image_cameras(model_dir: Path) -> dict[str, int]:
+    """Camera id of every registered image, by image name."""
+    return {name: pose.camera_id for name, pose in read_images(model_dir).items()}
 
 
 def _open(path: Path) -> BinaryIO:

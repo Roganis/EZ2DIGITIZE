@@ -157,3 +157,27 @@ games) while measuring.
 Ctrl+C stops the running step and its child processes. Rerunning the same
 command continues where it stopped; `--force` reruns everything, and `--only
 LABEL ...` limits a run to some variants.
+
+## Measuring accuracy against ground truth
+
+`bench.py eval` scores an EZ2DIGITIZE project the way MVS benchmarks (DTU,
+Tanks and Temples) do: it aligns the reconstruction to a ground-truth mesh
+(similarity transform from the camera centres, then trimmed ICP), samples
+both surfaces, and reports accuracy, completeness, Chamfer distance and
+precision / recall / F-score at 0.5, 1 and 2% of the object's size, plus
+per-camera position and rotation errors.
+
+```sh
+uv run --group feasibility tools/feasibility/bench.py synth ~/ez2d-data/synthetic
+# ... make a project from ~/ez2d-data/synthetic/images and run it ...
+uv run --group feasibility tools/feasibility/bench.py eval ~/scans/synthetic \
+    --gt-mesh ~/ez2d-data/synthetic/ground_truth.ply \
+    --gt-cameras ~/ez2d-data/synthetic/ground_truth.json --out eval.json
+```
+
+`ground_truth.json` holds `units` and, per image file name, the camera's
+`center` and world-to-camera `rotation` (COLMAP convention). The synthetic
+scene writes both files; other datasets (DTU scans, rendered Google Scanned
+Objects) need a small converter each. Reconstruction far outside the
+ground truth's bounding box (background, turntable) is reported but left
+out of accuracy.

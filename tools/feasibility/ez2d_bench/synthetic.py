@@ -9,6 +9,7 @@ end to end; it says nothing about quality on real photos.
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -120,13 +121,20 @@ def generate(
     height: int = 480,
     seed: int = 7,
 ) -> int:
-    """Write images/ and masks/ (COLMAP naming) under out_dir; return image count."""
+    """Write images/, masks/ (COLMAP naming) and the ground truth; return image count.
+
+    Ground truth for `bench.py eval`: `ground_truth.ply`, the box without its
+    bottom face (no camera sees it), and `ground_truth.json`, every camera's
+    centre and world-to-camera rotation (COLMAP convention: x right, y down,
+    z forward), in scene units.
+    """
     rng = np.random.default_rng(seed)
     textures = [_noise_texture(rng) for _ in range(7)]  # mat + 6 box faces
     images_dir, masks_dir = out_dir / "images", out_dir / "masks"
     images_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     focal = 0.9 * width
+    cameras: dict[str, dict[str, object]] = {}
     n = 0
     for radius, height_z, offset in ((2.6, 1.0, 0.0), (2.2, 2.0, 0.5)):
         for k in range(views_per_ring):
@@ -136,5 +144,32 @@ def generate(
             name = f"view_{n:03d}.jpg"
             Image.fromarray(rgb).save(images_dir / name, quality=95)
             Image.fromarray(mask).save(masks_dir / f"{name}.png")
+            right, up, forward = _look_at(eye, np.array([0.0, 0.0, 0.3]))
+            cameras[name] = {
+                "center": eye.tolist(),
+                "rotation": np.stack([right, -up, forward]).tolist(),
+                "focal_px": focal,
+                "size": [width, height],
+            }
             n += 1
+    _write_ground_truth(out_dir, cameras)
     return n
+
+
+def _write_ground_truth(out_dir: Path, cameras: dict[str, dict[str, object]]) -> None:
+    lo, hi = BOX_MIN, BOX_MAX
+    corners = np.array([[x, y, z] for z in (lo[2], hi[2]) for y in (lo[1], hi[1])
+                        for x in (lo[0], hi[0])])  # fmt: skip
+    # Corner index = 4*z + 2*y + x (0 = min, 1 = max). Outward-facing quads,
+    # all sides but the bottom (z = 0, standing on the mat).
+    quads = [(4, 5, 7, 6), (0, 4, 6, 2), (1, 3, 7, 5), (0, 1, 5, 4), (2, 6, 7, 3)]
+    faces = [tri for a, b, c, d in quads for tri in ((a, b, c), (a, c, d))]
+    lines = ["ply", "format ascii 1.0", f"element vertex {len(corners)}",
+             "property float x", "property float y", "property float z",
+             f"element face {len(faces)}", "property list uchar int vertex_indices",
+             "end_header"]  # fmt: skip
+    lines += [" ".join(f"{c:.6f}" for c in v) for v in corners]
+    lines += [f"3 {a} {b} {c}" for a, b, c in faces]
+    (out_dir / "ground_truth.ply").write_text("\n".join(lines) + "\n")
+    info = {"units": "scene", "object": "box without its bottom face", "cameras": cameras}
+    (out_dir / "ground_truth.json").write_text(json.dumps(info, indent=1))

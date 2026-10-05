@@ -115,6 +115,18 @@ CC BY 4.0).
   import took as a 63rd photo: photo checks (Phase 2) should flag images
   whose size or camera differ from the rest.
 
+## Accuracy on the synthetic scene (`bench.py eval`)
+
+Masked run, level 2, local COLMAP 3.9.1 / OpenMVS 2.3.0, against the exact
+box (diagonal 1.22 scene units):
+
+- Cameras: 32/32, median rotation error 0.10°, median position error 0.3%
+  of the object's size.
+- Surface: median accuracy 0.2% of the diagonal; completeness about 100%
+  at 1%. Precision is lower (83-86%): about 15% of the reconstructed area
+  lies more than 2% away from the box, so the mean accuracy is 8x the
+  median. To look into (remains of the mat at the base?).
+
 ## Notes from validating the harness
 
 Found while testing the scripts in a CPU-only Ubuntu 24.04 container with

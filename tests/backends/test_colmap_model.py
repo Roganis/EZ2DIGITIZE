@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from ez2digitize.backends.colmap_model import Camera, read_cameras, read_image_cameras
+from ez2digitize.backends.colmap_model import (
+    Camera,
+    read_cameras,
+    read_image_cameras,
+    read_images,
+)
 from ez2digitize.backends.common import BackendError
 
 
@@ -30,6 +35,9 @@ def test_read_model(tmp_path: Path) -> None:
     assert cameras[7].model == "OPENCV" and len(cameras[7].params) == 8
     assert cameras[1].to_text() == "SIMPLE_RADIAL 4000 3000 3200.0 2000.0 1500.0 -0.05"
     assert read_image_cameras(tmp_path / "0") == {"cap/a.jpg": 1, "cap/é.jpg": 7}
+    poses = read_images(tmp_path / "0")
+    assert poses["cap/a.jpg"].qvec == (1, 0, 0, 0)
+    assert poses["cap/a.jpg"].tvec == (0.5, 0.5, 0.5)
 
 
 def test_read_model_errors(tmp_path: Path) -> None:

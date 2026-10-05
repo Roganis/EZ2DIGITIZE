@@ -73,6 +73,7 @@ machines:
 numpy           BSD-3-Clause
 Pillow          MIT-CMU (HPND)
 rembg           MIT
+scipy           BSD-3-Clause (k-d trees for the reconstruction evaluation)
 onnxruntime     MIT
 rembg models    downloaded at first use, licensed per model:
                 birefnet-general / -lite (BiRefNet)   MIT

@@ -32,6 +32,7 @@ feasibility = [
     "numpy>=2.0",
     "pillow>=11.0",
     "rembg[cpu]>=2.0.60",
+    "scipy>=1.13",
 ]
 
 [build-system]
@@ -78,7 +79,7 @@ mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["pytestqt.*", "rembg.*"]
+module = ["pytestqt.*", "rembg.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

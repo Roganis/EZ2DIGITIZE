@@ -255,6 +255,7 @@ feasibility = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "rembg", extra = ["cpu"] },
+    { name = "scipy" },
 ]
 packaging = [
     { name = "pyinstaller" },
@@ -274,6 +275,7 @@ feasibility = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=11.0" },
     { name = "rembg", extras = ["cpu"], specifier = ">=2.0.60" },
+    { name = "scipy", specifier = ">=1.13" },
 ]
 packaging = [{ name = "pyinstaller", specifier = ">=6.11" }]
 

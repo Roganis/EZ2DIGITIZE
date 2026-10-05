@@ -408,9 +408,17 @@ def _stages(settings: MeshSettings, *, masked: bool) -> tuple[str, ...]:
     return tuple(s for s in STAGES if s not in skip)
 
 
+# Up to this many images, every pair is matched even for video: it closes the
+# loop of an orbit, which sequential matching (without a vocabulary tree)
+# can't. Pairs grow with the square: 63 images took 17 s on the reference
+# desktop, 200 would take about 3 minutes.
+EXHAUSTIVE_MAX_IMAGES = 200
+
+
 def _auto_matching(bundles: list[CaptureBundle]) -> colmap.MatchOptions:
-    # Video frames only overlap with their neighbours in time.
-    if all(b.source == "video" for b in bundles):
+    images = sum(len(b.images) for b in bundles)
+    # Beyond that, video frames are matched with their neighbours in time.
+    if images > EXHAUSTIVE_MAX_IMAGES and all(b.source == "video" for b in bundles):
         return colmap.MatchOptions(mode="sequential")
     return colmap.MatchOptions(mode="exhaustive")
 

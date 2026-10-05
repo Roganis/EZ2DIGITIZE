@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
 from ez2digitize.backends.common import BackendMissing
+from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.project import Project
 from ez2digitize.pipeline import Tools
 from ez2digitize.ui.project_page import ProjectPage
@@ -138,3 +139,66 @@ def test_reopened_project_shows_earlier_results(
     qtbot.addWidget(reopened)
     assert _states(reopened)["texture"] == "Done"
     assert reopened.stages.topLevelItemCount() == 8
+
+
+@pytest.fixture
+def video_page(
+    qtbot: QtBot, tmp_path: Path, fake_tools: Tools, fake_ffmpeg: FFmpeg
+) -> Iterator[ProjectPage]:
+    page = ProjectPage(
+        Project.create(tmp_path / "vproject"),
+        lambda: fake_tools,
+        ffmpeg_factory=lambda: fake_ffmpeg,
+    )
+    qtbot.addWidget(page)
+    yield page
+    page.video_importer.cancel()
+    assert page.video_importer.wait() and page.photo_checks.wait()
+
+
+def _clip(tmp_path: Path) -> Path:
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"video")
+    return clip
+
+
+def test_video_import(qtbot: QtBot, video_page: ProjectPage, tmp_path: Path) -> None:
+    page = video_page
+    page.video_frames.setValue(20)
+    with qtbot.waitSignal(page.video_importer.succeeded, timeout=TIMEOUT_MS):
+        page.import_video(_clip(tmp_path))
+        assert not page.run_button.isEnabled() and page.cancel_button.isEnabled()
+        assert not page.import_button.isEnabled()
+    qtbot.waitUntil(lambda: not page.video_importer.running)
+    assert page.status.text() == "Imported 20 frames from clip.mp4, the sharpest of 80."
+    assert page.captures_label.text() == "20 photos in 1 import"
+    assert page.run_button.isEnabled()
+    assert page.tabs.currentWidget() is page.photo_checks
+
+
+def test_video_import_cancel(
+    qtbot: QtBot, video_page: ProjectPage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_SLEEP", "ffmpeg")
+    page = video_page
+    with qtbot.waitSignal(page.video_importer.cancelled, timeout=TIMEOUT_MS):
+        page.import_video(_clip(tmp_path))
+        qtbot.waitUntil(lambda: page.cancel_button.isEnabled())
+        page.cancel_run()
+    assert page.status.text() == "Video import cancelled"
+    assert "No photos yet" in page.captures_label.text()
+
+
+def test_video_import_without_ffmpeg(
+    qtbot: QtBot, tmp_path: Path, fake_tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing() -> FFmpeg:
+        raise BackendMissing("FFmpeg not found")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _p, title, text: warnings.append(text))
+    page = ProjectPage(Project.create(tmp_path / "p"), lambda: fake_tools, ffmpeg_factory=missing)
+    qtbot.addWidget(page)
+    page.import_video(_clip(tmp_path))
+    assert not page.video_importer.running
+    assert warnings and "Importing a video needs FFmpeg" in warnings[0]

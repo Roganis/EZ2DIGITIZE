@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTabWidget,
     QTreeWidget,
@@ -30,14 +31,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize.backends import colmap, openmvs
+from ez2digitize import video
+from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
-from ez2digitize.core.capture import CaptureError, import_folder, list_bundles
+from ez2digitize.backends.ffmpeg import FFmpeg
+from ez2digitize.core.capture import (
+    VIDEO_SUFFIXES,
+    CaptureBundle,
+    CaptureError,
+    import_folder,
+    list_bundles,
+)
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.pipeline import STAGES, MeshResult, MeshSettings, Tools
 from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
+from ez2digitize.ui.video_import import VideoImporter
 
 STAGE_LABELS = {
     "features": "Find features",
@@ -64,13 +74,15 @@ EXPORT_CHOICES = (
 LOG_MAX_LINES = 5000
 
 ToolsFactory = Callable[[], Tools]
+FFmpegFactory = Callable[[], FFmpeg]
 
 
 class ProjectPage(QWidget):
     """Shows one project and runs its pipeline.
 
-    `tools_factory` finds the backends when a run starts (it may raise
-    BackendError); tests pass fakes.
+    `tools_factory` finds the backends when a run starts, `ffmpeg_factory`
+    FFmpeg when a video is imported (both may raise BackendError); tests
+    pass fakes.
     """
 
     project_changed = Signal()
@@ -80,11 +92,15 @@ class ProjectPage(QWidget):
         project: Project,
         tools_factory: ToolsFactory,
         parent: QWidget | None = None,
+        *,
+        ffmpeg_factory: FFmpegFactory = ffmpeg.locate,
     ) -> None:
         super().__init__(parent)
         self.project = project
         self.tools_factory = tools_factory
+        self.ffmpeg_factory = ffmpeg_factory
         self.runner = PipelineRunner(self)
+        self.video_importer = VideoImporter(self)
         self.last_result: MeshResult | None = None
         self.last_failure: Failure | None = None
         self._stage_items: dict[str, QTreeWidgetItem] = {}
@@ -98,6 +114,8 @@ class ProjectPage(QWidget):
         self.captures_label = QLabel()
         self.import_button = QPushButton("Import photos…")
         self.import_button.clicked.connect(self.choose_folder_to_import)
+        self.import_video_button = QPushButton("Import video…")
+        self.import_video_button.clicked.connect(self.choose_video_to_import)
 
         header = QHBoxLayout()
         header_text = QVBoxLayout()
@@ -105,6 +123,7 @@ class ProjectPage(QWidget):
         header_text.addWidget(self.captures_label)
         header.addLayout(header_text, 1)
         header.addWidget(self.import_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.import_video_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self.detail = QComboBox()
         for label, level in DETAIL_LEVELS:
@@ -121,12 +140,21 @@ class ProjectPage(QWidget):
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
         self.use_masks = QCheckBox("Use masks")
         self.use_masks.setChecked(True)
+        self.video_frames = QSpinBox()
+        self.video_frames.setRange(10, 1000)
+        self.video_frames.setSingleStep(10)
+        self.video_frames.setValue(video.DEFAULT_FRAMES)
+        self.video_frames.setToolTip(
+            "How many frames to keep from a video: the sharpest of each stretch of "
+            "the video. About 100 suits an object filmed all around in a minute."
+        )
         settings_box = QGroupBox("Settings")
         form = QFormLayout(settings_box)
         form.addRow("Detail:", self.detail)
         form.addRow("Save as:", self.export_formats)
         form.addRow(self.refine)
         form.addRow(self.use_masks)
+        form.addRow("Video frames:", self.video_frames)
 
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
@@ -209,6 +237,13 @@ class ProjectPage(QWidget):
         r.failed.connect(self._on_failed)
         r.cancelled.connect(self._on_cancelled)
 
+        v = self.video_importer
+        v.running_changed.connect(lambda _running: self._update_buttons())
+        v.progress.connect(self._on_video_progress)
+        v.succeeded.connect(self._on_video_imported)
+        v.failed.connect(self._on_video_failed)
+        v.cancelled.connect(self._on_video_cancelled)
+
         self.refresh()
 
     # --- state shown --------------------------------------------------------
@@ -249,14 +284,18 @@ class ProjectPage(QWidget):
             item.setText(2, f"{manifest.wall_s:.1f} s")
 
     def _update_buttons(self) -> None:
+        importing = self.video_importer.running
         running = self.runner.running
-        has_photos = bool(list_bundles(self.project))
-        self.run_button.setEnabled(not running and has_photos)
-        self.cancel_button.setEnabled(running)
-        self.import_button.setEnabled(not running)
-        for widget in (self.detail, self.export_formats, self.refine):
-            widget.setEnabled(not running)
-        self.use_masks.setEnabled(not running and any(self.project.masks_dir.rglob("*.png")))
+        busy = running or importing
+        has_photos = any(b.images for b in list_bundles(self.project))
+        self.run_button.setEnabled(not busy and has_photos)
+        self.cancel_button.setEnabled(busy)
+        self.import_button.setEnabled(not busy)
+        self.import_video_button.setEnabled(not busy)
+        for widget in (self.detail, self.export_formats, self.refine, self.video_frames):
+            widget.setEnabled(not busy)
+        self.photo_checks.set_locked(busy)
+        self.use_masks.setEnabled(not busy and any(self.project.masks_dir.rglob("*.png")))
         self.open_result_button.setVisible(self.last_result is not None)
         self.open_log_button.setVisible(
             self.last_failure is not None and self.last_failure.log is not None
@@ -294,13 +333,41 @@ class ProjectPage(QWidget):
         except CaptureError as exc:
             QMessageBox.warning(self, "Import failed", str(exc))
             return
-        message = f"Imported {len(bundle.files)} files from {folder.name}."
-        if skipped:
-            message += f" Skipped {len(skipped)} that are not photos or videos."
+        message = f"Imported {len(bundle.files)} photos from {folder.name}."
+        videos = [p for p in skipped if p.suffix.lower() in VIDEO_SUFFIXES]
+        if videos:
+            message += f" Import its {len(videos)} video(s) with Import video."
+        if len(skipped) > len(videos):
+            message += f" Skipped {len(skipped) - len(videos)} files that are not photos."
         self.status.setText(message)
         self.refresh()
         self.tabs.setCurrentWidget(self.photo_checks)
         self.project_changed.emit()
+
+    def choose_video_to_import(self) -> None:
+        patterns = " ".join(f"*{suffix}" for suffix in sorted(VIDEO_SUFFIXES))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import a video", "", f"Videos ({patterns});;All files (*)"
+        )
+        if path:
+            self.import_video(Path(path))
+
+    def import_video(self, path: Path) -> None:
+        """Start importing `path` in the background (see the video_importer signals)."""
+        try:
+            tool = self.ffmpeg_factory()
+        except BackendError as exc:
+            QMessageBox.warning(
+                self,
+                "FFmpeg not found",
+                f"Importing a video needs FFmpeg. {exc}\n\nInstall it (e.g. from your "
+                "distribution's packages) or set its location in Settings → "
+                "Reconstruction tools.",
+            )
+            return
+        self.overall.setValue(0)
+        self.status.setText(f"Importing {path.name}…")
+        self.video_importer.start(self.project, path, tool, self.video_frames.value())
 
     def start_run(self) -> None:
         try:
@@ -335,6 +402,7 @@ class ProjectPage(QWidget):
         self.status.setText("Cancelling…")
         self.cancel_button.setEnabled(False)
         self.runner.cancel()
+        self.video_importer.cancel()
 
     def open_result_folder(self) -> None:
         folder = self._result_folder()
@@ -355,10 +423,38 @@ class ProjectPage(QWidget):
         if self.last_failure is not None and self.last_failure.log is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_failure.log)))
 
+    # --- video import signals -------------------------------------------------
+
+    def _on_video_progress(self, message: str, fraction: float) -> None:
+        self.status.setText(f"{message}… {fraction:.0%}")
+        # Extracting is most of the time; choosing frames the rest.
+        share = 0.85 if message.startswith("Extracting") else 0.15
+        start = 0.0 if message.startswith("Extracting") else 0.85
+        self.overall.setValue(int((start + share * fraction) * 1000))
+
+    def _on_video_imported(self, bundle: CaptureBundle) -> None:
+        info = bundle.source_info
+        self.overall.setValue(1000)
+        self.status.setText(
+            f"Imported {info.get('frames')} frames from {info.get('video')}, the sharpest of "
+            f"{info.get('candidates')}."
+        )
+        self.refresh()
+        self.tabs.setCurrentWidget(self.photo_checks)
+        self.project_changed.emit()
+
+    def _on_video_failed(self, message: str) -> None:
+        self.overall.setValue(0)
+        self.status.setText(f"Video import failed: {message}")
+        QMessageBox.warning(self, "Video import failed", message)
+
+    def _on_video_cancelled(self) -> None:
+        self.overall.setValue(0)
+        self.status.setText("Video import cancelled")
+
     # --- runner signals -----------------------------------------------------
 
     def _on_running_changed(self, running: bool) -> None:
-        self.photo_checks.set_locked(running)
         self._update_buttons()
 
     def _on_stage_started(self, stage: str, index: int, count: int) -> None:

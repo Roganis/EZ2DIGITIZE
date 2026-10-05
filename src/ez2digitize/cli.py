@@ -4,6 +4,7 @@
 
     ez2d new ~/scans/skull
     ez2d import ~/scans/skull ~/Pictures/skull-photos
+    ez2d import ~/scans/skull ~/Videos/skull.mp4 --frames 120
     ez2d photos ~/scans/skull               # photo checks
     ez2d photos ~/scans/skull --exclude Preview.jpg
     ez2d run ~/scans/skull                  # everything
@@ -25,12 +26,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
-from ez2digitize.backends import colmap, openmvs
+from ez2digitize import video
+from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import photos
 from ez2digitize.core.capture import (
     CaptureBundle,
     CaptureError,
+    classify,
     import_folder,
     import_masks,
     list_bundles,
@@ -84,14 +87,21 @@ def _parser() -> argparse.ArgumentParser:
     new.add_argument("--name", help="display name (default: the folder name)")
     new.set_defaults(func=_cmd_new)
 
-    imp = sub.add_parser("import", help="import folders of photos as capture bundles")
+    imp = sub.add_parser("import", help="import folders of photos, or videos, as capture bundles")
     imp.add_argument("project", type=Path)
-    imp.add_argument("folders", type=Path, nargs="+")
+    imp.add_argument("sources", type=Path, nargs="+", metavar="FOLDER_OR_VIDEO")
     imp.add_argument(
         "--masks",
         type=Path,
         help="folder of masks in COLMAP naming (<image name>.png), for a single folder",
     )
+    imp.add_argument(
+        "--frames",
+        type=int,
+        default=video.DEFAULT_FRAMES,
+        help=f"frames to keep from each video (default {video.DEFAULT_FRAMES})",
+    )
+    imp.add_argument("--ffmpeg", type=Path, help="FFmpeg executable")
     imp.set_defaults(func=_cmd_import)
 
     checks = sub.add_parser(
@@ -140,6 +150,7 @@ def _parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="find the reconstruction tools and check they run")
     check.add_argument("--colmap", type=Path, help="COLMAP executable")
     check.add_argument("--openmvs-dir", type=Path, help="folder with the OpenMVS tools")
+    check.add_argument("--ffmpeg", type=Path, help="FFmpeg executable (for video import)")
     check.set_defaults(func=_cmd_check)
 
     status = sub.add_parser("status", help="show captures and stage results")
@@ -155,20 +166,56 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
 
 def _cmd_import(args: argparse.Namespace) -> int:
-    if args.masks is not None and len(args.folders) != 1:
+    if args.masks is not None and (len(args.sources) != 1 or not args.sources[0].is_dir()):
         print("error: --masks needs exactly one folder to import", file=sys.stderr)
         return 2
+    if args.frames < 1:
+        print("error: --frames must be at least 1", file=sys.stderr)
+        return 2
     project = Project.open(args.project)
-    for folder in args.folders:
-        bundle, skipped = import_folder(project, folder)
-        print(f"{folder}: {len(bundle.files)} files -> capture {bundle.id}")
-        for path in skipped:
-            print(f"  skipped (not an image or video): {path.name}")
-        if args.masks is not None:
-            copied = import_masks(project, bundle, args.masks)
-            print(f"  {copied} of {len(bundle.images)} masks imported")
+    for source in args.sources:
+        if source.is_dir():
+            bundle, skipped = import_folder(project, source)
+            print(f"{source}: {len(bundle.files)} photos -> capture {bundle.id}")
+            for path in skipped:
+                why = "a video: import it on its own" if classify(path) else "not a photo"
+                print(f"  skipped ({why}): {path.name}")
+            if args.masks is not None:
+                copied = import_masks(project, bundle, args.masks)
+                print(f"  {copied} of {len(bundle.images)} masks imported")
+        else:
+            bundle = _import_video(project, source, args)
+            info = bundle.source_info
+            print(
+                f"{source}: {info['frames']} frames, the sharpest of {info['candidates']} "
+                f"extracted -> capture {bundle.id}"
+            )
     _check_photos(project)
     return 0
+
+
+def _import_video(project: Project, path: Path, args: argparse.Namespace) -> CaptureBundle:
+    tool = ffmpeg.locate(args.ffmpeg)
+    if not tool.supported:
+        print(f"note: FFmpeg {tool.version} is older than {ffmpeg.SUPPORTED_MAJOR}.0; it may fail")
+    shown: dict[str, int] = {}
+
+    def on_event(event: object) -> None:
+        # One line per 10 % per phase: readable in a terminal and in CI logs.
+        if isinstance(event, Progress) and event.fraction is not None:
+            step = int(event.fraction * 10)
+            if shown.get(event.message, -1) < step:
+                shown[event.message] = step
+                print(f"  {event.message}: {step * 10}%", flush=True)
+
+    cancel = CancelToken()
+    try:
+        return video.import_video(
+            project, path, tool, frames=args.frames, on_event=on_event, cancel=cancel
+        )
+    except KeyboardInterrupt:
+        cancel.cancel()
+        raise
 
 
 def _cmd_photos(args: argparse.Namespace) -> int:
@@ -244,6 +291,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
         state = "ok" if tool.supported else f"not the tested version {pinned}"
         print(f"{name} {tool.version}: {state}, {getattr(tool, where)}{bundled}")
         ok = ok and tool.supported
+    # Only video import needs FFmpeg: reported, but not required.
+    try:
+        video_tool = ffmpeg.locate(args.ffmpeg)
+    except BackendError as exc:
+        print(f"FFmpeg (for video import): {exc}")
+    else:
+        state = "ok" if video_tool.supported else f"older than {ffmpeg.SUPPORTED_MAJOR}.0"
+        print(f"FFmpeg {video_tool.version} (for video import): {state}, {video_tool.path}")
     return 0 if ok else 1
 
 

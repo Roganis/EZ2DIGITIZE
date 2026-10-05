@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ez2digitize.backends.colmap import Colmap
+from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.backends.openmvs import TOOLS, OpenMVS
 from ez2digitize.pipeline import Tools
 
@@ -85,6 +86,37 @@ if tool == "TextureMesh":
 """
 
 
+# A 10 s, 30 fps, 640x480 video. The extracted frames are noise; in each run
+# of four, the third is sharp and the others blurred (like motion blur).
+FAKE_FFPROBE = """
+import json
+print(json.dumps({"streams": [{"codec_name": "h264", "width": 640, "height": 480,
+    "avg_frame_rate": "30/1", "duration": "10.0"}], "format": {"duration": "10.0"}}))
+"""
+FAKE_FFMPEG = """
+import os, sys, time
+from pathlib import Path
+from PIL import Image, ImageFilter
+args = sys.argv[1:]
+if args == ["-version"]:
+    print("ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers")
+    sys.exit(0)
+if os.environ.get("FAKE_SLEEP") == "ffmpeg":
+    time.sleep(60)
+if os.environ.get("FAKE_FAIL") == "ffmpeg":
+    print("Invalid data found when processing input", flush=True)
+    sys.exit(1)
+rate = float(args[args.index("-vf") + 1].removeprefix("fps="))
+pattern = Path(args[-1])
+noise = Image.effect_noise((640, 480), 80).convert("RGB")
+for i in range(round(10.0 * rate)):
+    frame = noise if i % 4 == 2 else noise.filter(ImageFilter.GaussianBlur(3))
+    frame.save(pattern.parent / (pattern.name % (i + 1)), quality=90)
+    print(f"out_time_us={int(i / rate * 1e6)}", flush=True)
+print("progress=end", flush=True)
+"""
+
+
 def _script(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!{sys.executable}\n{body}")
@@ -99,6 +131,13 @@ def fake_tools(tmp_path: Path) -> Tools:
     for tool in TOOLS:
         _script(tmp_path / "fake" / "mvs" / tool, FAKE_OPENMVS)
     return Tools(Colmap(exe, "4.2.1"), OpenMVS(tmp_path / "fake" / "mvs", "2.4.0"))
+
+
+@pytest.fixture
+def fake_ffmpeg(tmp_path: Path) -> FFmpeg:
+    exe = _script(tmp_path / "fake" / "ffmpeg" / "ffmpeg", FAKE_FFMPEG)
+    probe = _script(exe.with_name("ffprobe"), FAKE_FFPROBE)
+    return FFmpeg(exe, probe, "7.1")
 
 
 @pytest.fixture(autouse=True)

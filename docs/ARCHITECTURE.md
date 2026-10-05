@@ -59,6 +59,31 @@ my-scan/
   pipeline from feature extraction and bringing it back reuses the old run.
 - JSON files are written atomically (temporary file, fsync, rename).
 
+## Video import (`video.py`, `backends/ffmpeg.py`)
+
+A video becomes a capture bundle (`source: "video"`) holding the original
+video, untouched, and the chosen frames as its images (`frame_0001.jpg`,
+...), so the pipeline reads it like any photo capture. Folder imports skip
+videos; each video is imported on its own (`ez2d import P clip.mp4`, or
+Import video in the GUI).
+
+- The user picks how many frames to keep (default 100); that sets the kept
+  rate (at most 5 a second). The video is cut into that many windows and
+  FFmpeg extracts 4 candidates per window (`-vf fps=`, JPEG quality 2,
+  rotation applied); the sharpest of each window, by the photo checks'
+  score, is kept and the others deleted. On a test clip where two of every
+  three frames are motion-blurred, every window kept its sharp frame.
+- Each frame's capture.json entry records the time it came from and its
+  score (`metadata["video"]`); `source_info` records the FFmpeg version and
+  rates. The bundle is assembled like a folder import (hidden staging
+  folder, renamed when complete), so a failed or cancelled import leaves
+  nothing.
+- FFmpeg runs through the process runner (log, progress from
+  `-progress pipe:1`, cancel). It is the system's FFmpeg, 5.0 or newer,
+  found through the settings, `EZ2D_FFMPEG` or `PATH`; it isn't bundled or
+  pinned yet (Phase 6).
+- The photo checks don't ask video frames for an EXIF focal length.
+
 ## Photo checks (`core/photos.py`)
 
 Each photo is inspected once, on import or when a project from an older
@@ -185,6 +210,8 @@ outputs.
   mesh format, refine, masks), Run/Cancel, a list of steps with their
   state, overall progress, the tools' output, and on failure the end of the
   failed step's log with a button to open the full log.
+- `VideoImporter` (`ui/video_import.py`) runs a video import on a thread;
+  the page shows its progress and its Cancel button stops it.
 - `PhotoChecks` (`ui/photo_checks.py`), in a tab beside the log: inspects
   new photos on a thread, then lists findings with their photos; unchecking
   a photo leaves it out, a "Left out" group brings photos back.
@@ -209,7 +236,10 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 - `run_sparse` and `run_dense` are the two halves around the crop box;
   `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
   stage is reused and `force_from` re-runs a stage and everything after it.
-- Matching is sequential when every capture is a video, else exhaustive.
+- Matching is exhaustive, except for more than 200 images that all come
+  from videos, which are matched sequentially (each frame with the next 10).
+  Exhaustive matching closes the loop of an orbit, which sequential matching
+  can't without a vocabulary tree; 200 images take about 3 minutes.
   The best model is the one with the most registered images; a `Notice`
   event reports split models and low registration.
 - Only one pipeline runs per process (`PipelineBusy` otherwise): the 8 GB

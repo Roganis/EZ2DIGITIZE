@@ -166,14 +166,21 @@ def test_video_only_capture_needs_frames(tmp_path: Path, tools: Tools) -> None:
         pipeline.run_sparse(project, tools)
 
 
-def test_matching_mode_follows_capture_source(project: Project, tools: Tools) -> None:
-    pipeline.run_sparse(project, tools)
-    assert "exhaustive_matcher" in (project.stage_dir("matching") / "log.txt").read_text()
+def test_matching_mode_follows_capture_source_and_size(
+    project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def matcher() -> str:
+        pipeline.run_sparse(project, tools)
+        log = (project.stage_dir("matching") / "log.txt").read_text()
+        return "sequential" if "sequential_matcher" in log else "exhaustive"
+
+    assert matcher() == "exhaustive"
     for bundle in list_bundles(project):
         bundle.source = "video"
         bundle.save()
-    pipeline.run_sparse(project, tools)
-    assert "sequential_matcher" in (project.stage_dir("matching") / "log.txt").read_text()
+    assert matcher() == "exhaustive"  # few frames: every pair, to close the loop
+    monkeypatch.setattr(pipeline, "EXHAUSTIVE_MAX_IMAGES", 2)
+    assert matcher() == "sequential"
 
 
 def test_masks_are_used_when_present(project: Project, tools: Tools) -> None:

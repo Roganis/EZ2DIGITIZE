@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from ez2digitize import __version__
 from ez2digitize.core.project import Project, ProjectError
-from ez2digitize.ui.backends_dialog import BackendsDialog, locate_tools
+from ez2digitize.ui.backends_dialog import BackendsDialog, locate_ffmpeg, locate_tools
 from ez2digitize.ui.project_page import ProjectPage, ToolsFactory
 
 ABOUT_TEXT = f"""<h3>EZ2DIGITIZE {__version__}</h3>
@@ -158,7 +158,9 @@ class MainWindow(QMainWindow):
     def _show_project(self, project: Project) -> bool:
         if not self.close_project():
             return False
-        self.page = ProjectPage(project, self.tools_factory)
+        self.page = ProjectPage(
+            project, self.tools_factory, ffmpeg_factory=lambda: locate_ffmpeg(self.settings)
+        )
         self.page.runner.running_changed.connect(lambda _running: self._update_actions())
         self.stack.addWidget(self.page)
         self.stack.setCurrentWidget(self.page)
@@ -182,6 +184,14 @@ class MainWindow(QMainWindow):
         if self.page is not None:
             # Seconds at most; the inspection thread must not outlive its page.
             self.page.photo_checks.wait()
+            if self.page.video_importer.running:
+                answer = QMessageBox.question(
+                    self, "Video import running", f"A video is being imported. {question}"
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return False
+                self.page.video_importer.cancel()
+                self.page.video_importer.wait()
         if self.page is None or not self.page.runner.running:
             return True
         answer = QMessageBox.question(

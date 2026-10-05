@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.cli import main
 
 
@@ -21,7 +22,7 @@ def test_new_import_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     assert main(["status", str(tmp_path / "scan")]) == 0
     out = capsys.readouterr().out
     assert "created project 'Skull'" in out
-    assert "2 files -> capture" in out and "skipped (not an image or video): notes.txt" in out
+    assert "2 photos -> capture" in out and "skipped (not a photo): notes.txt" in out
     assert "1 of 2 masks imported" in out
     assert "folder   2 images, 0 videos" in out
     assert "features    -" in out
@@ -54,6 +55,26 @@ def test_photo_checks_and_exclusion(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "brought back" in capsys.readouterr().out
     assert main(["photos", scan, "--exclude", "nope.jpg"]) == 1
     assert "no photo 'nope.jpg'" in capsys.readouterr().err
+
+
+def test_import_video(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_ffmpeg: FFmpeg
+) -> None:
+    clip = tmp_path / "clip.mov"
+    clip.write_bytes(b"video")
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "walkaround.mp4").write_bytes(b"video")
+    scan = str(tmp_path / "scan")
+    assert main(["new", scan]) == 0
+    args = ["import", scan, str(clip), "--frames", "10", "--ffmpeg", str(fake_ffmpeg.path)]
+    assert main(args) == 0
+    out = capsys.readouterr().out
+    assert "Extracting frames: 100%" in out
+    assert "10 frames, the sharpest of 40 extracted -> capture" in out
+    assert main(["import", scan, str(folder)]) == 1
+    assert "import videos one by one, e.g. walkaround.mp4" in capsys.readouterr().err
+    assert main(["import", scan, str(clip), "--frames", "0"]) == 2
 
 
 def test_errors_are_reported_not_raised(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

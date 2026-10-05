@@ -143,7 +143,9 @@ installable on Linux as an AppImage.
   `masks/`, per-stage output folders with manifests. Done in
   `ez2digitize.core` (`project`, `capture`, `stage`).
 - Import photos or video. Video: ffmpeg frame extraction, keeping the
-  sharpest frame per window rather than uniform sampling.
+  sharpest frame per window rather than uniform sampling. Done
+  (`ez2digitize.video`): 4 candidates per window, scored like the photo
+  checks; FFmpeg is the system's for now (bundling it is Phase 6).
 - Basic checks: resolution, EXIF focal length (missing EXIF is a warning,
   not an error), blur score relative to the rest of the set, mixed cameras.
   Done (`ez2digitize.core.photos`, the GUI's photo checks tab, `ez2d
@@ -161,6 +163,8 @@ installable on Linux as an AppImage.
   the undistorted images and used by OpenMVS densification.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
+  Video frames are matched exhaustively up to 200, which closes the loop
+  of an orbit; sequentially beyond.
 - GUI: project page with import, settings, Run/Cancel, per-step progress,
   log and failure details, driving the pipeline on a worker thread (done,
   `ez2digitize.ui`).

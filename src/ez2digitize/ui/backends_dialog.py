@@ -20,12 +20,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize.backends import colmap, openmvs
+from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
+from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.pipeline import Tools
 
 COLMAP_KEY = "backends/colmap"
 OPENMVS_KEY = "backends/openmvs_dir"
+FFMPEG_KEY = "backends/ffmpeg"
 
 
 def locate_tools(settings: QSettings) -> Tools:
@@ -41,6 +43,12 @@ def locate_tools(settings: QSettings) -> Tools:
     )
 
 
+def locate_ffmpeg(settings: QSettings) -> FFmpeg:
+    """FFmpeg (for video import), from the settings if set, else the usual search."""
+    path = str(settings.value(FFMPEG_KEY, "") or "")
+    return ffmpeg.locate(Path(path) if path else None)
+
+
 class BackendsDialog(QDialog):
     """Lets the user point at COLMAP and the OpenMVS folder, and checks them."""
 
@@ -52,12 +60,15 @@ class BackendsDialog(QDialog):
         self.colmap_edit.setPlaceholderText("found automatically (EZ2D_COLMAP, bundle, PATH)")
         self.openmvs_edit = QLineEdit(str(settings.value(OPENMVS_KEY, "") or ""))
         self.openmvs_edit.setPlaceholderText("found automatically (EZ2D_OPENMVS_DIR, bundle, PATH)")
+        self.ffmpeg_edit = QLineEdit(str(settings.value(FFMPEG_KEY, "") or ""))
+        self.ffmpeg_edit.setPlaceholderText("found automatically (EZ2D_FFMPEG, PATH)")
         self.check_label = QLabel()
         self.check_label.setWordWrap(True)
 
         form = QFormLayout()
         form.addRow("COLMAP program:", self._with_browse(self.colmap_edit, folder=False))
         form.addRow("OpenMVS folder:", self._with_browse(self.openmvs_edit, folder=True))
+        form.addRow("FFmpeg program:", self._with_browse(self.ffmpeg_edit, folder=False))
         check = QPushButton("Check")
         check.clicked.connect(self.check)
         buttons = QDialogButtonBox(
@@ -70,7 +81,8 @@ class BackendsDialog(QDialog):
         layout.addWidget(
             QLabel(
                 f"EZ2DIGITIZE is tested with COLMAP {colmap.PINNED_VERSION} and "
-                f"OpenMVS {openmvs.PINNED_VERSION}. Leave a field empty to search for it."
+                f"OpenMVS {openmvs.PINNED_VERSION}; FFmpeg is only needed to import "
+                "videos. Leave a field empty to search for it."
             )
         )
         layout.addLayout(form)
@@ -86,7 +98,7 @@ class BackendsDialog(QDialog):
             if folder:
                 path = QFileDialog.getExistingDirectory(self, "OpenMVS folder", edit.text())
             else:
-                path, _ = QFileDialog.getOpenFileName(self, "COLMAP program", edit.text())
+                path, _ = QFileDialog.getOpenFileName(self, "Program", edit.text())
             if path:
                 edit.setText(path)
 
@@ -101,27 +113,36 @@ class BackendsDialog(QDialog):
     def _store(self) -> None:
         self.settings.setValue(COLMAP_KEY, self.colmap_edit.text().strip())
         self.settings.setValue(OPENMVS_KEY, self.openmvs_edit.text().strip())
+        self.settings.setValue(FFMPEG_KEY, self.ffmpeg_edit.text().strip())
 
     def check(self) -> None:
         """Try the entered paths without saving them."""
-        previous = (self.settings.value(COLMAP_KEY), self.settings.value(OPENMVS_KEY))
+        keys = (COLMAP_KEY, OPENMVS_KEY, FFMPEG_KEY)
+        previous = [self.settings.value(key) for key in keys]
         self._store()
+        lines = []
         try:
             tools = locate_tools(self.settings)
         except BackendError as exc:
-            self.check_label.setText(f"Problem: {exc}")
+            lines.append(f"Problem: {exc}")
         else:
             sfm, mvs = tools.colmap, tools.openmvs
-            lines = [
+            lines += [
                 f"COLMAP {sfm.version}{_untested(sfm.supported, colmap.PINNED_VERSION)}: "
                 f"{sfm.path}",
                 f"OpenMVS {mvs.version}{_untested(mvs.supported, openmvs.PINNED_VERSION)}: "
                 f"{mvs.bin_dir}",
             ]
-            self.check_label.setText("\n".join(lines))
-        finally:
-            self.settings.setValue(COLMAP_KEY, previous[0] or "")
-            self.settings.setValue(OPENMVS_KEY, previous[1] or "")
+        try:
+            video = locate_ffmpeg(self.settings)
+        except BackendError as exc:
+            lines.append(f"FFmpeg (only for videos): {exc}")
+        else:
+            old = "" if video.supported else f" (older than {ffmpeg.SUPPORTED_MAJOR}.0)"
+            lines.append(f"FFmpeg {video.version}{old}: {video.path}")
+        self.check_label.setText("\n".join(lines))
+        for key, value in zip(keys, previous, strict=True):
+            self.settings.setValue(key, value or "")
 
     def save(self) -> None:
         self._store()

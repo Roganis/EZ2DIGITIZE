@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -257,21 +257,38 @@ def import_files(
             raise CaptureError(f"{path}: listed twice")
         seen.add(resolved)
 
+    def fill(staging: Path) -> list[CaptureFile]:
+        used: set[str] = set()
+        return [copy_into(staging, path, used) for path in sources]
+
+    return assemble_bundle(
+        project, fill, source=source, device=device, source_info=source_info, now=now
+    )
+
+
+def assemble_bundle(
+    project: Project,
+    fill: Callable[[Path], list[CaptureFile]],
+    *,
+    source: str,
+    device: dict[str, str] | None = None,
+    source_info: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> CaptureBundle:
+    """Create a bundle from the files `fill` puts into the (staging) folder it gets.
+
+    The bundle appears under its final name only once complete; if `fill`
+    raises, nothing is left behind. `fill` may add to `source_info`.
+    """
     bundle_id = _new_bundle_id(project.captures_dir, now or datetime.now().astimezone())
     final = project.captures_dir / bundle_id
     staging = project.captures_dir / f".importing-{bundle_id}"
     staging.mkdir()
+    info = source_info if source_info is not None else {}
     try:
-        entries = []
-        used: set[str] = set()
-        for path in sources:
-            name = _unique_name(path.name, used)
-            size, sha = _copy_and_hash(path, staging / name)
-            kind = classify(path)
-            assert kind is not None
-            entries.append(
-                CaptureFile(name=name, original_name=path.name, kind=kind, size=size, sha256=sha)
-            )
+        entries = fill(staging)
+        if not entries:
+            raise CaptureError("nothing to import")
         bundle = CaptureBundle(
             root=staging,
             id=bundle_id,
@@ -279,7 +296,7 @@ def import_files(
             created=utc_now(),
             files=entries,
             device=device,
-            source_info=source_info or {},
+            source_info=info,
         )
         bundle.save()
         staging.rename(final)
@@ -290,21 +307,46 @@ def import_files(
     return bundle
 
 
+def copy_into(folder: Path, path: Path, used: set[str]) -> CaptureFile:
+    """Copy `path` into a bundle folder under a name not in `used`, hashing it."""
+    kind = classify(path)
+    if kind is None:
+        raise CaptureError(f"{path}: not a supported image or video file")
+    name = _unique_name(path.name, used)
+    size, sha = _copy_and_hash(path, folder / name)
+    return CaptureFile(name=name, original_name=path.name, kind=kind, size=size, sha256=sha)
+
+
+def add_file(folder: Path, name: str, *, original_name: str, kind: FileKind) -> CaptureFile:
+    """Describe a file already written into a bundle folder (e.g. a video frame)."""
+    path = folder / name
+    return CaptureFile(
+        name=name,
+        original_name=original_name,
+        kind=kind,
+        size=path.stat().st_size,
+        sha256=sha256_file(path),
+    )
+
+
 def import_folder(
     project: Project, folder: Path, *, now: datetime | None = None
 ) -> tuple[CaptureBundle, list[Path]]:
-    """Import the supported files directly inside `folder` (not subfolders).
+    """Import the photos directly inside `folder` (not subfolders).
 
-    Returns the bundle and the files that were skipped as unsupported.
+    Returns the bundle and the files that were skipped: unsupported ones,
+    and videos, which are imported one by one (`ez2digitize.video`).
     Hidden files (macOS `._*` and the like) are ignored silently.
     """
     if not folder.is_dir():
         raise CaptureError(f"{folder}: not a folder")
     candidates = sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
-    accepted = [p for p in candidates if classify(p) is not None]
-    skipped = [p for p in candidates if classify(p) is None]
+    accepted = [p for p in candidates if classify(p) == "image"]
+    skipped = [p for p in candidates if classify(p) != "image"]
     if not accepted:
-        raise CaptureError(f"{folder}: no supported image or video files")
+        videos = [p for p in candidates if classify(p) == "video"]
+        hint = f"; import videos one by one, e.g. {videos[0].name}" if videos else ""
+        raise CaptureError(f"{folder}: no supported photos{hint}")
     bundle = import_files(
         project,
         accepted,

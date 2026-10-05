@@ -114,8 +114,6 @@ def inspect_photo(path: Path) -> PhotoInfo:
                 gray = image.convert("L")
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         return PhotoInfo(error=str(exc) or type(exc).__name__)
-    gray.thumbnail((SHARPNESS_SIZE, SHARPNESS_SIZE))
-    laplacian = gray.filter(ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], 1, 128))
     return PhotoInfo(
         width=width,
         height=height,
@@ -124,8 +122,26 @@ def inspect_photo(path: Path) -> PhotoInfo:
         lens=_text(details.get(ExifTags.Base.LensModel)),
         focal_mm=_number(details.get(ExifTags.Base.FocalLength)),
         focal_35mm=_number(details.get(ExifTags.Base.FocalLengthIn35mmFilm)),
-        sharpness=round(ImageStat.Stat(laplacian).var[0], 3),
+        sharpness=_sharpness(gray),
     )
+
+
+def measure_sharpness(path: Path) -> float | None:
+    """Sharpness score of an image file alone (None if unreadable)."""
+    try:
+        with Image.open(path) as image:
+            image.draft("L", (SHARPNESS_SIZE, SHARPNESS_SIZE))
+            gray = image.convert("L")
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+    return _sharpness(gray)
+
+
+def _sharpness(gray: Image.Image) -> float:
+    """Variance of the Laplacian of the image scaled to SHARPNESS_SIZE."""
+    gray.thumbnail((SHARPNESS_SIZE, SHARPNESS_SIZE))
+    laplacian = gray.filter(ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], 1, 128))
+    return round(ImageStat.Stat(laplacian).var[0], 3)
 
 
 def _text(value: Any) -> str | None:
@@ -202,7 +218,7 @@ def check_project(bundles: Sequence[CaptureBundle]) -> list[Finding]:
     readable = 0
     for bundle in bundles:
         infos = {name: info for name, info in photo_infos(bundle).items() if info is not None}
-        findings += check_capture(bundle.id, infos)
+        findings += check_capture(bundle.id, infos, source=bundle.source)
         readable += sum(1 for info in infos.values() if info.error is None)
     findings += _duplicates(bundles)
     if bundles and readable < MIN_PHOTOS and not any(needs_inspection(b) for b in bundles):
@@ -217,8 +233,14 @@ def check_project(bundles: Sequence[CaptureBundle]) -> list[Finding]:
     return findings
 
 
-def check_capture(capture: str, infos: Mapping[str, PhotoInfo]) -> list[Finding]:
-    """Findings for one capture: its photos are expected to come from one camera."""
+def check_capture(
+    capture: str, infos: Mapping[str, PhotoInfo], *, source: str = "folder"
+) -> list[Finding]:
+    """Findings for one capture: its photos are expected to come from one camera.
+
+    Video frames never have a focal length in EXIF, so its absence isn't
+    reported for video captures.
+    """
     findings: list[Finding] = []
 
     def add(level: Level, code: str, message: str, files: Iterable[str] = ()) -> None:
@@ -264,7 +286,9 @@ def check_capture(capture: str, infos: Mapping[str, PhotoInfo]) -> list[Finding]
         )
 
     no_focal = [name for name, info in main.items() if info.focal_mm is None]
-    if len(no_focal) == len(main):
+    if source == "video":
+        no_focal = []
+    elif len(no_focal) == len(main):
         add(
             "warning",
             "no-focal-length",

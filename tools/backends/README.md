@@ -58,6 +58,28 @@ and the app's own backend modules on the same scene
 (`tests/backends/test_real_pipeline.py`), and uploads the archives as
 artifacts for 14 days.
 
+## Results of the first CI builds
+
+First successful build: Backends run 12 (COLMAP 4.2.1, OpenMVS v2.4.0,
+vcpkg 2026.07.29).
+
+| | Linux x86_64 (Ubuntu 22.04) | macOS arm64 |
+|---|---|---|
+| Archive (artifact zip) | 90 MB | 47 MB |
+| Needs | glibc ≥ 2.35 | macOS on Apple Silicon |
+| Dynamic libraries | libc, libm, libstdc++, libgcc_s, libgomp, libgfortran, libquadmath | system libraries; libomp shipped in `lib/` |
+| Harness smoke test | 4/4 | 4/4 |
+| App pipeline test | passes (run locally with the archive) | see the workflow |
+
+- `libgfortran` and `libquadmath` come from the BLAS/LAPACK that COLMAP's
+  dependencies pull in. Arch ships them in `gcc-libs`, Ubuntu desktop
+  installs usually have them; the AppImage (Phase 2) should bundle them.
+- COLMAP 4.2.1's `global_mapper` works on the synthetic scene (32/32
+  images, like the incremental mapper); OpenMVS 2.4.0 exports OBJ (2.3.0
+  crashed).
+- The first build takes about 2 hours per platform; with the vcpkg cache,
+  about 25 minutes.
+
 ## What is turned off, and why
 
 - **CUDA, HIP, GUI, OpenGL** (COLMAP) and **CUDA, viewer, Python**

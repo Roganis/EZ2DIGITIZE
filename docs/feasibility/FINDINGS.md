@@ -61,6 +61,19 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 | (c) Python packaging acceptable? | Likely yes: AppImage 144 MB without viewer, 285 MB with, 0.3-0.4 s to a window ([spike](../../tools/spikes/packaging/README.md)); size is dominated by Brush and QtWebEngine, not Python. Still to check: the macOS `.app` on the M1 | |
 | (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); on the GRE a 2M-face textured mesh and a 3.5M-splat scene both run at 60 fps on the GPU from the AppImage (still camera). Still to measure: orbiting, the M1, memory | |
 
+## Pinned backend builds (CI)
+
+From the first successful Backends run (COLMAP 4.2.1, OpenMVS v2.4.0, CPU
+only, synthetic scene; CI timings, not the reference machines):
+
+- COLMAP 4.2.1 `global_mapper`: 32/32 images, 10 s total, same as the
+  incremental mapper (8 s). Worth comparing on real captures.
+- OpenMVS 2.4.0: masked densify at level 2 in 37 s, OBJ export works.
+- The app's own pipeline (`tests/backends/test_real_pipeline.py`) runs the
+  whole mesh path on these binaries, masks and export included.
+- Linux binaries need glibc ≥ 2.35 and libgfortran/libquadmath/libgomp
+  next to the C/C++ runtime (see `tools/backends/README.md`).
+
 ## Notes from validating the harness
 
 Found while testing the scripts in a CPU-only Ubuntu 24.04 container with

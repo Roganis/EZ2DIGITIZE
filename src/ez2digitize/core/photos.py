@@ -332,9 +332,9 @@ def check_capture(
         add(
             "warning",
             "mixed-cameras",
-            f"These photos come from {len(cameras)} cameras or zoom settings ({described}), "
-            "which are calibrated as one. Import the photos of each camera and zoom setting "
-            "separately.",
+            f"These photos come from {len(cameras)} cameras or zoom settings ({described}). "
+            "Each is calibrated on its own, but one camera and zoom setting per set gives "
+            "the most accurate result.",
         )
 
     scores = {name: info.sharpness for name, info in main.items() if info.sharpness}
@@ -404,6 +404,38 @@ def _cameras(infos: Iterable[PhotoInfo]) -> list[Camera]:
         if size:
             groups.append((size, (*body, start)))
     return [camera for _, camera in sorted(groups, key=lambda g: -g[0])]
+
+
+def camera_of(info: PhotoInfo, cameras: Sequence[Camera]) -> Camera:
+    """Which of `cameras` (from `_cameras`) a photo belongs to."""
+    candidates = [c for c in cameras if c[:3] == info.body]
+    if info.focal_mm is None:
+        return next((c for c in candidates if c[3] is None), (*info.body, None))
+    starts = [c for c in candidates if c[3] is not None and c[3] <= info.focal_mm]
+    return max(starts, key=lambda c: c[3] or 0.0, default=(*info.body, info.focal_mm))
+
+
+def camera_groups(bundles: Sequence[CaptureBundle]) -> dict[str, str]:
+    """A calibration group per photo, if any capture mixes cameras; else {}.
+
+    Keys are COLMAP image names (`<capture>/<file>`); photos of the same
+    capture, camera body, lens, zoom setting and size share a group. Empty
+    when every capture is one camera: then a camera per capture is right,
+    and nothing changes for those projects.
+    """
+    groups: dict[str, str] = {}
+    mixed = False
+    for bundle in bundles:
+        infos = {n: i for n, i in photo_infos(bundle).items() if i is not None and not i.error}
+        cameras = _cameras(infos.values())
+        sizes = {info.size for info in infos.values()}
+        mixed = mixed or len(cameras) > 1 or len(sizes) > 1
+        for name, info in infos.items():
+            camera = camera_of(info, cameras)
+            groups[f"{bundle.id}/{name}"] = f"{bundle.id}|{camera}|{info.width}x{info.height}"
+        for name in photo_infos(bundle):
+            groups.setdefault(f"{bundle.id}/{name}", f"{bundle.id}|unknown")
+    return groups if mixed else {}
 
 
 def _describe_camera(camera: Camera) -> str:

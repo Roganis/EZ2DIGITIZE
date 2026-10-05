@@ -309,3 +309,75 @@ def test_thread_count_is_not_part_of_the_cache_key(project: Project, tmp_path: P
     assert one.cache_key() == many.cache_key()
     assert "threads" not in one.parameters
     assert _opt(many, "--FeatureExtraction.num_threads") == "16"
+
+
+def _per_image_database(path: Path, count: int) -> None:
+    """The tables COLMAP 4.2.1 writes for `single_camera_per_image` extraction."""
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE cameras (camera_id INTEGER PRIMARY KEY, model INTEGER, width INTEGER,
+                                  height INTEGER, params BLOB, prior_focal_length INTEGER);
+            CREATE TABLE rigs (rig_id INTEGER PRIMARY KEY, ref_sensor_id INTEGER,
+                               ref_sensor_type INTEGER);
+            CREATE TABLE rig_sensors (rig_id INTEGER, sensor_id INTEGER, sensor_type INTEGER,
+                                      sensor_from_rig BLOB);
+            CREATE TABLE frames (frame_id INTEGER PRIMARY KEY, rig_id INTEGER);
+            CREATE TABLE frame_data (frame_id INTEGER, data_id INTEGER, sensor_id INTEGER,
+                                     sensor_type INTEGER);
+            CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT, camera_id INTEGER);
+            """
+        )
+        for i in range(1, count + 1):
+            db.execute("INSERT INTO cameras VALUES (?, 2, 4272, 2848, x'00', 1)", (i,))
+            db.execute("INSERT INTO rigs VALUES (?, ?, 0)", (i, i))
+            db.execute("INSERT INTO frames VALUES (?, ?)", (i, i))
+            db.execute("INSERT INTO frame_data VALUES (?, ?, ?, 0)", (i, i, i))
+            db.execute("INSERT INTO images VALUES (?, ?, ?)", (i, f"c/{i}.jpg", i))
+
+
+def test_merge_cameras(tmp_path: Path) -> None:
+    database = tmp_path / "database.db"
+    _per_image_database(database, 5)
+    groups = {"c/1.jpg": "wide", "c/2.jpg": "zoom", "c/3.jpg": "wide", "c/4.jpg": "zoom"}
+    assert colmap.merge_cameras(database, groups) == 2
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT camera_id FROM cameras").fetchall() == [(1,), (2,), (5,)]
+        assert db.execute("SELECT name, camera_id FROM images").fetchall() == [
+            ("c/1.jpg", 1), ("c/2.jpg", 2), ("c/3.jpg", 1), ("c/4.jpg", 2), ("c/5.jpg", 5),
+        ]  # fmt: skip
+        # As single-camera extraction writes it: frames of the kept rig.
+        assert db.execute("SELECT rig_id FROM rigs").fetchall() == [(1,), (2,), (5,)]
+        assert db.execute("SELECT frame_id, rig_id FROM frames").fetchall() == [
+            (1, 1), (2, 2), (3, 1), (4, 2), (5, 5),
+        ]  # fmt: skip
+        assert db.execute("SELECT data_id, sensor_id FROM frame_data").fetchall() == [
+            (1, 1), (2, 2), (3, 1), (4, 2), (5, 5),
+        ]  # fmt: skip
+
+
+def test_matching_merges_camera_groups(project: Project, tmp_path: Path) -> None:
+    features = _manifest("features")
+    project.stage_dir("features").mkdir(parents=True)
+    _per_image_database(project.stage_dir("features") / colmap.DATABASE, 2)
+    plain = colmap.match_features(TOOL, project, features)
+    spec = colmap.match_features(
+        TOOL, project, features, camera_groups={"c/1.jpg": "a", "c/2.jpg": "a"}
+    )
+    assert spec.cache_key() != plain.cache_key()
+    folder = project.stage_dir("matching")
+    folder.mkdir(parents=True)
+    assert spec.prepare is not None
+    spec.prepare(folder)
+    with sqlite3.connect(folder / colmap.DATABASE) as db:
+        assert db.execute("SELECT count(*) FROM cameras").fetchone() == (1,)
+    with sqlite3.connect(project.stage_dir("features") / colmap.DATABASE) as db:
+        assert db.execute("SELECT count(*) FROM cameras").fetchone() == (2,)  # untouched
+
+
+def test_per_image_grouping_flag(project: Project, tmp_path: Path) -> None:
+    bundle = _bundle(project, tmp_path, "a.jpg")
+    options = colmap.FeatureOptions(camera_grouping="per_image")
+    spec = colmap.extract_features(TOOL, project, [bundle], options=options)
+    assert _opt(spec, "--ImageReader.single_camera_per_image") == "1"
+    assert _opt(spec, "--ImageReader.single_camera_per_folder") == "0"

@@ -153,7 +153,12 @@ installable on Linux as an AppImage.
   and too few photos; flagged photos can be left out and brought back.
 - Automatic masking with the model chosen in Phase 1, with a quick review
   grid where the user can drop bad masks.
-- Camera grouping: one intrinsics set per camera/lens.
+- Camera grouping: one intrinsics set per camera/lens. Done: one per
+  capture as before, and when a capture mixes cameras, lenses, zoom
+  settings (beyond 5 %) or sizes, features are extracted with a camera per
+  photo and merged per group in the matching stage's copy of the database
+  (`colmap.merge_cameras`; checked against COLMAP: the merged database is
+  identical to single-camera extraction and maps).
 - Pipeline runner: subprocess stages with live logs, progress parsing,
   cancel, and **minimal caching** (skip a stage if its inputs and parameters
   are unchanged). Runner, manifests and caching done in `ez2digitize.core`

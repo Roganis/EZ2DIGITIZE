@@ -28,6 +28,7 @@ from pathlib import Path
 from ez2digitize import coverage
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
+from ez2digitize.core import photos
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.hardware import detect_gpus
 from ez2digitize.core.photos import exif_orientations
@@ -359,6 +360,17 @@ def _sparse(
     sfm = tools.colmap
 
     feature_options = settings.features
+    for bundle in bundles:  # usually done at import; quick
+        photos.inspect_bundle(bundle)
+    groups = photos.camera_groups(bundles)
+    if groups and feature_options.camera_grouping == "per_capture":
+        # COLMAP would calibrate a capture as one camera: extract a camera per
+        # photo, then merge them by camera and zoom setting before matching.
+        feature_options = replace(feature_options, camera_grouping="per_image")
+        count = len(set(groups.values()))
+        run.emit(Notice(f"calibrating {count} cameras or zoom settings separately"))
+    else:
+        groups = {}
     if feature_options.threads is None:
         cpus, available = cpu_threads(), available_memory()
         threads = colmap.feature_threads(feature_options.max_image_size, available, cpus)
@@ -374,7 +386,11 @@ def _sparse(
         colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
     )
     matching_options = settings.matching or _auto_matching(bundles)
-    matching = run(colmap.match_features(sfm, project, features, options=matching_options))
+    matching = run(
+        colmap.match_features(
+            sfm, project, features, options=matching_options, camera_groups=groups or None
+        )
+    )
     mapping = run(
         colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
     )

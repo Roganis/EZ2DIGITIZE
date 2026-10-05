@@ -33,8 +33,8 @@ photos.
   hand-held), and enough depth of field (f/8 to f/11 on a camera; phones are
   usually fine). The photo checks flag the blurry ones.
 - **Don't zoom** during a set, and keep the same camera and lens. With a
-  zoom lens, tape the ring. Several cameras or zoom settings should be
-  imported separately.
+  zoom lens, tape the ring. If a set mixes cameras or zoom settings, each
+  is calibrated on its own automatically, but one per set is more accurate.
 - **Keep EXIF data** (copy the original files, don't export or resize):
   the focal length in it helps a lot.
 - **iPhone:** set Settings → Camera → Formats → Most Compatible (JPEG);

@@ -214,3 +214,21 @@ def test_excluded_photos_are_not_checked(project: Project, tmp_path: Path) -> No
     second = import_files(project, [first], source="folder")
     second.set_excluded(["a.jpg"])
     assert "duplicate" not in codes(check_project(list_bundles(project)))
+
+
+def test_camera_groups(project: Project, tmp_path: Path) -> None:
+    from ez2digitize.core.photos import PHOTO_KEY, camera_groups
+
+    files = [write_photo(tmp_path / "in" / f"{i}.jpg", seed=i) for i in range(4)]
+    bundle = import_files(project, files, source="folder")
+    infos = [CANON, replace(CANON, focal_mm=40.0), replace(CANON, focal_mm=55.0), CANON]
+    for entry, info in zip(bundle.files, infos, strict=True):
+        entry.metadata[PHOTO_KEY] = info.to_dict()
+    groups = camera_groups([bundle])
+    by_name = {name.split("/")[1]: group for name, group in groups.items()}
+    # 39 and 40 mm are one zoom setting; 55 mm another.
+    assert by_name["0.jpg"] == by_name["1.jpg"] == by_name["3.jpg"] != by_name["2.jpg"]
+    # One camera per capture: nothing to do.
+    for entry in bundle.files:
+        entry.metadata[PHOTO_KEY] = CANON.to_dict()
+    assert camera_groups([bundle]) == {}

@@ -23,11 +23,13 @@ never modified and both stay valid for caching.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
+import sqlite3
 import struct
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -196,6 +198,9 @@ def extract_features(
         "--ImageReader.camera_model", options.camera_model,
         "--ImageReader.single_camera", _flag(options.camera_grouping == "single"),
         "--ImageReader.single_camera_per_folder", _flag(options.camera_grouping == "per_capture"),
+        # Without any of these COLMAP shares a camera per EXIF model, ignoring
+        # lens, zoom and size; "per_image" really means one per image.
+        "--ImageReader.single_camera_per_image", _flag(options.camera_grouping == "per_image"),
         "--FeatureExtraction.use_gpu", "0",
         "--FeatureExtraction.max_image_size", str(options.max_image_size),
         "--SiftExtraction.max_num_features", str(options.max_num_features),
@@ -221,6 +226,48 @@ def extract_features(
     )
 
 
+def merge_cameras(database: Path, groups: Mapping[str, str]) -> int:
+    """Give images of the same group one shared camera; returns cameras removed.
+
+    For captures that mix cameras or zoom settings: features are extracted
+    with a camera per image, then every group (image name -> group label)
+    is merged into its first camera here. COLMAP 4.2.1 gives each camera a
+    trivial rig and each image a frame of that rig; the result matches what
+    `single_camera` extraction writes: one camera, one rig, frames of it.
+    Images not in `groups` keep their own camera.
+    """
+    removed = 0
+    with contextlib.closing(sqlite3.connect(database)) as db, db:
+        images = db.execute("SELECT image_id, name, camera_id FROM images ORDER BY image_id")
+        keep: dict[str, int] = {}
+        moves: dict[int, int] = {}  # camera -> camera it merges into
+        for _image_id, name, camera_id in images.fetchall():
+            group = groups.get(name)
+            if group is None:
+                continue
+            target = keep.setdefault(group, camera_id)
+            if camera_id != target:
+                moves[camera_id] = target
+        rig_of = dict(
+            db.execute("SELECT ref_sensor_id, rig_id FROM rigs WHERE ref_sensor_type = 0")
+        )
+        for old, new in moves.items():
+            db.execute("UPDATE images SET camera_id = ? WHERE camera_id = ?", (new, old))
+            db.execute(
+                "UPDATE frame_data SET sensor_id = ? WHERE sensor_id = ? AND sensor_type = 0",
+                (new, old),
+            )
+            if old in rig_of and new in rig_of:
+                db.execute(
+                    "UPDATE frames SET rig_id = ? WHERE rig_id = ?", (rig_of[new], rig_of[old])
+                )
+                db.execute("DELETE FROM rig_sensors WHERE rig_id = ?", (rig_of[old],))
+                db.execute("DELETE FROM rigs WHERE rig_id = ?", (rig_of[old],))
+            db.execute("DELETE FROM cameras WHERE camera_id = ?", (old,))
+            removed += 1
+    return removed
+
+
 def match_features(
     colmap: Colmap,
     project: Project,
@@ -228,8 +275,14 @@ def match_features(
     *,
     stage: str = "matching",
     options: MatchOptions | None = None,
+    camera_groups: Mapping[str, str] | None = None,
 ) -> StageSpec:
-    """Exhaustive (photo sets) or sequential (video) matching."""
+    """Exhaustive (photo sets) or sequential (video) matching.
+
+    `camera_groups` (image name -> group, see `merge_cameras`) merges the
+    per-image cameras of features extracted with `camera_grouping="per_image"`
+    in this stage's copy of the database, before matching.
+    """
     options = options or MatchOptions()
     stage_dir = project.stage_dir(stage)
     source_db = project.stage_dir(features.stage) / DATABASE
@@ -248,12 +301,17 @@ def match_features(
 
     def prepare(folder: Path) -> None:
         shutil.copy2(source_db, folder / DATABASE)
+        if camera_groups:
+            merge_cameras(folder / DATABASE, camera_groups)
 
+    parameters = result_parameters(options)
+    if camera_groups:
+        parameters["camera_groups"] = fingerprint(sorted(camera_groups.items()))
     return StageSpec(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters=result_parameters(options),
+        parameters=parameters,
         inputs={"features": stage_input(features)},
         parse_line=ColmapProgress(),
         prepare=prepare,

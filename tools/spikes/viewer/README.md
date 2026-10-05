@@ -36,7 +36,7 @@ $V ~/ez2d-feasibility/<machine>/walkaround/openmvs/lvl1/scene_dense.ply --measur
 ```
 
 `--measure` prints JSON lines: the GPU the page got, load time, and the
-average frame rate over 3 s, then exits. Also open each file without
+average frame rate over 3 s while the camera orbits the model, then exits. Also open each file without
 `--measure` and rotate it for a while: note stutter, how it looks, and the
 memory of the `QtWebEngineProcess` processes (`htop` / Activity Monitor).
 For a size stress test, `make_test_splat.py out.ply --count 3000000` writes
@@ -46,10 +46,14 @@ a 3-million-splat file. Record results in `docs/feasibility/FINDINGS.md`.
 
 | Model | Size | Load | fps | GPU reported by the page |
 |---|---|---|---|---|
-| Textured mesh (goat skull) | 1,967,318 faces | 1.5 s | 60.1 | ANGLE, radeonsi navi31 (Mesa, RX 7900 GRE) |
+| Textured mesh (goat skull) | 1,967,318 faces | 1.5-1.6 s | 60.1 | ANGLE, radeonsi navi31 (Mesa, RX 7900 GRE) |
+| Gaussian splat (scene) | 3,493,379 splats | 4.7 s | 60 | same |
 
-60 fps is most likely the display's refresh cap, not the GPU's limit. Splat
-and M1 measurements still to come.
+60 fps is most likely the display's refresh cap, not the GPU's limit. These
+were measured with a still camera; `--measure` now orbits the camera during
+the 3 s window (one turn per 6 s), because Spark re-sorts splats whenever the
+view changes and a still camera hides that cost. Worth re-measuring the splat
+with that. M1 measurements still to come.
 
 ## Results in a CPU-only container (software rendering)
 

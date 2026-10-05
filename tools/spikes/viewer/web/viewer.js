@@ -116,14 +116,25 @@ let frames = 0;
 let measureStart = null;
 const MEASURE_MS = 3000;
 
+// While measuring, orbit the camera: a still camera hides the cost of
+// re-sorting splats, which happens whenever the view changes.
+const ORBIT_RAD_PER_MS = (2 * Math.PI) / 6000; // one turn per 6 s
+let lastTime = null;
+
 function animate(time) {
+  if (measureStart !== null && lastTime !== null) {
+    const offset = camera.position.clone().sub(controls.target);
+    offset.applyAxisAngle(camera.up, ORBIT_RAD_PER_MS * (time - lastTime));
+    camera.position.copy(controls.target).add(offset);
+  }
+  lastTime = time;
   controls.update();
   renderer.render(scene, camera);
   if (measureStart !== null) {
     frames += 1;
     if (time - measureStart >= MEASURE_MS) {
       const fps = (frames * 1000) / (time - measureStart);
-      report("fps", { fps: Math.round(fps * 10) / 10 });
+      report("fps", { fps: Math.round(fps * 10) / 10, orbiting: true });
       hud.textContent += `\n${fps.toFixed(1)} fps`;
       measureStart = null;
     }

@@ -98,7 +98,8 @@ measured yet; they come from the backend CI builds). So 300-400 MB.
   Arch's newer Mesa driver, so Chromium fell back to slower buffer
   allocation. `libgbm`, `libdrm`, libEGL/libGL/GLX, `libglapi` and
   `libvulkan` are now in `HOST_LIBRARIES` (only `libgbm` was actually
-  bundled); the viewer loads the system's `libgbm`.
+  bundled); the viewer loads the system's `libgbm`. Confirmed on Arch: the
+  rebuilt AppImage runs without any of those warnings.
 - **Bundled backends** live in `sys._MEIPASS/backends` (`_internal/` on
   Linux, `Contents/Frameworks` in a `.app`). The app must call them by
   absolute path from there, never via `PATH`.

@@ -37,7 +37,7 @@ def test_formats_are_checked(built: Project) -> None:
     with pytest.raises(ExportError, match="choose formats"):
         export_mesh(built, [])
     with pytest.raises(ExportError, match="choose formats"):
-        export_mesh(built, ["stl"])  # type: ignore[list-item]
+        export_mesh(built, ["step"])  # type: ignore[list-item]
 
 
 def test_export_all_formats(built: Project) -> None:
@@ -73,3 +73,47 @@ def test_same_export_is_reused_other_formats_are_not(built: Project) -> None:
 )
 def test_file_stem(name: str, stem: str) -> None:
     assert _file_stem(name) == stem
+
+
+def test_print_and_point_cloud_exports(built: Project) -> None:
+    import struct
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    from ez2digitize.export import export_notes
+
+    files = export_mesh(built, ["stl", "3mf", "points"], now=NOW)
+    folder = built.exports_dir / "20261005-180000"
+    assert sorted(f.name for f in files) == ["My_Skull.3mf", "My_Skull.stl", "My_Skull_points.ply"]
+    stl = (folder / "My_Skull.stl").read_bytes()
+    assert struct.unpack("<I", stl[80:84]) == (1,) and len(stl) == 84 + 50
+    with zipfile.ZipFile(folder / "My_Skull.3mf") as package:
+        assert "[Content_Types].xml" in package.namelist()
+        model = ET.fromstring(package.read("3D/3dmodel.model"))
+    ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+    assert len(model.findall(".//m:vertex", ns)) == 3
+    assert model.find(".//m:triangle", ns).attrib == {"v1": "0", "v2": "1", "v3": "2"}  # type: ignore[union-attr]
+    info = json.loads((folder / "export.json").read_text())
+    # One triangle: three open edges.
+    assert (info["watertight"], info["open_edges"]) == (False, 3)
+    (note,) = export_notes(files)
+    assert "not closed (3 open" in note
+
+
+def test_watertight_check() -> None:
+    from array import array
+
+    from ez2digitize.core.meshio import TexturedMesh, check_watertight
+
+    # A tetrahedron is closed; remove a face and three edges are open.
+    faces = [0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2]
+
+    def mesh(f: list[int]) -> TexturedMesh:
+        positions = array("f", [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1])
+        return TexturedMesh(positions, array("I", f), array("f"), array("I"), [])
+
+    assert check_watertight(mesh(faces)).watertight
+    opened = check_watertight(mesh(faces[3:]))
+    assert (opened.open_edges, opened.non_manifold_edges) == (3, 0)
+    fan = check_watertight(mesh([*faces, 0, 1, 2]))
+    assert fan.non_manifold_edges == 3

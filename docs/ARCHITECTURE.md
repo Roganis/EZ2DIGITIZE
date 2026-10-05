@@ -193,6 +193,12 @@ outputs.
 
 ## Export (`export.py`, `core/meshio.py`)
 
+Formats: `obj`, `glb` (textured), `ply` (OpenMVS's own), `stl` and `3mf`
+(geometry for printing, with a watertightness check recorded in
+export.json and reported as a notice), `points` (the dense point cloud).
+A Mesh size setting (`TextureOptions.target_faces`) has TextureMesh
+simplify the mesh before texturing, so the texture keeps its detail.
+
 - The texture step always writes OpenMVS's textured PLY. Exporting
   converts it in-process (architecture rule 1 allows mesh export there) into
   `exports/<timestamp>/`: `obj/<name>.obj` + `.mtl` + texture images,

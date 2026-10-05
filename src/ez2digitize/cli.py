@@ -42,7 +42,7 @@ from ez2digitize.core.capture import (
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.core.runner import CancelToken, Output, Progress
 from ez2digitize.core.stage import load_manifest
-from ez2digitize.export import FORMATS, ExportError, ExportFormat, export_mesh
+from ez2digitize.export import FORMATS, ExportError, ExportFormat, export_mesh, export_notes
 from ez2digitize.pipeline import (
     STAGES,
     MeshResult,
@@ -137,11 +137,15 @@ def _parser() -> argparse.ArgumentParser:
         "--refine", action=argparse.BooleanOptionalAction, help="run RefineMesh (slow)"
     )
     run.add_argument(
+        "--faces", type=int, help="simplify the mesh to about this many faces before texturing"
+    )
+    run.add_argument(
         "--export",
         type=_formats,
         default=("obj", "glb"),
         metavar="FORMATS",
-        help="formats to export, comma-separated: obj, glb, ply, or none (default obj,glb)",
+        help="formats to export, comma-separated: obj, glb, ply, stl, 3mf (printing, no "
+        "texture), points (dense point cloud), or none (default obj,glb)",
     )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
     run.add_argument("--threads", type=int, help="limit CPU threads of every tool")
@@ -153,7 +157,13 @@ def _parser() -> argparse.ArgumentParser:
 
     export = sub.add_parser("export", help="export the textured mesh again")
     export.add_argument("project", type=Path)
-    export.add_argument("--formats", type=_formats, default=("obj", "glb"), metavar="FORMATS")
+    export.add_argument(
+        "--formats",
+        type=_formats,
+        default=("obj", "glb"),
+        metavar="FORMATS",
+        help="comma-separated: obj, glb, ply, stl, 3mf, points (default obj,glb)",
+    )
     export.set_defaults(func=_cmd_export)
 
     check = sub.add_parser("check", help="find the reconstruction tools and check they run")
@@ -442,8 +452,11 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if not args.formats:
         print("error: no formats", file=sys.stderr)
         return 2
-    for path in export_mesh(project, args.formats):
+    files = export_mesh(project, args.formats)
+    for path in files:
         print(path)
+    for note in export_notes(files):
+        print(f"note: {note}")
     return 0
 
 
@@ -459,7 +472,11 @@ def _formats(text: str) -> tuple[ExportFormat, ...]:
 
 def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSettings:
     settings = presets.mesh_settings(
-        quality, level=args.level, refine=args.refine, max_image_size=args.max_image_size
+        quality,
+        level=args.level,
+        refine=args.refine,
+        max_image_size=args.max_image_size,
+        faces=args.faces,
     )
     threads = args.threads
     return replace(

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Textured triangle meshes: read OpenMVS's PLY, write OBJ and GLB.
+"""Textured triangle meshes: read OpenMVS's PLY, write OBJ, GLB, STL and 3MF.
 
 Standard library only. The heavy loops run in `struct` and `array`, so a
 mesh of a few million faces converts in seconds.
@@ -15,8 +15,10 @@ was split over several images, `texnumber`. The texture images are named in
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import struct
+import zipfile
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,6 +135,13 @@ def _read_header(fh: BinaryIO, path: Path) -> tuple[list[_Element], list[str]]:
             else:
                 prop = _Property(words[2], _ply_type(words[1], path))
             elements[-1].properties.append(prop)
+
+
+def ply_element_counts(path: Path) -> dict[str, int]:
+    """Number of each element (vertex, face) from a binary PLY's header alone."""
+    with path.open("rb") as fh:
+        elements, _ = _read_header(fh, path)
+    return {element.name: element.count for element in elements}
 
 
 def _ply_type(name: str, path: Path) -> str:
@@ -405,3 +414,127 @@ def _copy_textures(mesh: TexturedMesh, folder: Path, name: str) -> list[Path]:
         shutil.copyfile(texture, target)
         copies.append(target)
     return copies
+
+
+# --- printing --------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Watertightness:
+    """Edges not shared by exactly two faces. Zero of both: closed and manifold."""
+
+    open_edges: int  # used by one face: a hole or the mesh's border
+    non_manifold_edges: int  # used by three or more faces
+
+    @property
+    def watertight(self) -> bool:
+        return self.open_edges == 0 and self.non_manifold_edges == 0
+
+
+def check_watertight(mesh: TexturedMesh) -> Watertightness:
+    """Count edges by how many faces use them (a few seconds per million faces)."""
+    n = mesh.vertex_count
+    faces = mesh.faces
+    keys = array("q")
+    for corner in range(3):
+        a = faces[corner::3]
+        b = faces[(corner + 1) % 3 :: 3] if corner < 2 else faces[0::3]
+        keys.extend(min(x, y) * n + max(x, y) for x, y in zip(a, b, strict=True))
+    ordered = sorted(keys)
+    open_edges = non_manifold = 0
+    run = 1
+    for i in range(1, len(ordered) + 1):
+        if i < len(ordered) and ordered[i] == ordered[i - 1]:
+            run += 1
+            continue
+        if run == 1:
+            open_edges += 1
+        elif run > 2:
+            non_manifold += 1
+        run = 1
+    return Watertightness(open_edges, non_manifold)
+
+
+def write_stl(mesh: TexturedMesh, path: Path) -> Path:
+    """Binary STL of the geometry (no texture)."""
+    pos = mesh.positions
+    faces = mesh.faces
+    record = struct.Struct("<12fH")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as stl:
+        stl.write(b"EZ2DIGITIZE binary STL".ljust(80, b" "))
+        stl.write(struct.pack("<I", mesh.face_count))
+        chunk = bytearray()
+        for f in range(0, len(faces), 3):
+            a, b, c = faces[f] * 3, faces[f + 1] * 3, faces[f + 2] * 3
+            ax, ay, az = pos[a], pos[a + 1], pos[a + 2]
+            bx, by, bz = pos[b], pos[b + 1], pos[b + 2]
+            cx, cy, cz = pos[c], pos[c + 1], pos[c + 2]
+            ux, uy, uz = bx - ax, by - ay, bz - az
+            vx, vy, vz = cx - ax, cy - ay, cz - az
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+            chunk += record.pack(
+                nx / length, ny / length, nz / length, ax, ay, az, bx, by, bz, cx, cy, cz, 0
+            )
+            if len(chunk) >= 1 << 22:
+                stl.write(chunk)
+                chunk.clear()
+        stl.write(chunk)
+    return path
+
+
+_3MF_CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>
+"""
+_3MF_RELS = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Target="/3D/3dmodel.model" Id="rel0" \
+Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>
+"""
+
+
+def write_3mf(
+    mesh: TexturedMesh, path: Path, *, name: str = "scan", unit: str = "millimeter"
+) -> Path:
+    """3MF (core spec) of the geometry: one object, no texture.
+
+    `unit` is what one model unit means; until the scale is set from a
+    known distance the reconstruction's units are arbitrary.
+    """
+    pos = mesh.positions
+    faces = mesh.faces
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<model unit="{unit}" xml:lang="en-US" '
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n'
+        f'<metadata name="Title">{_xml_text(name)}</metadata>\n'
+        '<metadata name="Application">EZ2DIGITIZE</metadata>\n'
+        '<resources><object id="1" type="model"><mesh><vertices>\n'
+    ]
+    parts += [
+        f'<vertex x="{pos[i]:.6g}" y="{pos[i + 1]:.6g}" z="{pos[i + 2]:.6g}"/>\n'
+        for i in range(0, len(pos), 3)
+    ]
+    parts.append("</vertices><triangles>\n")
+    parts += [
+        f'<triangle v1="{faces[i]}" v2="{faces[i + 1]}" v3="{faces[i + 2]}"/>\n'
+        for i in range(0, len(faces), 3)
+    ]
+    parts.append(
+        '</triangles></mesh></object></resources>\n<build><item objectid="1"/></build>\n</model>\n'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+        package.writestr("[Content_Types].xml", _3MF_CONTENT_TYPES)
+        package.writestr("_rels/.rels", _3MF_RELS)
+        package.writestr("3D/3dmodel.model", "".join(parts))
+    return path
+
+
+def _xml_text(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -33,7 +33,7 @@ from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
 from ez2digitize.diagnosis import explain
-from ez2digitize.export import ExportError, ExportFormat, export_mesh
+from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
@@ -379,6 +379,8 @@ def _dense(
         except ExportError as exc:
             raise PipelineError(str(exc)) from exc
         run.emit(Notice(f"exported to {exports[0].parent if exports else project.exports_dir}"))
+        for note in export_notes(exports):
+            run.emit(Notice(note))
     return MeshResult(sparse=sparse, textured=textured, files=files, exports=exports)
 
 

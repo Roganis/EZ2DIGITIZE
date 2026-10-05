@@ -99,9 +99,10 @@ def test_format_list_parsing() -> None:
     from ez2digitize.cli import _formats
 
     assert _formats("obj,GLB") == ("obj", "glb")
+    assert _formats("stl,3MF,points") == ("stl", "3mf", "points")
     assert _formats("none") == ()
-    with pytest.raises(argparse.ArgumentTypeError, match="unknown format 'stl'"):
-        _formats("obj,stl")
+    with pytest.raises(argparse.ArgumentTypeError, match="unknown format 'step'"):
+        _formats("obj,step")
 
 
 def _tool(path: Path, text: str) -> Path:

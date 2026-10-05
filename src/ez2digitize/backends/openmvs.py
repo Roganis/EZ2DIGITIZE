@@ -35,6 +35,7 @@ from ez2digitize.backends.common import (
     find_tool,
     result_parameters,
 )
+from ez2digitize.core.meshio import MeshFormatError, ply_element_counts
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
@@ -127,6 +128,10 @@ class RefineOptions:
 class TextureOptions:
     export_type: ExportType = "ply"
     resolution_level: int = 0
+    # Simplify the mesh to about this many faces before texturing (None: keep
+    # all). The texture keeps its detail; a skull at full detail has ~1.7M
+    # faces and a 64 MB GLB, too heavy for web viewers and many slicers.
+    target_faces: int | None = None
     threads: int | None = None
 
 
@@ -283,15 +288,23 @@ def texture_mesh(
     """TextureMesh on the output of the mesh or refine stage."""
     options = options or TextureOptions()
     stage_dir = project.stage_dir(stage)
+    surface = mesh_output(project, mesh)
     argv: list[str | Path] = [
         mvs.tool("TextureMesh"),
         project.stage_dir(dense.stage) / "scene_dense.mvs",
-        "--mesh-file", mesh_output(project, mesh),
+        "--mesh-file", surface,
         "-o", stage_dir / "scene_textured.mvs",
         "-w", stage_dir,
         "--export-type", options.export_type,
         "--resolution-level", str(options.resolution_level),
     ]  # fmt: skip
+    if options.target_faces:
+        try:
+            faces = ply_element_counts(surface).get("face", 0)
+        except (OSError, MeshFormatError) as exc:
+            raise BackendError(f"can't read the mesh to simplify it: {exc}") from exc
+        if faces > options.target_faces:
+            argv += ["--decimate", f"{options.target_faces / faces:.6f}"]
     if options.threads:
         argv += ["--max-threads", str(options.threads)]
     return StageSpec(

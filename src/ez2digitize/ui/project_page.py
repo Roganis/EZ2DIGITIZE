@@ -73,6 +73,16 @@ EXPORT_CHOICES = (
     ("GLB", ("glb",)),
     ("OBJ", ("obj",)),
     ("PLY (as OpenMVS writes it)", ("ply",)),
+    ("OBJ, GLB, STL and 3MF", ("obj", "glb", "stl", "3mf")),
+    ("STL and 3MF (3D printing, no texture)", ("stl", "3mf")),
+    ("OBJ, GLB and the dense point cloud", ("obj", "glb", "points")),
+)
+# Faces the mesh is simplified to before texturing; 0 keeps every face.
+MESH_SIZES = (
+    ("Full detail", 0),
+    ("1 million faces", 1_000_000),
+    ("300,000 faces (web, slicers)", 300_000),
+    ("100,000 faces (light)", 100_000),
 )
 LOG_MAX_LINES = 5000
 
@@ -147,6 +157,13 @@ class ProjectPage(QWidget):
             "file for viewers and the web"
         )
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
+        self.mesh_size = QComboBox()
+        for label, faces in MESH_SIZES:
+            self.mesh_size.addItem(label, faces)
+        self.mesh_size.setToolTip(
+            "Simplify the mesh before texturing: smaller files for viewers, the web and "
+            "slicers; the texture keeps its detail"
+        )
         self.use_masks = QCheckBox("Use masks")
         self.use_masks.setChecked(True)
         self.video_frames = QSpinBox()
@@ -161,6 +178,7 @@ class ProjectPage(QWidget):
         form = QFormLayout(settings_box)
         form.addRow("Quality:", self.quality)
         form.addRow("Save as:", self.export_formats)
+        form.addRow("Mesh size:", self.mesh_size)
         form.addRow(self.use_masks)
         form.addRow("Video frames:", self.video_frames)
         # Advanced: override the preset's dense detail and refinement, and see
@@ -180,6 +198,7 @@ class ProjectPage(QWidget):
         self.advanced.toggled.connect(self._show_values)
         self.detail.currentIndexChanged.connect(self._show_values)
         self.refine.toggled.connect(self._show_values)
+        self.mesh_size.currentIndexChanged.connect(self._show_values)
         self._show_values()
 
         self.run_button = QPushButton("Build mesh")
@@ -324,7 +343,10 @@ class ProjectPage(QWidget):
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
-        for widget in (self.quality, self.advanced, self.export_formats, self.video_frames):
+        busy_widgets = (
+            self.quality, self.advanced, self.export_formats, self.mesh_size, self.video_frames
+        )  # fmt: skip
+        for widget in busy_widgets:
             widget.setEnabled(not busy)
         self.photo_checks.set_locked(busy)
         self.use_masks.setEnabled(not busy and any(self.project.masks_dir.rglob("*.png")))
@@ -350,14 +372,16 @@ class ProjectPage(QWidget):
 
     def settings(self) -> MeshSettings:
         """The preset, with the advanced panel's values if it is switched on."""
+        faces = int(self.mesh_size.currentData()) or None
         if self.advanced.isChecked():
             settings = presets.mesh_settings(
                 self.chosen_quality,
                 level=int(self.detail.currentData()),
                 refine=self.refine.isChecked(),
+                faces=faces,
             )
         else:
-            settings = presets.mesh_settings(self.chosen_quality)
+            settings = presets.mesh_settings(self.chosen_quality, faces=faces)
         return replace(
             settings,
             export_formats=tuple(self.export_formats.currentData()),

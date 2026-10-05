@@ -108,6 +108,27 @@ def test_mesh_refine_texture(project: Project) -> None:
     assert texture.inputs == {"dense": "run:d1", "mesh": "run:m1"}
 
 
+def test_texture_simplifies_to_target_faces(project: Project) -> None:
+    dense, mesh = _manifest("densify", "d1"), _manifest("mesh", "m1")
+    project.stage_dir("mesh").mkdir(parents=True)
+    ply = project.stage_dir("mesh") / "scene_mesh.ply"
+    ply.write_text(
+        "ply\nformat binary_little_endian 1.0\nelement vertex 600\nproperty float x\n"
+        "element face 1200\nproperty list uchar uint vertex_indices\nend_header\n"
+    )
+    spec = openmvs.texture_mesh(MVS, project, dense, mesh, options=TextureOptions(target_faces=300))
+    assert _opt(spec, "--decimate") == "0.250000"
+    assert spec.parameters["target_faces"] == 300
+    # Already small enough: nothing to simplify.
+    small = openmvs.texture_mesh(
+        MVS, project, dense, mesh, options=TextureOptions(target_faces=5000)
+    )
+    assert "--decimate" not in [str(a) for a in small.argv]
+    ply.write_text("not a ply")
+    with pytest.raises(BackendError, match="simplify"):
+        openmvs.texture_mesh(MVS, project, dense, mesh, options=TextureOptions(target_faces=300))
+
+
 def test_progress() -> None:
     parse = OpenMVSProgress()
     lines = [

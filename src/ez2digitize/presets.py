@@ -58,14 +58,18 @@ def mesh_settings(
     level: int | None = None,
     refine: bool | None = None,
     max_image_size: int | None = None,
+    faces: int | None = None,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
     `level` is the dense detail (OpenMVS resolution level, 0 = full size);
     refining uses the same level as the dense step, or 1 if that is 0 (full
-    size refinement needs far more memory for little gain).
+    size refinement needs far more memory for little gain). `faces`
+    simplifies the mesh to about that many faces before texturing.
     """
     settings = _PRESETS[quality]
+    if faces is not None:
+        settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
     if max_image_size is not None:
         settings = replace(
             settings, features=replace(settings.features, max_image_size=max_image_size)
@@ -99,6 +103,12 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
         ),
         ("Refine mesh", "no" if refine is None else f"yes, {size(refine.resolution_level)}"),
         ("Texture", f"{size(settings.texture.resolution_level)} photos"),
+        (
+            "Mesh size",
+            "full detail"
+            if settings.texture.target_faces is None
+            else f"about {settings.texture.target_faces:,} faces",
+        ),
         ("Camera placement", f"{settings.mapper.kind} mapper"),
     ]
 

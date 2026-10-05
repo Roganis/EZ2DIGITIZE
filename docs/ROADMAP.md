@@ -169,7 +169,10 @@ installable on Linux as an AppImage.
   log and failure details, driving the pipeline on a worker thread (done,
   `ez2digitize.ui`).
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
-  user adjusts before densification.
+  user adjusts before densification. The automatic part exists: OpenMVS
+  estimates a region of interest from the sparse points and crops to it
+  (`--estimate-roi`, `--crop-to-roi`, on by default). Adjusting it needs
+  the viewer (decision (d) in Phase 1).
 - Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
 - AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
   workflow): GUI and CLI in one file, backends bundled.
@@ -231,9 +234,15 @@ fails, they can see which stage failed and why.
   it, capturing again, and reconstructing both sets together through masks.
 - Mesh cleanup: keep largest component, remove floaters, decimate to a
   target face count, hole filling and watertightness check for printing
-  (Open3D is MIT; PyMeshLab is GPL-3.0, both fine).
+  (Open3D is MIT; PyMeshLab is GPL-3.0, both fine). Done without a new
+  dependency: OpenMVS's ReconstructMesh already removes spurious components
+  and spikes, closes small holes and smooths (its defaults); a Mesh size
+  setting simplifies to a target face count in TextureMesh, before
+  texturing (`--faces`); the export checks watertightness (edges not shared
+  by exactly two faces). The skull's meshes come out closed.
 - Export STL and 3MF for printing (untextured; warn if not watertight),
-  PLY point cloud.
+  PLY point cloud. Done (`stl`, `3mf`, `points` export formats). Units are
+  the reconstruction's until the scale step exists.
 - License notice for OpenMVS (AGPL-3.0) and its dependencies (some CGAL
   components are GPL) in `THIRD_PARTY_LICENSES`, with a source offer for the
   exact bundled versions.

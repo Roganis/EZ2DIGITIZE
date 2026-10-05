@@ -70,6 +70,13 @@ if os.environ.get("FAKE_FAIL") == tool:
 out = Path(args[args.index("-o") + 1])
 out.write_text("mvs")
 out.with_suffix(".ply").write_text("ply")
+if tool in ("ReconstructMesh", "RefineMesh"):
+    # A mesh header saying 1000 faces (what the texture step reads to simplify).
+    out.with_suffix(".ply").write_text(
+        "ply\\nformat binary_little_endian 1.0\\nelement vertex 500\\n"
+        "property float x\\nelement face 1000\\n"
+        "property list uchar uint vertex_indices\\nend_header\\n"
+    )
 if tool == "TextureMesh":
     # A one-triangle textured PLY in OpenMVS's layout, and its texture.
     import struct

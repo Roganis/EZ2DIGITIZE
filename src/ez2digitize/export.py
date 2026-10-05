@@ -3,10 +3,19 @@
 """Export the textured mesh of a project to user-facing files.
 
 The texture stage writes OpenMVS's textured PLY; exporting converts it into
-`exports/<timestamp>/` as OBJ (+ MTL + textures) and/or GLB, or copies the
-PLY, and records where it came from in `export.json` there. Exporting is
-not a pipeline stage: it runs in-process (mesh export is allowed there by
-architecture rule 1) and never changes the stage folders.
+`exports/<timestamp>/` and records where it came from in `export.json`
+there:
+
+- `obj` (+ MTL + textures) and `glb`, textured;
+- `ply`, OpenMVS's textured PLY as is;
+- `stl` and `3mf` for 3D printing: geometry only, after checking that the
+  surface is closed (`export.json` records the open and non-manifold
+  edges; `ExportResult.warnings` says when it isn't printable as is). The
+  units are the reconstruction's own until the scale is set (Phase 4);
+- `points`: the dense point cloud (PLY with colours and normals).
+
+Exporting is not a pipeline stage: it runs in-process (mesh export is
+allowed there by architecture rule 1) and never changes the stage folders.
 """
 
 from __future__ import annotations
@@ -19,13 +28,23 @@ from pathlib import Path
 from typing import Literal
 
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
-from ez2digitize.core.meshio import MeshFormatError, read_openmvs_ply, write_glb, write_obj
+from ez2digitize.core.meshio import (
+    MeshFormatError,
+    check_watertight,
+    read_openmvs_ply,
+    write_3mf,
+    write_glb,
+    write_obj,
+    write_stl,
+)
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 
-ExportFormat = Literal["obj", "glb", "ply"]
-FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply")
+ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points"]
+FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
+PRINT_FORMATS = frozenset({"stl", "3mf"})
 TEXTURED_PLY = "scene_textured.ply"
+DENSE_PLY = "scene_dense.ply"
 
 
 class ExportError(Exception):
@@ -61,9 +80,19 @@ def export_mesh(
     if previous is not None:
         return previous
 
+    dense = project.stage_dir("densify") / DENSE_PLY
+    if "points" in wanted and not dense.is_file():
+        raise ExportError("there is no dense point cloud to export")
+
     folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
     name = _file_stem(project.name)
     files: list[Path] = []
+    info: dict[str, object] = {}
+    if PRINT_FORMATS & set(wanted):
+        closed = check_watertight(mesh)
+        info["watertight"] = closed.watertight
+        info["open_edges"] = closed.open_edges
+        info["non_manifold_edges"] = closed.non_manifold_edges
     try:
         if "obj" in wanted:
             files += write_obj(mesh, folder / "obj", name)
@@ -71,6 +100,13 @@ def export_mesh(
             files.append(write_glb(mesh, folder / f"{name}.glb"))
         if "ply" in wanted:
             files += _copy_ply(source, mesh.textures, folder / "ply", name)
+        if "stl" in wanted:
+            files.append(write_stl(mesh, folder / f"{name}.stl"))
+        if "3mf" in wanted:
+            files.append(write_3mf(mesh, folder / f"{name}.3mf", name=project.name))
+        if "points" in wanted:
+            files.append(folder / f"{name}_points.ply")
+            shutil.copyfile(dense, files[-1])
     except OSError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise ExportError(f"export failed: {exc}") from exc
@@ -83,10 +119,31 @@ def export_mesh(
             "source": {"stage": stage, "run_id": manifest.run_id},
             "vertices": mesh.vertex_count,
             "faces": mesh.face_count,
+            **info,
             "files": [str(p.relative_to(folder)) for p in files],
         },
     )
     return files
+
+
+def export_notes(files: list[Path]) -> list[str]:
+    """What the user should know about an export (e.g. a mesh not closed for printing)."""
+    if not files:
+        return []
+    folder = files[0].parent
+    while folder.name in ("obj", "ply"):
+        folder = folder.parent
+    try:
+        info = read_json_object(folder / "export.json")
+    except FormatError:
+        return []
+    if info.get("watertight") is False:
+        return [
+            f"the mesh is not closed ({info.get('open_edges')} open and "
+            f"{info.get('non_manifold_edges')} non-manifold edges): a slicer may need to "
+            "repair it before printing"
+        ]
+    return []
 
 
 def _find_export(exports: Path, run_id: str, formats: list[ExportFormat]) -> list[Path] | None:

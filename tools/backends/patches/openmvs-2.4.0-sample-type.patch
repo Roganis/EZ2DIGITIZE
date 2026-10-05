@@ -1,0 +1,25 @@
+OpenMVS 2.4.0: TImage::sample reads the image with the output pixel type.
+
+Backport of the Types.inl hunk of upstream commit eeedab7 ("texture: fix
+corner case in global seam leveling logic", 2026-02-27, after v2.4.0).
+v2.4.0 passes INTERTYPE as the input type to Sampler::Sample, so sampling an
+8-bit RGB image as float Color reads 12 bytes per pixel as floats. Local seam
+leveling samples patch borders this way, which fills TextureMesh atlases with
+black blobs and saturated red/green/blue specks.
+
+Source: https://github.com/cdcseacave/openMVS (AGPL-3.0), same license as
+the OpenMVS sources it applies to.
+
+diff --git a/libs/Common/Types.inl b/libs/Common/Types.inl
+index 765db20..b858d0e 100644
+--- a/libs/Common/Types.inl
++++ b/libs/Common/Types.inl
+@@ -2398,7 +2398,7 @@ template <typename TYPE>
+ template <typename SAMPLER, typename INTERTYPE>
+ INTERTYPE TImage<TYPE>::sample(const SAMPLER& sampler, const TPoint2<typename SAMPLER::Type>& pt) const
+ {
+-	return Sampler::Sample< INTERTYPE, INTERTYPE, TImage<TYPE>, SAMPLER, TPoint2<typename SAMPLER::Type> >(*this, sampler, pt);
++	return Sampler::Sample< TYPE, INTERTYPE, TImage<TYPE>, SAMPLER, TPoint2<typename SAMPLER::Type> >(*this, sampler, pt);
+ }
+ 
+ // convert color image to gray

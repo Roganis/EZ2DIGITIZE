@@ -80,6 +80,19 @@ vcpkg 2026.07.29).
 - The first build takes about 2 hours per platform; with the vcpkg cache,
   about 25 minutes.
 
+## Patches
+
+`patches/openmvs-*.patch` are upstream OpenMVS fixes released after the
+pinned version; `build.sh` applies them to the checkout and lists them in
+`BUILDINFO.json` (`openmvs_patches`). Each patch's header says what it fixes
+and which upstream commit it comes from. Drop a patch when the pin moves
+past that commit.
+
+- `openmvs-2.4.0-sample-type.patch`: v2.4.0 samples 8-bit images as if
+  they held float colours, so TextureMesh's local seam leveling fills
+  the atlas with black blobs and saturated red/green/blue specks (seen on
+  the skull turntable set). Fixed upstream in `eeedab7`.
+
 ## What is turned off, and why
 
 - **CUDA, HIP, GUI, OpenGL** (COLMAP) and **CUDA, viewer, Python**

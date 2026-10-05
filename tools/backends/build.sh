@@ -107,6 +107,15 @@ cp "$WORK/colmap-install/bin/colmap" "$PREFIX/bin/"
 
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs https://github.com/cdcseacave/openMVS.git "$OPENMVS_VERSION"
+# Upstream fixes released after the pinned version (see each patch's header).
+# A checkout kept from an earlier run may already carry them.
+for patch in "$REPO"/tools/backends/patches/openmvs-*.patch; do
+  if git -C openmvs apply --reverse --check "$patch" 2>/dev/null; then
+    echo "already applied: $(basename "$patch")"
+  else
+    git -C openmvs apply "$patch"
+  fi
+done
 # OpenMVS asks for vcpkg's "opencv" with its default features, which on Linux
 # include the GTK GUI backend: a large GTK/X11 build (it failed on at-spi2-core)
 # for windows OpenMVS only opens in debug builds. Ask for OpenCV without
@@ -192,6 +201,7 @@ cat > "$PREFIX/BUILDINFO.json" <<EOF
 {
   "colmap": "$COLMAP_VERSION",
   "openmvs": "$OPENMVS_VERSION",
+  "openmvs_patches": "$(cd "$REPO/tools/backends/patches" && ls openmvs-*.patch | tr '\n' ' ' | sed 's/ $//')",
   "vcpkg": "$VCPKG_VERSION",
   "triplet": "$TRIPLET",
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",

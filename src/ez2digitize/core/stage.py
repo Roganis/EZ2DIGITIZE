@@ -3,7 +3,10 @@
 """Pipeline stages: run one backend command and record it in `stage.json`.
 
 A stage's cache key is a hash of what decides its output: the stage name,
-the backend's name and exact version, the parameters, and its inputs. Inputs
+the backend's name, exact version and build, the parameters, and its inputs.
+The build is the sha256 of the executable the stage runs, because a patched
+or rebuilt binary of the same version can give different results (OpenMVS
+2.4.0 with and without the texture fix, see tools/backends/patches). Inputs
 are fingerprints:
 
 - `sha256:...`  contents of a single file (`file_input`),
@@ -24,11 +27,12 @@ folder as working directory (OpenMVS writes its log files there).
 
 from __future__ import annotations
 
+import functools
 import platform
 import shutil
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +59,8 @@ Status = Literal["succeeded", "failed", "cancelled"]
 class Backend:
     name: str
     version: str
+    # sha256 of the executable, filled in by StageSpec.resolved_backend.
+    build: str | None = None
 
 
 @dataclass
@@ -75,11 +81,17 @@ class StageSpec:
     # to write files the command reads (image lists, copies of a database).
     prepare: Callable[[Path], None] | None = None
 
+    def resolved_backend(self) -> Backend:
+        """The backend with its build: the hash of the executable that runs."""
+        if self.backend.build is not None or not self.argv:
+            return self.backend
+        return replace(self.backend, build=executable_build(Path(self.argv[0])))
+
     def cache_key(self) -> str:
         return fingerprint(
             {
                 "stage": self.name,
-                "backend": asdict(self.backend),
+                "backend": asdict(self.resolved_backend()),
                 "parameters": dict(self.parameters),
                 "inputs": dict(self.inputs),
             }
@@ -157,6 +169,28 @@ def tree_input(folder: Path) -> str:
     return "tree:" + fingerprint(entries)
 
 
+def executable_build(path: Path) -> str | None:
+    """sha256 of an executable (looked up on PATH if bare), None if not found.
+
+    Hashed once per process and file version: the COLMAP stages all run the
+    same 100 MB binary.
+    """
+    found = path if len(path.parts) > 1 else shutil.which(path.name)
+    try:
+        resolved = Path(found).resolve(strict=True) if found else None
+        if resolved is None or not resolved.is_file():
+            return None
+        info = resolved.stat()
+    except OSError:
+        return None
+    return _hash_file(resolved, info.st_size, info.st_mtime_ns)
+
+
+@functools.cache
+def _hash_file(path: Path, size: int, mtime_ns: int) -> str:
+    return f"sha256:{sha256_file(path)}"
+
+
 def stage_input(manifest: StageManifest) -> str:
     if not manifest.succeeded:
         raise ValueError(f"stage {manifest.stage} did not succeed; its outputs can't be used")
@@ -177,6 +211,7 @@ def run_stage(
     stage folder then has a log but no manifest, so it is never reused.
     """
     stage_dir = project.stage_dir(spec.name)
+    backend = spec.resolved_backend()
     key = spec.cache_key()
     previous = load_manifest(stage_dir)
     if not force and previous is not None and previous.succeeded and previous.cache_key == key:
@@ -205,7 +240,7 @@ def run_stage(
         run_id=uuid.uuid4().hex,
         status=status,
         cache_key=key,
-        backend=spec.backend,
+        backend=backend,
         command=result.argv,
         parameters=dict(spec.parameters),
         inputs=dict(spec.inputs),

@@ -58,7 +58,10 @@ Each stage folder has a `stage.json`:
 
 - stage name, a run id (new on every run) and status (succeeded, failed,
   cancelled)
-- backend name and exact version
+- backend name, exact version and build: the sha256 of the executable
+  that ran, since a patched or rebuilt binary of the same version can give
+  different results (hashed once per process; content, not path, so the
+  AppImage's changing mount point doesn't matter)
 - full command line (argument list)
 - parameters after preset resolution
 - input fingerprints: `sha256:` for a file, `capture:` for a bundle (from

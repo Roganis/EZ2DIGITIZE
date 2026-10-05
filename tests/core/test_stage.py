@@ -14,6 +14,7 @@ from ez2digitize.core.stage import (
     Backend,
     StageSpec,
     capture_input,
+    executable_build,
     file_input,
     load_manifest,
     run_stage,
@@ -59,7 +60,11 @@ def test_run_writes_manifest_log_and_outputs(project: Project) -> None:
     data = json.loads((stage_dir / "stage.json").read_text())
     assert data["schema_version"] == 1
     assert data["status"] == "succeeded"
-    assert data["backend"] == {"name": "fake-tool", "version": "1.0.0"}
+    assert data["backend"] == {
+        "name": "fake-tool",
+        "version": "1.0.0",
+        "build": executable_build(Path(sys.executable)),
+    }
     assert data["command"][0] == sys.executable
     assert data["parameters"] == {"text": "hello"}
     assert data["exit_code"] == 0
@@ -91,6 +96,43 @@ def test_force_reruns(project: Project) -> None:
 def test_changes_invalidate(project: Project, changed: dict[str, Any]) -> None:
     run_stage(project, writer_spec())
     assert not run_stage(project, writer_spec(**changed)).reused
+
+
+def tool_script(path: Path, text: str) -> Path:
+    """An executable script that writes `text` to out.txt."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\nopen('out.txt', 'w').write({text!r})\n")
+    path.chmod(0o755)
+    return path
+
+
+def script_spec(tool: Path) -> StageSpec:
+    return StageSpec(name="01-write", backend=TOOL, argv=[tool])
+
+
+def test_rebuilt_backend_of_the_same_version_invalidates(project: Project, tmp_path: Path) -> None:
+    tool = tool_script(tmp_path / "bin" / "tool", "v1")
+    first = run_stage(project, script_spec(tool))
+    assert first.manifest.backend.build == file_input(tool)
+    tool_script(tool, "v1 patched")
+    second = run_stage(project, script_spec(tool))
+    assert not second.reused
+    assert second.manifest.backend.build != first.manifest.backend.build
+    assert (project.stage_dir("01-write") / "out.txt").read_text() == "v1 patched"
+
+
+def test_same_backend_at_another_path_is_reused(project: Project, tmp_path: Path) -> None:
+    # A packaged app mounts its backends at a new path on every launch.
+    run_stage(project, script_spec(tool_script(tmp_path / "mount-a" / "tool", "v1")))
+    assert run_stage(project, script_spec(tool_script(tmp_path / "mount-b" / "tool", "v1"))).reused
+
+
+def test_executable_build(tmp_path: Path) -> None:
+    tool = tool_script(tmp_path / "tool", "x")
+    assert executable_build(tool) == file_input(tool)
+    assert executable_build(tmp_path / "missing") is None
+    assert executable_build(Path("no-such-tool-on-path-ez2d")) is None
+    assert executable_build(tmp_path) is None
 
 
 def test_command_paths_are_not_part_of_the_key(project: Project) -> None:

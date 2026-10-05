@@ -50,8 +50,8 @@ when the tool is missing.
 2. **Qt stays in the UI.** Only `ez2digitize.ui` and `ez2digitize.app` may
    import PySide6 (enforced by ruff TID251). Everything else must run headless
    so the pipeline works from a CLI and in CI.
-3. **Every stage writes a manifest** (`stage.json`): backend name and version,
-   exact command line, parameters, input hashes, timing, exit code. Caching and
+3. **Every stage writes a manifest** (`stage.json`): backend name, version and
+   build (executable hash), exact command line, parameters, input hashes, timing, exit code. Caching and
    resume are decided from manifests only.
 4. **Projects are versioned folders.** `project.json` has a `schema_version`;
    any format change bumps it and adds a migration.

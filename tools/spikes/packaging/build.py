@@ -51,6 +51,10 @@ HOST_LIBRARIES = (
     "libfontconfig.so.1", "libfreetype.so.6", "libharfbuzz.so.0",
     # C++ runtime: host GPU drivers need the host's (newer) version
     "libstdc++.so.6", "libgcc_s.so.1",
+    # GPU stack: must match the host's Mesa driver ("did not find extension
+    # DRI_Mesa" and a GBM fallback on Arch when an older libgbm was bundled)
+    "libgbm.so.1", "libdrm.so.2", "libdrm_amdgpu.so.1", "libEGL.so.1", "libGL.so.1",
+    "libGLX.so.0", "libGLdispatch.so.0", "libOpenGL.so.0", "libglapi.so.0", "libvulkan.so.1",
     # X11 and keyboard data
     "libX11.so.6", "libX11-xcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0",
     # system services

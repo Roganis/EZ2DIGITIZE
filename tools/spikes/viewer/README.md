@@ -42,7 +42,16 @@ memory of the `QtWebEngineProcess` processes (`htop` / Activity Monitor).
 For a size stress test, `make_test_splat.py out.ply --count 3000000` writes
 a 3-million-splat file. Record results in `docs/feasibility/FINDINGS.md`.
 
-## Results so far (CPU-only container, software rendering)
+## Results on the GRE (Arch, packaged viewer AppImage)
+
+| Model | Size | Load | fps | GPU reported by the page |
+|---|---|---|---|---|
+| Textured mesh (goat skull) | 1,967,318 faces | 1.5 s | 60.1 | ANGLE, radeonsi navi31 (Mesa, RX 7900 GRE) |
+
+60 fps is most likely the display's refresh cap, not the GPU's limit. Splat
+and M1 measurements still to come.
+
+## Results in a CPU-only container (software rendering)
 
 Mesa llvmpipe through ANGLE, so frame rates say nothing about real GPUs:
 

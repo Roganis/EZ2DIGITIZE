@@ -89,7 +89,16 @@ measured yet; they come from the backend CI builds). So 300-400 MB.
   GTK stack it pulls in). Because the bundle is built on the oldest
   supported distro, the host's copies are always the same version or newer.
   Checked with `LD_DEBUG=libs`: both variants now load these from the
-  system, self-tests pass, and the AppImages got 7-8 MB smaller.
+  system, self-tests pass, and the AppImages got 7-8 MB smaller. Confirmed
+  on Arch: no more fontconfig errors.
+- **The GPU stack must come from the host too.** On Arch, the viewer
+  AppImage still reached the GPU (radeonsi through ANGLE), but printed "did
+  not find extension DRI_Mesa version 1" and "EGL: Failed to initialize GBM
+  device": the bundled `libgbm` from Ubuntu 22.04's Mesa couldn't drive
+  Arch's newer Mesa driver, so Chromium fell back to slower buffer
+  allocation. `libgbm`, `libdrm`, libEGL/libGL/GLX, `libglapi` and
+  `libvulkan` are now in `HOST_LIBRARIES` (only `libgbm` was actually
+  bundled); the viewer loads the system's `libgbm`.
 - **Bundled backends** live in `sys._MEIPASS/backends` (`_internal/` on
   Linux, `Contents/Frameworks` in a `.app`). The app must call them by
   absolute path from there, never via `PATH`.

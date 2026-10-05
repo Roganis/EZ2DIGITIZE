@@ -41,7 +41,9 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 ### Viewer (`tools/spikes/viewer`)
 
 - Splat from Brush: load time, fps, smooth to rotate? (GRE / M1): ...
-- Textured mesh and dense cloud from OpenMVS: ...
+- Textured mesh and dense cloud from OpenMVS: GRE, packaged AppImage: 1.97M-face
+  textured mesh loads in 1.5 s and renders at 60 fps (likely vsync-capped) on
+  radeonsi through ANGLE. M1: ...
 - 3M-splat stress file: ...
 - Memory of the QtWebEngine processes: ...
 
@@ -56,7 +58,7 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 | (a) OpenMVS on CPU fast enough for small objects? Default resolution level? | | |
 | (b) Masking model and runtime | | |
 | (c) Python packaging acceptable? | Likely yes: AppImage 144 MB without viewer, 285 MB with, 0.3-0.4 s to a window ([spike](../../tools/spikes/packaging/README.md)); size is dominated by Brush and QtWebEngine, not Python. Still to check: the macOS `.app` on the M1 | |
-| (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); works on software rendering, needs fps/memory on the GRE and M1 | |
+| (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); on the GRE a 2M-face textured mesh runs at 60 fps on the GPU from the AppImage. Still to measure: splats, the M1, memory | |
 
 ## Notes from validating the harness
 

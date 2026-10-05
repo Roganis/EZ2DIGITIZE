@@ -53,13 +53,20 @@ Prerequisites:
 The [Backends workflow](../../.github/workflows/backends.yml) runs the build
 on Ubuntu 22.04 (for an old glibc baseline) and Apple Silicon macOS. It
 then runs the benchmark harness on the synthetic scene with the fresh
-binaries ([`backends-smoke.toml`](../feasibility/plans/backends-smoke.toml)),
-and uploads the archives as artifacts for 14 days.
+binaries ([`backends-smoke.toml`](../feasibility/plans/backends-smoke.toml))
+and the app's own backend modules on the same scene
+(`tests/backends/test_real_pipeline.py`), and uploads the archives as
+artifacts for 14 days.
 
 ## What is turned off, and why
 
 - **CUDA, HIP, GUI, OpenGL** (COLMAP) and **CUDA, viewer, Python**
   (OpenMVS): the app runs them headless on any GPU vendor.
+- **OpenCV's default features** (OpenMVS): `build.sh` edits OpenMVS's vcpkg
+  manifest to ask for OpenCV without them, keeping only Eigen and the image
+  formats (JPEG, PNG, TIFF, OpenEXR, JPEG XL). The defaults include the GTK
+  GUI backend on Linux, a large GTK/X11 build (which failed in CI on
+  at-spi2-core) for windows OpenMVS only opens in debug builds.
 - **ONNX** (COLMAP's learned features, ALIKED/LightGlue): would download
   ONNX Runtime at configure time; worth evaluating later (roadmap Phase 7).
 - **CGAL** (COLMAP): only used by COLMAP's own meshing, which needs its

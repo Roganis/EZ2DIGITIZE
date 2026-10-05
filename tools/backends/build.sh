@@ -107,6 +107,26 @@ cp "$WORK/colmap-install/bin/colmap" "$PREFIX/bin/"
 
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs https://github.com/cdcseacave/openMVS.git "$OPENMVS_VERSION"
+# OpenMVS asks for vcpkg's "opencv" with its default features, which on Linux
+# include the GTK GUI backend: a large GTK/X11 build (it failed on at-spi2-core)
+# for windows OpenMVS only opens in debug builds. Ask for OpenCV without
+# default features, keeping the image formats OpenMVS reads and writes.
+python3 - openmvs/vcpkg.json <<'EOF'
+import json, sys
+path = sys.argv[1]
+manifest = json.load(open(path))
+deps = [
+    d for d in manifest["dependencies"]
+    if not (isinstance(d, dict) and d["name"] in ("opencv", "opencv4"))
+]
+deps.append({
+    "name": "opencv4",
+    "default-features": False,
+    "features": ["eigen", "jpeg", "jpegxl", "openexr", "png", "tiff"],
+})
+manifest["dependencies"] = deps
+json.dump(manifest, open(path, "w"), indent=2)
+EOF
 cmake -S openmvs -B openmvs-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \

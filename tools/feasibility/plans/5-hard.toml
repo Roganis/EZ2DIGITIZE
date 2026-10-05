@@ -1,0 +1,24 @@
+# Dataset 5: deliberately hard set (shallow depth of field, shiny surface,
+# low texture). Expected to fail somewhere; the point is to see how and
+# whether the failure is detectable (few registered images, several models,
+# holes in the mesh) so the app can explain it to users later.
+
+[dataset]
+name = "hard"
+images = "~/ez2d-data/hard/images"
+masks = "~/ez2d-data/hard/masks"
+
+[[colmap]]
+label = "sift3200"
+max_image_size = 3200
+
+[[colmap]]
+label = "sift3200-masked"
+max_image_size = 3200
+masks = true
+
+[[openmvs]]
+label = "lvl1-masked"
+source = "sift3200-masked"
+resolution_level = 1
+masks = true

@@ -1,0 +1,73 @@
+# Dataset 1: small textured object on a patterned mat, photographed walking
+# around it (~40-60 photos, two height rings). This is the main matrix:
+#  - how fast is COLMAP on CPU, and does image size matter?
+#  - does the global mapper help? (needs COLMAP with global_mapper, or GLOMAP)
+#  - which OpenMVS resolution level is usable, and what do masks save?
+#  - Brush time and quality on the GPU
+#
+# On the 8 GB M1, start with a subset and watch the Swap column:
+#   bench.py run plans/1-walkaround.toml --only sift1600 sift3200 lvl2 lvl1 brush-1024
+
+[dataset]
+name = "walkaround"
+images = "~/ez2d-data/walkaround/images"
+masks = "~/ez2d-data/walkaround/masks"  # create with: bench.py masks <images> <masks>
+
+[[colmap]]
+label = "sift1600"
+max_image_size = 1600
+
+[[colmap]]
+label = "sift3200"
+max_image_size = 3200
+
+[[colmap]]
+label = "sift3200-global"
+max_image_size = 3200
+mapper = "global"
+
+[[colmap]]
+label = "sift3200-masked"
+max_image_size = 3200
+masks = true
+
+[[openmvs]]
+label = "lvl2"
+source = "sift3200"
+resolution_level = 2
+
+[[openmvs]]
+label = "lvl1"
+source = "sift3200"
+resolution_level = 1
+
+[[openmvs]]
+label = "lvl0"
+source = "sift3200"
+resolution_level = 0
+
+[[openmvs]]
+label = "lvl1-masked"
+source = "sift3200-masked"
+resolution_level = 1
+masks = true
+
+[[openmvs]]
+label = "lvl1-masked-refine"
+source = "sift3200-masked"
+resolution_level = 1
+masks = true
+refine = true
+
+# Brush 0.3.0 options; check `brush_app --help` if you use another version.
+# --eval-split-every holds out every 8th photo to measure quality (PSNR).
+[[brush]]
+label = "brush-default"
+source = "sift3200"
+args = ["--export-every", "30000", "--eval-split-every", "8", "--eval-save-to-disk"]
+
+[[brush]]
+label = "brush-1024"
+source = "sift3200"
+args = ["--max-resolution", "1024", "--export-every", "30000", "--eval-split-every", "8",
+        "--eval-save-to-disk"]

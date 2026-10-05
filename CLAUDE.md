@@ -25,7 +25,14 @@ uv run mypy              # strict type check of src/ and tests/
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, format check, mypy and pytest on
-Linux and macOS. Run all four before committing.
+Linux and macOS with all dependency groups (`uv sync --all-groups`). Run all
+four before committing.
+
+Phase 1 benchmark tooling lives in `tools/feasibility/` (package
+`ez2d_bench`, CLI `bench.py`, needs `--group feasibility`). It is throwaway
+spike code: it may use numpy/Pillow/rembg freely, but nothing in `src/` may
+import it. Tests that need real backends (`colmap` on PATH) skip themselves
+when the tool is missing.
 
 ## Architecture rules
 

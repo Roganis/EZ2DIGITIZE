@@ -66,8 +66,10 @@ Phases are ordered by dependency. No durations are given on purpose.
 
 ## Phase 1: Feasibility spike
 
-No GUI. Run the tools by hand on the AMD Linux machine (primary) and the M1
-(secondary), and record results in `docs/feasibility/`.
+No GUI. Run the tools on the AMD Linux machine (primary) and the M1
+(secondary), and record results in `docs/feasibility/`. The benchmark
+harness is in `tools/feasibility/`; the step-by-step protocol is in
+`docs/feasibility/README.md`.
 
 **Datasets** (own captures, redistributable later under CC-BY):
 

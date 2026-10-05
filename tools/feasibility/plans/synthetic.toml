@@ -1,0 +1,37 @@
+# Smoke test on the rendered dataset from `bench.py synth`. Checks that the
+# tools are installed and the plumbing works; the numbers mean nothing.
+#
+#   uv run --group feasibility tools/feasibility/bench.py synth ~/ez2d-data/synthetic
+#   uv run --group feasibility tools/feasibility/bench.py run tools/feasibility/plans/synthetic.toml
+
+[dataset]
+name = "synthetic"
+images = "~/ez2d-data/synthetic/images"
+masks = "~/ez2d-data/synthetic/masks"
+
+[[colmap]]
+label = "sift1600-exh-inc"
+max_image_size = 1600
+
+[[colmap]]
+label = "sift1600-exh-inc-masked"
+max_image_size = 1600
+masks = true
+
+[[openmvs]]
+label = "lvl2"
+source = "sift1600-exh-inc"
+resolution_level = 2
+
+[[openmvs]]
+label = "lvl2-masked"
+source = "sift1600-exh-inc-masked"
+resolution_level = 2
+masks = true
+
+[[brush]]
+label = "brush-short"
+source = "sift1600-exh-inc"
+# Brush 0.3.0 options. 300 steps is only a plumbing check.
+args = ["--total-steps", "300", "--export-every", "300", "--max-resolution", "640",
+        "--eval-split-every", "8", "--eval-every", "300", "--eval-save-to-disk"]

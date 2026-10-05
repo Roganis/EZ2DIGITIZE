@@ -49,3 +49,18 @@ pytest          MIT
 pytest-qt       MIT
 ruff            MIT
 uv              MIT or Apache-2.0
+
+Phase 1 feasibility harness (tools/feasibility, "feasibility" dependency
+group). Never part of the app; listed because they run on contributors'
+machines:
+
+numpy           BSD-3-Clause
+Pillow          MIT-CMU (HPND)
+rembg           MIT
+onnxruntime     MIT
+rembg models    downloaded at first use, licensed per model:
+                birefnet-general / -lite (BiRefNet)   MIT
+                isnet-general-use (DIS)               Apache-2.0
+                u2net / u2netp                        Apache-2.0
+                Check the license of any other rembg model before using it;
+                some (e.g. anime-specific ones) carry other terms.

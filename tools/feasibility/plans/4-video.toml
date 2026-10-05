@@ -1,0 +1,29 @@
+# Dataset 4: phone video orbit around the object. Extract frames first:
+#   bench.py frames orbit.mp4 ~/ez2d-data/video/images --count 120
+# Answers: is sequential matching as good as exhaustive and how much faster?
+# Do video frames give a usable mesh?
+
+[dataset]
+name = "video"
+images = "~/ez2d-data/video/images"
+masks = "~/ez2d-data/video/masks"
+
+[[colmap]]
+label = "seq"
+max_image_size = 1920
+matcher = "sequential"
+
+[[colmap]]
+label = "exh"
+max_image_size = 1920
+matcher = "exhaustive"
+
+[[openmvs]]
+label = "lvl1"
+source = "seq"
+resolution_level = 1
+
+[[brush]]
+label = "brush-default"
+source = "seq"
+args = ["--export-every", "30000", "--eval-split-every", "8", "--eval-save-to-disk"]

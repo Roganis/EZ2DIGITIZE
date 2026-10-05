@@ -91,7 +91,7 @@ jobs:
           EZ2D_REQUIRE_BACKENDS: "1"
         # The backend tests don't use Qt; without pytest-qt they also run on
         # runners without the libraries Qt needs (libEGL on Ubuntu).
-        run: uv run --all-groups pytest tests/backends -rs -p no:pytestqt
+        run: uv run --all-groups pytest tests/backends -rs -p no:pytest-qt
 
       - name: Summary
         if: always()

@@ -89,6 +89,9 @@ CC BY 4.0).
   EXIF-based 7,248 px and large distortion. COLMAP 4.2.1's global mapper
   placed all 62 images in one model, focal 7,101 px, 14,849 points, 0.50 px
   mean reprojection error, in 69 s instead of 346 s. Now the default.
+  The incremental mapper with distortion refinement off
+  (`--Mapper.ba_refine_extra_params 0`) also placed all 62 images: refining
+  the distortion from a narrow-angle lens is what broke it apart.
 - Other steps (container, 4 threads): matching 73 s / 210 MB, mapping
   (incremental) 346 s / 162 MB, undistortion 5 s / 270 MB.
 - The folder also holds `Preview.jpg`, a collage of the set, which folder

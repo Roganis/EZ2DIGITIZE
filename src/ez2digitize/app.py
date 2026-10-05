@@ -12,6 +12,7 @@ from ez2digitize.ui.main_window import MainWindow
 
 def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv if argv is None else argv)
+    app.setOrganizationName("EZ2DIGITIZE")
     app.setApplicationName("EZ2DIGITIZE")
     app.setApplicationVersion(__version__)
     window = MainWindow()

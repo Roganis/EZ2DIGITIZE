@@ -158,6 +158,9 @@ installable on Linux as an AppImage.
   the undistorted images and used by OpenMVS densification.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
+- GUI: project page with import, settings, Run/Cancel, per-step progress,
+  log and failure details, driving the pipeline on a worker thread (done,
+  `ez2digitize.ui`).
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification.
 - Export OBJ (+MTL + textures) and GLB.

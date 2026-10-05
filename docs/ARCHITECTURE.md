@@ -121,6 +121,25 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
+## GUI (`ui/`)
+
+- `PipelineRunner` (`ui/pipeline_runner.py`) is the Qt adapter: it runs a
+  pipeline function on a `QThread` and re-emits its events as signals
+  (`stage_started`, `progress`, `output`, `notice`, `stage_finished`, then
+  one of `succeeded`/`failed`/`cancelled`, then `running_changed(False)`).
+  Output lines are batched and progress coalesced to at most every 0.1 s,
+  so a chatty backend can't flood the event loop.
+- `ProjectPage` shows one project: captures, a few settings (detail level,
+  mesh format, refine, masks), Run/Cancel, a list of steps with their
+  state, overall progress, the tools' output, and on failure the end of the
+  failed step's log with a button to open the full log.
+- `MainWindow` switches between a welcome page and the project page, and
+  asks before closing or quitting during a run (which cancels it).
+  `BackendsDialog` stores the COLMAP and OpenMVS locations in `QSettings`;
+  empty fields fall back to the usual search.
+- Tests drive the real pipeline through the GUI with fake backends
+  (`tests/conftest.py`), offscreen.
+
 ## Pipeline (`pipeline.py`)
 
 Mesh path (Phase 2); the stages in brackets are done:

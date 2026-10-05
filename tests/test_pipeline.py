@@ -11,8 +11,6 @@ from pathlib import Path
 import pytest
 
 from ez2digitize import pipeline
-from ez2digitize.backends.colmap import Colmap
-from ez2digitize.backends.openmvs import TOOLS, OpenMVS
 from ez2digitize.core.capture import import_files, list_bundles
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import CancelToken, Output
@@ -32,80 +30,6 @@ from ez2digitize.pipeline import (
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 
-# Behaviour is steered through environment variables the fakes read:
-# FAKE_FAIL=<command> makes that command exit 1, FAKE_MODELS="30,2" sets the
-# registered images per model, FAKE_SLEEP=<command> makes it hang.
-FAKE_COLMAP = """
-import os, struct, sys, time
-from pathlib import Path
-cmd, args = sys.argv[1], sys.argv[2:]
-opt = lambda name: args[args.index(name) + 1]
-print(f"fake colmap {cmd}", flush=True)
-if os.environ.get("FAKE_SLEEP") == cmd:
-    time.sleep(60)
-if os.environ.get("FAKE_FAIL") == cmd:
-    print("something went wrong", flush=True)
-    sys.exit(1)
-if cmd == "feature_extractor":
-    # The "database" is the image list, so the mapper knows the names.
-    Path(opt("--database_path")).write_text(Path(opt("--image_list_path")).read_text())
-    print("Processed file [1/1]")
-elif cmd in ("mapper", "global_mapper"):
-    names = Path(opt("--database_path")).read_text().split()
-    for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").split(",")):
-        if not n:
-            continue
-        model = Path(opt("--output_path")) / str(i)
-        model.mkdir(parents=True)
-        # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
-        cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
-        (model / "cameras.bin").write_bytes(cameras)
-        images = struct.pack("<Q", int(n))
-        for image_id, name in enumerate(names[: int(n)], 1):
-            images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
-            images += name.encode() + b"\\0" + struct.pack("<Q", 0)
-        (model / "images.bin").write_bytes(images)
-elif cmd == "image_undistorter":
-    out = Path(opt("--output_path"))
-    (out / "images").mkdir()
-    (out / "sparse").mkdir()
-elif cmd == "image_undistorter_standalone":
-    src, out = Path(opt("--image_path")), Path(opt("--output_path"))
-    for line in Path(opt("--input_file")).read_text().splitlines():
-        name = line.split()[0]
-        (out / name).write_bytes((src / name).read_bytes())
-"""
-
-FAKE_OPENMVS = """
-import os, sys
-from pathlib import Path
-tool = Path(sys.argv[0]).name
-args = sys.argv[1:]
-print(f"fake {tool}", flush=True)
-if os.environ.get("FAKE_FAIL") == tool:
-    sys.exit(1)
-out = Path(args[args.index("-o") + 1])
-out.write_text("mvs")
-out.with_suffix(".ply").write_text("ply")
-if tool == "TextureMesh":
-    (out.parent / "scene_textured0.png").write_bytes(b"png")
-"""
-
-
-def _script(path: Path, body: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!{sys.executable}\n{body}")
-    path.chmod(0o755)
-    return path
-
-
-@pytest.fixture
-def tools(tmp_path: Path) -> Tools:
-    exe = _script(tmp_path / "fake" / "colmap", FAKE_COLMAP)
-    for tool in TOOLS:
-        _script(tmp_path / "fake" / "mvs" / tool, FAKE_OPENMVS)
-    return Tools(Colmap(exe, "4.2.1"), OpenMVS(tmp_path / "fake" / "mvs", "2.4.0"))
-
 
 @pytest.fixture
 def project(tmp_path: Path) -> Project:
@@ -118,10 +42,9 @@ def project(tmp_path: Path) -> Project:
     return project
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP"):
-        monkeypatch.delenv(var, raising=False)
+@pytest.fixture
+def tools(fake_tools: Tools) -> Tools:
+    return fake_tools
 
 
 def _collect() -> tuple[list[PipelineEvent], pipeline.PipelineHandler]:

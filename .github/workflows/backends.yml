@@ -19,11 +19,13 @@ on:
 permissions:
   contents: read
 
-# A new push supersedes a running build. The cache-save step still runs on
-# cancellation, so the dependencies built so far are kept.
+# One build per branch at a time. A new push waits for the running build
+# instead of cancelling it: most pushes don't touch the backends, and a
+# cancelled multi-hour build loses its compile progress. Only the newest
+# waiting run is kept, and it starts from the cache the first one saves.
 concurrency:
   group: backends-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:

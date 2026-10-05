@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 import math
+from pathlib import Path
 
 from ez2digitize.coverage import Coverage, assess
 from ez2digitize.orientation import Vector
@@ -61,6 +62,37 @@ def test_misplaced_camera_is_left_out() -> None:
     result = run(cameras)
     assert result.cameras == 48
     assert result.findings == (
-        "1 photo(s) were placed far from the others, probably wrongly; they can add "
-        "noise. Check them in the photo checks (blurry, or of something else?).",
+        "placed far from the others, probably wrongly: 1 photo(s). They can add noise; "
+        "check them in the photo checks (blurry, or of something else?).",
     )
+    named = assess(
+        [c for c, _ in cameras], [a for _, a in cameras], UP, [f"c/{i}.jpg" for i in range(49)]
+    )
+    assert "probably wrongly: 48.jpg." in named.findings[0]
+
+
+def test_weak_photos_and_name_list(tmp_path: Path) -> None:
+    import sqlite3
+
+    from ez2digitize.coverage import name_list, weak_photos
+
+    database = tmp_path / "database.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE images (image_id INTEGER, name TEXT)")
+        db.execute(
+            "CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, config INTEGER)"
+        )
+        db.executemany(
+            "INSERT INTO images VALUES (?, ?)", [(i, f"c/{i}.jpg") for i in (1, 2, 3, 4)]
+        )
+
+        def pair(a: int, b: int) -> int:
+            return a * 2147483647 + b
+
+        db.executemany(
+            "INSERT INTO two_view_geometries VALUES (?, ?, ?)",
+            [(pair(1, 2), 100, 2), (pair(2, 3), 100, 3), (pair(1, 3), 80, 2),
+             (pair(3, 4), 9, 2), (pair(1, 4), 300, 7)],  # too few; a watermark
+        )  # fmt: skip
+    assert weak_photos(database) == ["c/4.jpg"]
+    assert name_list([f"c/{i}.jpg" for i in range(8)], limit=3) == "0.jpg, 1.jpg, 2.jpg and 5 more"

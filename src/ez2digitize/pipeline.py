@@ -18,6 +18,7 @@ pipeline on a worker thread, the CLI on the main one.
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -25,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ez2digitize import coverage
-from ez2digitize.backends import brush, colmap, openmvs
+from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.hardware import detect_gpus
@@ -397,11 +398,7 @@ def _sparse(
         run.emit(
             Notice(f"only {registered} of {total} images were placed; the mesh may be partial")
         )
-    try:
-        placed = coverage.analyse(model, exif_orientations(bundles))
-    except (OSError, ValueError, BackendError):
-        placed = None  # advice only: never stop the run for it
-    for finding in placed.findings if placed else ():
+    for finding in _coverage_notes(project, model, bundles):
         run.emit(Notice(finding))
 
     undistorted = run(
@@ -469,6 +466,31 @@ def _dense(
         for note in export_notes(exports):
             run.emit(Notice(note))
     return MeshResult(sparse=sparse, textured=textured, files=files, exports=exports)
+
+
+def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle]) -> list[str]:
+    """What the camera placement says about the capture (advice only)."""
+    notes = []
+    try:
+        placed = colmap_model.read_images(model)
+        unplaced = sorted(set(colmap.image_names(bundles)) - set(placed))
+        if unplaced:
+            notes.append(
+                f"not placed: {coverage.name_list(unplaced)}. They overlap too little with "
+                "the others, or are blurry or of something else."
+            )
+        database = project.stage_dir("matching") / colmap.DATABASE
+        weak = [name for name in coverage.weak_photos(database) if name in placed]
+        if weak:
+            notes.append(
+                f"few matches with the others: {coverage.name_list(weak)}. More photos "
+                "between them and their neighbours would make the result more reliable."
+            )
+        analysis = coverage.analyse(model, exif_orientations(bundles))
+        notes += analysis.findings if analysis else ()
+    except (OSError, ValueError, BackendError, sqlite3.Error):
+        pass  # advice only: never stop the run for it
+    return notes
 
 
 def _existing_sparse(project: Project, settings: MeshSettings) -> SparseResult:

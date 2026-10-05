@@ -21,7 +21,9 @@ The findings are advice for the next capture; nothing is stopped.
 
 from __future__ import annotations
 
+import contextlib
 import math
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +62,7 @@ def analyse(model_dir: Path, orientations: Mapping[str, int] | None = None) -> C
     images = read_images(model_dir)
     centres: list[Vector] = []
     axes: list[Vector] = []
+    names = list(images)
     for pose in images.values():
         rotation = quaternion_matrix(pose.qvec)
         t = pose.tvec
@@ -69,10 +72,15 @@ def analyse(model_dir: Path, orientations: Mapping[str, int] | None = None) -> C
     if len(centres) < MIN_CAMERAS:
         return None
     up_estimate = estimate_up(model_dir, orientations)
-    return assess(centres, axes, up_estimate.up if up_estimate else None)
+    return assess(centres, axes, up_estimate.up if up_estimate else None, names)
 
 
-def assess(centres: Sequence[Vector], axes: Sequence[Vector], up: Vector | None) -> Coverage:
+def assess(
+    centres: Sequence[Vector],
+    axes: Sequence[Vector],
+    up: Vector | None,
+    names: Sequence[str] | None = None,
+) -> Coverage:
     # Scale-free: around an object the views turn; a fixed camera looks one way.
     units = [_unit(a) for a in axes]
     mean_view = _unit(tuple(sum(a[i] for a in units) for i in range(3)))  # type: ignore[arg-type]
@@ -92,17 +100,19 @@ def assess(centres: Sequence[Vector], axes: Sequence[Vector], up: Vector | None)
     distances = [_norm(_sub(c, target)) for c in centres]
     median = sorted(distances)[len(distances) // 2] or 1.0
     # A camera COLMAP misplaced far away would dominate the analysis.
-    kept = [c for c, d in zip(centres, distances, strict=True) if d <= OUTLIER_DISTANCE * median]
-    misplaced = len(centres) - len(kept)
+    far = [d > OUTLIER_DISTANCE * median for d in distances]
+    kept = [c for c, out in zip(centres, far, strict=True) if not out]
+    misplaced = [names[i] if names else str(i) for i, out in enumerate(far) if out]
     middle = _median_point(kept)
     from_middle = sorted(_norm(_sub(c, middle)) for c in kept)
     spread = from_middle[int(0.9 * (len(from_middle) - 1))] / median
     centres = kept
     findings: list[str] = []
     if misplaced:
+        which = name_list(misplaced) if names else f"{len(misplaced)} photo(s)"
         findings.append(
-            f"{misplaced} photo(s) were placed far from the others, probably wrongly; they "
-            "can add noise. Check them in the photo checks (blurry, or of something else?)."
+            f"placed far from the others, probably wrongly: {which}. They can add noise; "
+            "check them in the photo checks (blurry, or of something else?)."
         )
     gap = elevations = None
     if up is not None:
@@ -222,3 +232,41 @@ def _norm(a: Vector) -> float:
 def _unit(a: Vector) -> Vector:
     n = _norm(a) or 1.0
     return (a[0] / n, a[1] / n, a[2] / n)
+
+
+# --- overlap -------------------------------------------------------------------------
+
+# COLMAP pair ids: id1 * MAX + id2 (util/types.h, kMaxNumImages).
+_MAX_IMAGES = 2147483647
+# Verified two-view geometries that count as real overlap (calibrated,
+# uncalibrated, planar, planar-or-panoramic); not degenerate or watermarks.
+_GOOD_CONFIGS = (2, 3, 4, 6)
+MIN_INLIERS = 15
+MIN_NEIGHBOURS = 2
+
+
+def weak_photos(database: Path) -> list[str]:
+    """Photos sharing at least MIN_INLIERS verified matches with fewer than
+    MIN_NEIGHBOURS other photos, from a COLMAP database after matching."""
+    uri = f"{database.absolute().as_uri()}?mode=ro"
+    with contextlib.closing(sqlite3.connect(uri, uri=True)) as db:
+        names = dict(db.execute("SELECT image_id, name FROM images"))
+        neighbours = dict.fromkeys(names, 0)
+        rows = db.execute(
+            "SELECT pair_id FROM two_view_geometries WHERE rows >= ? AND config IN (?, ?, ?, ?)",
+            (MIN_INLIERS, *_GOOD_CONFIGS),
+        )
+        for (pair_id,) in rows:
+            second = pair_id % _MAX_IMAGES
+            first = (pair_id - second) // _MAX_IMAGES
+            for image in (first, second):
+                if image in neighbours:
+                    neighbours[image] += 1
+    return sorted(names[i] for i, n in neighbours.items() if n < MIN_NEIGHBOURS)
+
+
+def name_list(names: Sequence[str], limit: int = 5) -> str:
+    """`a, b, c and 4 more`, with capture folders dropped."""
+    short = [name.rsplit("/", 1)[-1] for name in names]
+    shown = ", ".join(short[:limit])
+    return shown if len(short) <= limit else f"{shown} and {len(short) - limit} more"

@@ -281,8 +281,9 @@ fails, they can see which stage failed and why.
   camera rings, warnings for blur and shiny/transparent subjects. Partly
   done: blur is in the photo checks; after camera placement
   `ez2digitize.coverage` reports gaps around the object (over 90°), photos
-  all from one height, and photos placed far from the rest (notices in the
-  log). Showing them on the rings needs the viewer; shiny/transparent
+  all from one height, photos placed far from the rest, photos not placed,
+  and the overlap estimate: photos with verified matches to fewer than two
+  others (notices in the log). Showing them on the rings needs the viewer; shiny/transparent
   subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
   The coverage check spots a camera that didn't move (all views within

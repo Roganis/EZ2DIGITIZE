@@ -84,7 +84,7 @@ def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> 
 def test_failure_shows_log_tail(
     qtbot: QtBot, page: ProjectPage, photos: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("FAKE_FAIL", "mapper")
+    monkeypatch.setenv("FAKE_FAIL", "global_mapper")
     page.import_folder(photos)
     page.start_run()
     _wait_idle(qtbot, page)
@@ -99,7 +99,7 @@ def test_failure_shows_log_tail(
 def test_cancel(
     qtbot: QtBot, page: ProjectPage, photos: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("FAKE_SLEEP", "mapper")
+    monkeypatch.setenv("FAKE_SLEEP", "global_mapper")
     page.import_folder(photos)
     page.start_run()
     qtbot.waitUntil(lambda: _states(page).get("mapping") == "Running", timeout=TIMEOUT_MS)

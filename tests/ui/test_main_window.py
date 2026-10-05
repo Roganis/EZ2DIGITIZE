@@ -61,7 +61,7 @@ def test_open_errors_are_shown(
 def test_closing_while_running_asks_and_cancels(
     qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("FAKE_SLEEP", "mapper")
+    monkeypatch.setenv("FAKE_SLEEP", "global_mapper")
     window.new_project(tmp_path / "p")
     assert window.page is not None
     page = window.page

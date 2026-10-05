@@ -105,3 +105,15 @@ def fake_tools(tmp_path: Path) -> Tools:
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP"):
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _ample_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same machine everywhere: 4 threads and 64 GiB free, so no step is capped.
+
+    Tests about the caps set their own values.
+    """
+    import ez2digitize.pipeline
+
+    monkeypatch.setattr(ez2digitize.pipeline, "cpu_threads", lambda: 4)
+    monkeypatch.setattr(ez2digitize.pipeline, "available_memory", lambda: 64 * 1024**3)

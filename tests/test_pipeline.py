@@ -189,7 +189,7 @@ def test_masks_are_used_when_present(project: Project, tools: Tools) -> None:
 
 
 def test_cancel_and_busy(project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FAKE_SLEEP", "mapper")
+    monkeypatch.setenv("FAKE_SLEEP", "global_mapper")
     cancel = CancelToken()
     outcome: list[BaseException] = []
 

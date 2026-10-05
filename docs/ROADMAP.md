@@ -17,6 +17,7 @@ Phases are ordered by dependency. No durations are given on purpose.
 | Windows, NVIDIA, Intel | No test hardware yet | Build in CI, but label them community-tested until someone with the hardware validates a release. |
 | Use case | Small objects first | Masking, crop box, real-world scale, and two-sided ("flip") scans become core features. Rooms and outdoor scenes come later. |
 | Output priority | Mesh is the real goal, splat is secondary | The MVP's success criterion is a mesh. Splat training reuses the same poses and is added once the mesh path works. |
+| Phone transfer | QR-code upload page served by the desktop app (Phase 3); native Android app later (Phase 7) | No phone app needed for v1; works with any phone, including iPhones. Every intake path produces the same capture bundle, so the Android app can reuse it. |
 | Schedule | Not fixed | No durations in this document. |
 
 ## Review notes on the original draft
@@ -46,9 +47,14 @@ Phases are ordered by dependency. No durations are given on purpose.
 4. **Masks are first-class project data.** Each image may have a mask; every
    stage that can use masks (feature extraction, densification, texturing,
    splat training) receives them.
-5. **Undistortion is a shared stage.** Run `colmap image_undistorter` once;
+5. **All captures arrive as capture bundles.** Folder import, video frame
+   extraction, phone upload and the later Android app all produce the same
+   thing: original files, untouched, plus a `capture.json` (schema version,
+   source, device model if known, per-photo metadata where available). The
+   pipeline only ever reads bundles.
+6. **Undistortion is a shared stage.** Run `colmap image_undistorter` once;
    OpenMVS and the splat trainer both consume undistorted pinhole images.
-6. **Never bundle non-commercially licensed components.** If a backend or
+7. **Never bundle non-commercially licensed components.** If a backend or
    model is NC-licensed (common for research code and weights), the user
    installs it through the plugin mechanism, with the license shown. Bundling
    it would make the release something others can't freely redistribute.
@@ -155,7 +161,7 @@ installs the AppImage, drops in photos or a video of a small object, presses
 one button, adjusts the crop box, and gets a textured mesh; and when it
 fails, they can see which stage failed and why.
 
-## Phase 3: Robust backend layer and splats
+## Phase 3: Robust backend layer, splats and phone upload
 
 - Formal backend interface: inputs, outputs, parameters, capabilities
   (GPU vendor, needs CUDA, supports masks), version detection, license.
@@ -173,6 +179,20 @@ fails, they can see which stage failed and why.
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in).
 - macOS `.app` build in CI, tested on the M1.
+- **Phone upload over Wi-Fi.** An "Add photos from phone" dialog shows a QR
+  code; the phone opens it in its browser and gets a small upload page served
+  by the desktop app. The user picks the photos taken with the normal camera
+  app.
+  - Pairing: the QR carries a random one-time token; the server listens
+    only while the dialog is open and only on the local network.
+  - Originals are stored bit for bit (no re-encoding, EXIF kept); a photo
+    set of 300 MB or more must survive Wi-Fi drops, so uploads are chunked
+    and resumable.
+  - HEIC from iPhones is decoded on the desktop (e.g. pillow-heif with
+    libheif; check and record their licenses).
+  - Uploads land in a new capture bundle, with live progress on both sides.
+  - Also a "watch folder" option for people who already sync their phone
+    (Syncthing and similar).
 
 ## Phase 4: Mesh quality for real-world use
 
@@ -230,8 +250,18 @@ fails, they can see which stage failed and why.
   carry non-commercial licenses, so they must not be bundled.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
-- Android capture companion: guided shooting around the object, optionally
-  recording ARCore poses as priors, uploads to the desktop app.
+- Android capture companion, sending capture bundles through the Phase 3
+  upload endpoint. Its value over the upload page is control of the camera,
+  which a browser can't do:
+  - focus, exposure and white balance locked for the whole capture, and one
+    lens only (phones otherwise switch lenses and readjust between shots);
+  - live guidance: coverage ring of angles already shot, blur check after
+    each photo, optional automatic shutter once the phone has moved enough;
+  - optionally ARCore poses saved in `capture.json` as priors for COLMAP.
+
+  Before starting it, check the Phase 1 photo sets (EXIF focal lengths,
+  exposure differences) to see how much the phone's automatic adjustments
+  actually hurt reconstruction.
 
 ## Testing and validation
 
@@ -268,6 +298,9 @@ fails, they can see which stage failed and why.
 - **License contamination:** one NC-licensed dependency bundled by accident
   makes the release non-redistributable. Review `THIRD_PARTY_LICENSES` at
   every release.
+- **Local upload server:** a network listener in a desktop app is attack
+  surface. Keep it off by default, token-protected, LAN-only, with size and
+  file-type limits, and never derive file paths from uploaded names.
 - **Scope creep:** nothing from Phase 5+ until the Phase 2 mesh path is
   polished.
 

@@ -181,3 +181,20 @@ def test_input_fingerprints(project: Project, tmp_path: Path) -> None:
     assert first == tree_input(masks)
     (masks / "cap" / "a.png").write_bytes(b"MASK")
     assert tree_input(masks) != first
+
+
+def test_prepare_runs_in_the_fresh_stage_folder(project: Project) -> None:
+    seen: list[list[str]] = []
+
+    def prepare(stage_dir: Path) -> None:
+        seen.append(sorted(p.name for p in stage_dir.iterdir()))
+        (stage_dir / "input.txt").write_text("from prepare")
+
+    code = "print(open('input.txt').read())"
+    spec = StageSpec(
+        name="05-prep", backend=TOOL, argv=[sys.executable, "-c", code], prepare=prepare
+    )
+    run_stage(project, spec)
+    run_stage(project, spec, force=True)
+    assert seen == [[], []]
+    assert "from prepare" in (project.stage_dir("05-prep") / "log.txt").read_text()

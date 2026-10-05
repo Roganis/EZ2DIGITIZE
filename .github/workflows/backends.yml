@@ -1,6 +1,7 @@
 # Build pinned, CPU-only COLMAP and OpenMVS (tools/backends/build.sh) for
-# Linux x86_64 and macOS arm64, check them with the benchmark harness on the
-# synthetic scene, and upload the packages as artifacts.
+# Linux x86_64 and macOS arm64, check them with the benchmark harness and the
+# app's own backend modules on the synthetic scene, and upload the packages
+# as artifacts.
 name: Backends
 
 on:
@@ -82,6 +83,13 @@ jobs:
           $B run tools/feasibility/plans/backends-smoke.toml --results build/smoke \
             --machine "ci-${{ runner.os }}" \
             --colmap build/backends/prefix/bin/colmap --openmvs-dir build/backends/prefix/bin
+
+      - name: App pipeline with the fresh builds
+        env:
+          EZ2D_COLMAP: build/backends/prefix/bin/colmap
+          EZ2D_OPENMVS_DIR: build/backends/prefix/bin
+          EZ2D_REQUIRE_BACKENDS: "1"
+        run: uv run --all-groups pytest tests/backends -rs
 
       - name: Summary
         if: always()

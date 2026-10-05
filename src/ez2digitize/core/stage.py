@@ -27,7 +27,7 @@ from __future__ import annotations
 import platform
 import shutil
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -68,6 +68,9 @@ class StageSpec:
     inputs: Mapping[str, str] = field(default_factory=dict)
     env: Mapping[str, str] | None = None
     parse_line: LineParser | None = None
+    # Called with the (new, empty) stage folder just before the command runs,
+    # to write files the command reads (image lists, copies of a database).
+    prepare: Callable[[Path], None] | None = None
 
     def cache_key(self) -> str:
         return fingerprint(
@@ -180,6 +183,8 @@ def run_stage(
     if stage_dir.exists():
         shutil.rmtree(stage_dir)
     stage_dir.mkdir(parents=True)
+    if spec.prepare is not None:
+        spec.prepare(stage_dir)
 
     result = run_process(
         spec.argv,

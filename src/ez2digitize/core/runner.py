@@ -24,6 +24,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import deque
@@ -228,6 +229,35 @@ def run_process(
         log_path=log_path,
         tail=list(tail),
     )
+
+
+def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
+    """Run a short command (help, version) and return its combined output.
+
+    For probing backends, not for stages: no log, no events. The exit code is
+    ignored because many tools exit non-zero after printing help. Runs in a
+    temporary folder because OpenMVS tools write a log file into the current
+    one. Raises ProcessStartError if the command can't be started or times out.
+    """
+    args = [str(a) for a in argv]
+    try:
+        with tempfile.TemporaryDirectory(prefix="ez2d-probe-") as scratch:
+            done = subprocess.run(  # noqa: S603 - argument list, never a shell
+                args,
+                cwd=scratch,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_s,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise ProcessStartError(f"{args[0]} did not answer within {timeout_s:.0f} s") from exc
+    except OSError as exc:
+        raise ProcessStartError(f"cannot start {args[0]}: {exc}") from exc
+    return done.stdout + done.stderr
 
 
 def _pump(proc: subprocess.Popen[str], lines: queue.Queue[str | None]) -> None:

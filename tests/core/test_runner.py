@@ -218,3 +218,22 @@ def test_peak_rss_falls_back_to_samples_when_inherited() -> None:
     # Not above: it may be the parent's, inherited at fork; use the samples.
     assert _peak_rss_mb(200 * 1024, 200 * 1024, 30 * 1024) == 30.0
     assert _peak_rss_mb(200 * 1024, 200 * 1024, 0) is None
+
+
+def test_run_quick_returns_output_and_runs_elsewhere(tmp_path: Path) -> None:
+    from ez2digitize.core.runner import run_quick
+
+    out = run_quick(
+        py("import os, sys; print(os.getcwd()); print('err', file=sys.stderr); exit(1)")
+    )
+    lines = out.splitlines()
+    assert "ez2d-probe-" in lines[0] and "err" in lines
+
+
+def test_run_quick_errors(tmp_path: Path) -> None:
+    from ez2digitize.core.runner import run_quick
+
+    with pytest.raises(ProcessStartError, match="cannot start"):
+        run_quick([tmp_path / "missing"])
+    with pytest.raises(ProcessStartError, match="did not answer"):
+        run_quick(py("import time; time.sleep(5)"), timeout_s=0.2)

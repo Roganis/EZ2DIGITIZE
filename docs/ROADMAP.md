@@ -152,7 +152,9 @@ installable on Linux as an AppImage.
 - Pipeline runner: subprocess stages with live logs, progress parsing,
   cancel, and **minimal caching** (skip a stage if its inputs and parameters
   are unchanged). Runner, manifests and caching done in `ez2digitize.core`
-  (`runner`, `stage`); backend modules with their progress parsers to do.
+  (`runner`, `stage`); COLMAP and OpenMVS modules with progress parsers in
+  `ez2digitize.backends`. Still to do: the pipeline that chains them, and
+  warping masks to the undistorted images for OpenMVS.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the

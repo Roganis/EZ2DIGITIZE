@@ -11,8 +11,8 @@ ez2digitize/
   ui/           PySide6 widgets, viewers, Qt adapters for core objects
   core/         headless logic: project model, capture bundles, stages
                 and manifests, process runner
-  backends/     (planned) one module per external tool: builds command
-                lines, parses progress and errors, detects version
+  backends/     one module per external tool: finds it, checks its version,
+                builds stage command lines, parses progress
 ```
 
 `core` and `backends` never import Qt. The UI observes them through Qt
@@ -92,6 +92,29 @@ outputs.
   peak the runner uses `VmHWM` samples taken every 0.5 s instead.
 - *(planned)* Only one heavy stage runs at a time: the 8 GB M1 cannot fit
   two. That is the pipeline scheduler's job, not the runner's.
+
+## Backend modules (`backends/`)
+
+- `common.find_tool` looks for an executable in this order: an explicit
+  path from settings, an `EZ2D_*` environment variable, the bundle's
+  `backends/bin`, then `PATH`. A configured path that is wrong is reported,
+  never replaced by another copy.
+- `locate()` reads the version (`colmap help`, the OpenMVS banner) and
+  compares it with the pinned one; other versions are flagged
+  `supported=False`. Option names follow the pinned version only.
+- Stage builders return a `StageSpec`; the pipeline runs it with
+  `run_stage`. Parameters are the option dataclasses, inputs are
+  fingerprints of capture bundles, masks and earlier stages.
+- COLMAP reads images straight from `captures/` through an image list, named
+  `<capture id>/<file>`; masks are `masks/<capture id>/<file>.png`, COLMAP's
+  own convention. Intrinsics are grouped per capture bundle by default.
+- Matching works on a copy of the features database, so no stage modifies
+  another stage's output.
+- OpenMVS tools run with their stage folder as working folder. Scene files
+  store image paths relative to that folder, and all stage folders are
+  siblings, so those paths resolve the same from every stage.
+- `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
+  synthetic scene; the Backends workflow runs it against the fresh builds.
 
 ## Pipeline *(planned)*
 

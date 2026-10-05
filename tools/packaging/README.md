@@ -40,7 +40,12 @@ How it is put together (the reasons are in the
   runs the smoke test: GUI start, `check` with both tools bundled, and a
   full pipeline run on the synthetic scene to a GLB.
 
-First build (local, Ubuntu 24.04 container, so not for distribution): 137 MB,
+First CI build (AppImage workflow, Ubuntu 22.04): 138 MB, bundling
+libgfortran, libquadmath and libgomp; the smoke test found both tools
+bundled at the pinned versions and took the synthetic scene to a GLB in
+47 s. The same file also ran `check` successfully on Ubuntu 24.04.
+
+Earlier local build (Ubuntu 24.04 container, so not for distribution): 137 MB,
 with both bundled tools found at the pinned versions; the synthetic scene
 went through all nine steps with masks, to a GLB, in 69 s.
 

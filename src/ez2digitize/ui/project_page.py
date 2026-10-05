@@ -166,6 +166,12 @@ class ProjectPage(QWidget):
         )
         self.use_masks = QCheckBox("Use masks")
         self.use_masks.setChecked(True)
+        self.align = QCheckBox("Stand the model upright")
+        self.align.setChecked(True)
+        self.align.setToolTip(
+            "Turn the exported model so its top is up (estimated from how the photos were "
+            "held), centred and standing on the ground"
+        )
         self.video_frames = QSpinBox()
         self.video_frames.setRange(10, 1000)
         self.video_frames.setSingleStep(10)
@@ -180,6 +186,7 @@ class ProjectPage(QWidget):
         form.addRow("Save as:", self.export_formats)
         form.addRow("Mesh size:", self.mesh_size)
         form.addRow(self.use_masks)
+        form.addRow(self.align)
         form.addRow("Video frames:", self.video_frames)
         # Advanced: override the preset's dense detail and refinement, and see
         # the values a run will use.
@@ -344,7 +351,8 @@ class ProjectPage(QWidget):
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
         busy_widgets = (
-            self.quality, self.advanced, self.export_formats, self.mesh_size, self.video_frames
+            self.quality, self.advanced, self.export_formats, self.mesh_size,
+            self.video_frames, self.align,
         )  # fmt: skip
         for widget in busy_widgets:
             widget.setEnabled(not busy)
@@ -386,6 +394,7 @@ class ProjectPage(QWidget):
             settings,
             export_formats=tuple(self.export_formats.currentData()),
             use_masks=self.use_masks.isChecked(),
+            align=self.align.isChecked(),
         )
 
     def _show_values(self) -> None:

@@ -199,6 +199,14 @@ export.json and reported as a notice), `points` (the dense point cloud).
 A Mesh size setting (`TextureOptions.target_faces`) has TextureMesh
 simplify the mesh before texturing, so the texture keeps its detail.
 
+Exports are stood upright by default (`orientation.py`): the photos' image
+"down" directions, turned to world coordinates with each registered pose
+of the undistorted model and corrected for EXIF rotation (photo checks
+record it), average to gravity. The mesh and point cloud are rotated so
+up is +Y, centred on the vertical axis and put on the ground (Z-up for STL
+and 3MF); export.json records the transform. If the directions disagree
+(mean shorter than 0.5) the model's own frame is kept.
+
 - The texture step always writes OpenMVS's textured PLY. Exporting
   converts it in-process (architecture rule 1 allows mesh export there) into
   `exports/<timestamp>/`: `obj/<name>.obj` + `.mtl` + texture images,

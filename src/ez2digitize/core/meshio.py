@@ -538,3 +538,97 @@ def write_3mf(
 
 def _xml_text(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# --- point clouds ------------------------------------------------------------------
+
+
+@dataclass
+class PointCloud:
+    """Points with optional colours (r, g, b bytes) and normals."""
+
+    positions: array[float]
+    colors: bytes | None = None
+    normals: array[float] | None = None
+
+    @property
+    def count(self) -> int:
+        return len(self.positions) // 3
+
+
+def read_point_cloud(path: Path) -> PointCloud:
+    """The vertices of a binary little-endian PLY (e.g. OpenMVS's dense cloud).
+
+    Reads x, y, z, red, green, blue and nx, ny, nz when present; other
+    properties, including lists like OpenMVS's view_indices, are skipped.
+    """
+    with path.open("rb") as fh:
+        elements, _ = _read_header(fh, path)
+        data = fh.read()
+    vertex = next((e for e in elements if e.name == "vertex"), None)
+    if vertex is None or elements[0] is not vertex:
+        raise MeshFormatError(f"{path}: the vertex element must come first")
+    names = [p.name for p in vertex.properties]
+    if not {"x", "y", "z"} <= set(names):
+        raise MeshFormatError(f"{path}: vertices have no x, y, z")
+    has_color = {"red", "green", "blue"} <= set(names)
+    has_normal = {"nx", "ny", "nz"} <= set(names)
+    positions, normals = array("f"), array("f")
+    colors = bytearray()
+    scalar = {p.name: struct.Struct("<" + p.type) for p in vertex.properties if not p.count_type}
+    offset = 0
+    try:
+        for _ in range(vertex.count):
+            values: dict[str, float] = {}
+            for prop in vertex.properties:
+                if prop.count_type:
+                    count_struct = struct.Struct("<" + prop.count_type)
+                    (count,) = count_struct.unpack_from(data, offset)
+                    offset += count_struct.size + count * struct.calcsize("<" + prop.type)
+                else:
+                    reader = scalar[prop.name]
+                    (values[prop.name],) = reader.unpack_from(data, offset)
+                    offset += reader.size
+            positions.extend((values["x"], values["y"], values["z"]))
+            if has_color:
+                colors += bytes((int(values["red"]), int(values["green"]), int(values["blue"])))
+            if has_normal:
+                normals.extend((values["nx"], values["ny"], values["nz"]))
+    except struct.error as exc:
+        raise MeshFormatError(f"{path}: file ends early") from exc
+    return PointCloud(
+        positions, bytes(colors) if has_color else None, normals if has_normal else None
+    )
+
+
+def write_point_cloud(cloud: PointCloud, path: Path) -> Path:
+    """Binary PLY: float x, y, z, then uchar colours and float normals if present."""
+    header = ["ply", "format binary_little_endian 1.0", "comment written by EZ2DIGITIZE"]
+    header += [f"element vertex {cloud.count}"]
+    header += [f"property float {axis}" for axis in "xyz"]
+    fmt = "3f"
+    if cloud.colors is not None:
+        header += [f"property uchar {c}" for c in ("red", "green", "blue")]
+        fmt += "3B"
+    if cloud.normals is not None:
+        header += [f"property float {n}" for n in ("nx", "ny", "nz")]
+        fmt += "3f"
+    header.append("end_header")
+    record = struct.Struct("<" + fmt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as ply:
+        ply.write(("\n".join(header) + "\n").encode("ascii"))
+        chunk = bytearray()
+        p, c, n = cloud.positions, cloud.colors, cloud.normals
+        for i in range(cloud.count):
+            values: list[float | int] = [p[3 * i], p[3 * i + 1], p[3 * i + 2]]
+            if c is not None:
+                values += [c[3 * i], c[3 * i + 1], c[3 * i + 2]]
+            if n is not None:
+                values += [n[3 * i], n[3 * i + 1], n[3 * i + 2]]
+            chunk += record.pack(*values)
+            if len(chunk) >= 1 << 22:
+                ply.write(chunk)
+                chunk.clear()
+        ply.write(chunk)
+    return path

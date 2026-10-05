@@ -229,7 +229,12 @@ fails, they can see which stage failed and why.
 - **Scale:** set real-world size from a known distance between two picked
   points; then automatic scale from printed ArUco markers on the capture mat.
 - **Orientation:** up-axis alignment (`colmap model_orientation_aligner` or
-  fit to the mat plane) with manual adjust.
+  fit to the mat plane) with manual adjust. Automatic part done
+  (`ez2digitize.orientation`): up from the photos' down directions,
+  corrected for EXIF rotation (COLMAP reads pixels unrotated, and its
+  aligner maps gravity to +Y, upside down for glTF); exports stand upright,
+  centred, on the ground, Y-up for OBJ/GLB and Z-up for STL/3MF. Manual
+  adjust needs the viewer.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
 - Mesh cleanup: keep largest component, remove floaters, decimate to a

@@ -148,6 +148,9 @@ def _parser() -> argparse.ArgumentParser:
         "texture), points (dense point cloud), or none (default obj,glb)",
     )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
+    run.add_argument(
+        "--no-align", action="store_true", help="export in the reconstruction's own frame"
+    )
     run.add_argument("--threads", type=int, help="limit CPU threads of every tool")
     run.add_argument("--force-from", choices=STAGES, help="re-run this stage and all after it")
     run.add_argument("--colmap", type=Path, help="COLMAP executable")
@@ -163,6 +166,9 @@ def _parser() -> argparse.ArgumentParser:
         default=("obj", "glb"),
         metavar="FORMATS",
         help="comma-separated: obj, glb, ply, stl, 3mf, points (default obj,glb)",
+    )
+    export.add_argument(
+        "--no-align", action="store_true", help="keep the reconstruction's own frame"
     )
     export.set_defaults(func=_cmd_export)
 
@@ -452,7 +458,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if not args.formats:
         print("error: no formats", file=sys.stderr)
         return 2
-    files = export_mesh(project, args.formats)
+    files = export_mesh(project, args.formats, align=not args.no_align)
     for path in files:
         print(path)
     for note in export_notes(files):
@@ -489,6 +495,7 @@ def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSetting
         texture=replace(settings.texture, threads=threads),
         export_formats=args.export,
         use_masks=not args.no_masks,
+        align=not args.no_align,
     )
 
 

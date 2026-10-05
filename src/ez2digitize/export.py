@@ -23,22 +23,29 @@ from __future__ import annotations
 import re
 import shutil
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from ez2digitize.core.capture import list_bundles
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
 from ez2digitize.core.meshio import (
     MeshFormatError,
+    TexturedMesh,
     check_watertight,
     read_openmvs_ply,
+    read_point_cloud,
     write_3mf,
     write_glb,
     write_obj,
+    write_point_cloud,
     write_stl,
 )
+from ez2digitize.core.photos import photo_infos
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
+from ez2digitize.orientation import Placement, estimate_up, place
 
 ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points"]
 FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
@@ -56,12 +63,18 @@ def export_mesh(
     formats: Iterable[ExportFormat] = ("obj", "glb"),
     *,
     stage: str = "texture",
+    align: bool = True,
     now: datetime | None = None,
 ) -> list[Path]:
     """Export the latest textured mesh; returns the files written.
 
+    With `align`, the mesh and point cloud are stood upright, centred and
+    put on the ground (see `orientation`): Y up for OBJ and GLB, Z up for
+    STL and 3MF. The `ply` copy stays as OpenMVS wrote it.
+
     If the same mesh (same texture run) was already exported in the same
-    formats, nothing is written and that export's files are returned.
+    formats and alignment, nothing is written and that export's files are
+    returned.
     """
     wanted = list(dict.fromkeys(formats))
     unknown = [f for f in wanted if f not in FORMATS]
@@ -76,7 +89,7 @@ def export_mesh(
     except (MeshFormatError, OSError) as exc:
         raise ExportError(f"cannot read the textured mesh: {exc}") from exc
 
-    previous = _find_export(project.exports_dir, manifest.run_id, wanted)
+    previous = _find_export(project.exports_dir, manifest.run_id, wanted, align)
     if previous is not None:
         return previous
 
@@ -87,7 +100,13 @@ def export_mesh(
     folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
     name = _file_stem(project.name)
     files: list[Path] = []
-    info: dict[str, object] = {}
+    info: dict[str, object] = {"align": align}
+    placement = _placement(project, mesh) if align else None
+    if placement is not None:
+        info["placement"] = placement.to_dict()
+    elif align:
+        info["placement"] = None  # the photos' orientations disagree: model frame kept
+    upright = _placed(mesh, placement)
     if PRINT_FORMATS & set(wanted):
         closed = check_watertight(mesh)
         info["watertight"] = closed.watertight
@@ -95,19 +114,20 @@ def export_mesh(
         info["non_manifold_edges"] = closed.non_manifold_edges
     try:
         if "obj" in wanted:
-            files += write_obj(mesh, folder / "obj", name)
+            files += write_obj(upright, folder / "obj", name)
         if "glb" in wanted:
-            files.append(write_glb(mesh, folder / f"{name}.glb"))
+            files.append(write_glb(upright, folder / f"{name}.glb"))
         if "ply" in wanted:
             files += _copy_ply(source, mesh.textures, folder / "ply", name)
-        if "stl" in wanted:
-            files.append(write_stl(mesh, folder / f"{name}.stl"))
-        if "3mf" in wanted:
-            files.append(write_3mf(mesh, folder / f"{name}.3mf", name=project.name))
+        if PRINT_FORMATS & set(wanted):
+            printable = _placed(mesh, placement, z_up=True)
+            if "stl" in wanted:
+                files.append(write_stl(printable, folder / f"{name}.stl"))
+            if "3mf" in wanted:
+                files.append(write_3mf(printable, folder / f"{name}.3mf", name=project.name))
         if "points" in wanted:
-            files.append(folder / f"{name}_points.ply")
-            shutil.copyfile(dense, files[-1])
-    except OSError as exc:
+            files.append(_export_points(dense, folder / f"{name}_points.ply", placement))
+    except (OSError, MeshFormatError) as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise ExportError(f"export failed: {exc}") from exc
     write_json_atomic(
@@ -146,7 +166,44 @@ def export_notes(files: list[Path]) -> list[str]:
     return []
 
 
-def _find_export(exports: Path, run_id: str, formats: list[ExportFormat]) -> list[Path] | None:
+def _placement(project: Project, mesh: TexturedMesh) -> Placement | None:
+    """Upright placement from the undistorted model's cameras; None if unsure."""
+    model = project.stage_dir("undistort") / "sparse"
+    if not (model / "images.bin").is_file():
+        return None
+    orientations = {}
+    for bundle in list_bundles(project):
+        for name, info in photo_infos(bundle).items():
+            if info is not None:
+                orientations[f"{bundle.id}/{name}"] = info.orientation
+    try:
+        estimate = estimate_up(model, orientations)
+    except (OSError, ValueError, FormatError):
+        return None
+    return place(mesh.positions, estimate.up) if estimate is not None else None
+
+
+def _placed(mesh: TexturedMesh, placement: Placement | None, *, z_up: bool = False) -> TexturedMesh:
+    if placement is None:
+        return mesh
+    return replace(mesh, positions=placement.apply(mesh.positions, z_up=z_up))
+
+
+def _export_points(dense: Path, target: Path, placement: Placement | None) -> Path:
+    if placement is None:
+        shutil.copyfile(dense, target)
+        return target
+    cloud = read_point_cloud(dense)
+    cloud.positions = placement.apply(cloud.positions)
+    if cloud.normals is not None:
+        turn = Placement(placement.rotation, (0.0, 0.0, 0.0))
+        cloud.normals = turn.apply(cloud.normals)
+    return write_point_cloud(cloud, target)
+
+
+def _find_export(
+    exports: Path, run_id: str, formats: list[ExportFormat], align: bool
+) -> list[Path] | None:
     if not exports.is_dir():
         return None
     for folder in sorted(exports.iterdir(), reverse=True):
@@ -159,6 +216,7 @@ def _find_export(exports: Path, run_id: str, formats: list[ExportFormat]) -> lis
             isinstance(source, dict)
             and source.get("run_id") == run_id
             and info.get("formats") == formats
+            and info.get("align", False) == align
         ):
             files = [folder / str(name) for name in info.get("files", [])]
             if files and all(f.is_file() for f in files):

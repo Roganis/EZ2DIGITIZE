@@ -70,6 +70,8 @@ class MeshSettings:
     use_masks: bool = True
     # Formats exported to exports/ after texturing; empty: no export.
     export_formats: tuple[ExportFormat, ...] = ("obj", "glb")
+    # Stand the export upright, centred, on the ground (see orientation).
+    align: bool = True
 
 
 # --- events --------------------------------------------------------------------
@@ -375,7 +377,9 @@ def _dense(
         names = ", ".join(f.upper() for f in settings.export_formats)
         run.emit(Notice(f"exporting {names}"))
         try:
-            exports = export_mesh(project, settings.export_formats, stage=textured.stage)
+            exports = export_mesh(
+                project, settings.export_formats, stage=textured.stage, align=settings.align
+            )
         except ExportError as exc:
             raise PipelineError(str(exc)) from exc
         run.emit(Notice(f"exported to {exports[0].parent if exports else project.exports_dir}"))

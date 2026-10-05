@@ -31,7 +31,8 @@ from ez2digitize.core.resources import cpu_threads
 
 PHOTO_KEY = "photo"
 # Bump when inspection changes; older results are then inspected again.
-INSPECT_VERSION = 1
+# 2: EXIF orientation (for standing the reconstruction upright).
+INSPECT_VERSION = 2
 SHARPNESS_SIZE = 1024
 
 # A photo this much less sharp than the median of its set is flagged. On a
@@ -59,6 +60,8 @@ class PhotoInfo:
     focal_mm: float | None = None
     focal_35mm: float | None = None
     sharpness: float | None = None
+    # EXIF orientation (1-8): how the stored pixels are turned for display.
+    orientation: int = 1
     # Why the file can't be read as an image; the other fields are then empty.
     error: str | None = None
 
@@ -123,7 +126,12 @@ def inspect_photo(path: Path) -> PhotoInfo:
         focal_mm=_number(details.get(ExifTags.Base.FocalLength)),
         focal_35mm=_number(details.get(ExifTags.Base.FocalLengthIn35mmFilm)),
         sharpness=_sharpness(gray),
+        orientation=_orientation(exif.get(ExifTags.Base.Orientation)),
     )
+
+
+def _orientation(value: Any) -> int:
+    return value if isinstance(value, int) and 1 <= value <= 8 else 1
 
 
 def measure_sharpness(path: Path) -> float | None:

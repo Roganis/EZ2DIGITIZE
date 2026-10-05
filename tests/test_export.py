@@ -117,3 +117,42 @@ def test_watertight_check() -> None:
     assert (opened.open_edges, opened.non_manifold_edges) == (3, 0)
     fan = check_watertight(mesh([*faces, 0, 1, 2]))
     assert fan.non_manifold_edges == 3
+
+
+def test_alignment_is_recorded_and_part_of_reuse(built: Project) -> None:
+    aligned = export_mesh(built, ["glb"], now=NOW)
+    info = json.loads((aligned[0].parent / "export.json").read_text())
+    assert info["align"] is True and "placement" in info
+    raw = export_mesh(built, ["glb"], align=False, now=NOW)
+    assert raw[0].parent != aligned[0].parent
+    assert export_mesh(built, ["glb"], align=False) == raw
+
+
+def test_point_cloud_round_trip(tmp_path: Path) -> None:
+    from array import array
+
+    from ez2digitize.core.meshio import PointCloud, read_point_cloud, write_point_cloud
+    from ez2digitize.orientation import Placement
+
+    header = (
+        "ply\nformat binary_little_endian 1.0\nelement vertex 2\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        "property float nx\nproperty float ny\nproperty float nz\n"
+        "property list uchar uint view_indices\nend_header\n"
+    )
+    import struct
+
+    body = b"".join(
+        struct.pack("<3f3B3fBII", x, 0, 0, 255, 128, 0, 0, 1, 0, 2, 7, 9) for x in (1.0, 2.0)
+    )
+    (tmp_path / "dense.ply").write_bytes(header.encode() + body)
+    cloud = read_point_cloud(tmp_path / "dense.ply")
+    assert list(cloud.positions) == [1, 0, 0, 2, 0, 0]
+    assert cloud.colors == bytes([255, 128, 0] * 2) and cloud.normals is not None
+    flip = Placement(((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0)), (0.0, 5.0, 0.0))
+    cloud.positions = flip.apply(cloud.positions)
+    write_point_cloud(cloud, tmp_path / "out.ply")
+    again = read_point_cloud(tmp_path / "out.ply")
+    assert list(again.positions) == [1, 5, 0, 2, 5, 0] and again.colors == cloud.colors
+    assert isinstance(again, PointCloud) and list(again.normals or array("f")) == [0, 1, 0] * 2

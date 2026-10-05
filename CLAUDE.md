@@ -51,7 +51,10 @@ when the tool is missing.
    any format change bumps it and adds a migration.
 5. **Masks are first-class project data** and are passed to every stage that
    can use them.
-6. **Backends are pinned.** Each backend has an exact supported version; a bump
+6. **All captures arrive as capture bundles:** original files, untouched, plus
+   a `capture.json`. Folder import, video frames, phone upload and the future
+   Android app all produce this; the pipeline only reads bundles.
+7. **Backends are pinned.** Each backend has an exact supported version; a bump
    is its own commit and must pass the regression datasets.
 
 ## License rules

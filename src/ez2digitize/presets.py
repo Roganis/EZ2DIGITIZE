@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal, get_args
 
-from ez2digitize.backends import colmap, openmvs
+from ez2digitize.backends import brush, colmap, openmvs
 from ez2digitize.pipeline import MeshSettings
 
 Quality = Literal["fast", "balanced", "high"]
@@ -37,6 +37,7 @@ _PRESETS: dict[Quality, MeshSettings] = {
         features=colmap.FeatureOptions(max_image_size=1600, max_num_features=4096),
         densify=openmvs.DensifyOptions(resolution_level=2),
         texture=openmvs.TextureOptions(resolution_level=1),
+        splat=brush.SplatOptions(total_steps=7_000, max_resolution=1280),
     ),
     "balanced": MeshSettings(
         features=colmap.FeatureOptions(max_image_size=3200),
@@ -59,6 +60,7 @@ def mesh_settings(
     refine: bool | None = None,
     max_image_size: int | None = None,
     faces: int | None = None,
+    steps: int | None = None,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
@@ -70,6 +72,8 @@ def mesh_settings(
     settings = _PRESETS[quality]
     if faces is not None:
         settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
+    if steps is not None:
+        settings = replace(settings, splat=replace(settings.splat, total_steps=steps))
     if max_image_size is not None:
         settings = replace(
             settings, features=replace(settings.features, max_image_size=max_image_size)
@@ -110,6 +114,11 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
             else f"about {settings.texture.target_faces:,} faces",
         ),
         ("Camera placement", f"{settings.mapper.kind} mapper"),
+        (
+            "Splats",
+            f"{settings.splat.total_steps:,} steps, photos up to "
+            f"{settings.splat.max_resolution} px",
+        ),
     ]
 
 

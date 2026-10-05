@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.colmap import Colmap
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.backends.openmvs import TOOLS, OpenMVS
@@ -124,6 +125,28 @@ print("progress=end", flush=True)
 """
 
 
+# Brush: checks the dataset layout, prints a progress bar like the real one
+# (with colour codes) and writes the splat file.
+FAKE_BRUSH = """
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("brush-cli 0.3.0")
+    sys.exit(0)
+if os.environ.get("FAKE_FAIL") == "brush":
+    sys.exit(1)
+opt = lambda name: args[args.index(name) + 1]
+dataset = Path(args[0])
+assert (dataset / "sparse" / "0").is_dir() and (dataset / "images").is_dir(), "bad dataset"
+steps = int(opt("--total-steps"))
+print("\\x1b[34mi\\x1b[0m Completed loading", flush=True)
+for done in (steps // 2, steps):
+    print(f"[1s] \\x1b[36m###\\x1b[0m   {done}/{steps}   Steps (9/s, 0s remaining)", flush=True)
+(Path(opt("--export-path")) / opt("--export-name")).write_text("ply splats")
+"""
+
+
 def _script(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!{sys.executable}\n{body}")
@@ -145,6 +168,11 @@ def fake_ffmpeg(tmp_path: Path) -> FFmpeg:
     exe = _script(tmp_path / "fake" / "ffmpeg" / "ffmpeg", FAKE_FFMPEG)
     probe = _script(exe.with_name("ffprobe"), FAKE_FFPROBE)
     return FFmpeg(exe, probe, "7.1")
+
+
+@pytest.fixture
+def fake_brush(tmp_path: Path) -> Brush:
+    return Brush(_script(tmp_path / "fake" / "brush" / "brush_app", FAKE_BRUSH), "0.3.0")
 
 
 @pytest.fixture(autouse=True)

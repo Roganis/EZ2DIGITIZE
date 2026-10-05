@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from ez2digitize import diagnostics, presets, video
-from ez2digitize.backends import colmap, ffmpeg, openmvs
+from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.capture import (
@@ -47,7 +47,16 @@ from ez2digitize.core.capture import (
 )
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
-from ez2digitize.pipeline import STAGES, MeshResult, MeshSettings, Tools
+from ez2digitize.pipeline import (
+    ALL_STAGES,
+    MeshResult,
+    MeshSettings,
+    PipelineFunction,
+    SplatResult,
+    Tools,
+    run_mesh,
+    run_splat,
+)
 from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 from ez2digitize.ui.video_import import VideoImporter
@@ -63,6 +72,7 @@ STAGE_LABELS = {
     "mesh": "Build mesh",
     "refine": "Refine mesh",
     "texture": "Texture mesh",
+    "splat": "Train splats",
 }
 
 # Detail -> OpenMVS resolution level (each level halves the image size).
@@ -114,7 +124,7 @@ class ProjectPage(QWidget):
         self.ffmpeg_factory = ffmpeg_factory
         self.runner = PipelineRunner(self)
         self.video_importer = VideoImporter(self)
-        self.last_result: MeshResult | None = None
+        self.last_result: MeshResult | SplatResult | None = None
         self.last_failure: Failure | None = None
         self._stage_items: dict[str, QTreeWidgetItem] = {}
         self._stage_index, self._stage_count = 1, 1
@@ -211,6 +221,12 @@ class ProjectPage(QWidget):
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
         self.run_button.clicked.connect(self.start_run)
+        self.splat_button = QPushButton("Build splats")
+        self.splat_button.setToolTip(
+            "Gaussian splats with Brush, on the GPU: a photo-real view of the object, "
+            "not a mesh. Uses the same camera placement as the mesh."
+        )
+        self.splat_button.clicked.connect(self.start_splats)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.cancel_run)
         self.cancel_button.setEnabled(False)
@@ -221,6 +237,7 @@ class ProjectPage(QWidget):
         self.status.setWordWrap(True)
         buttons = QHBoxLayout()
         buttons.addWidget(self.run_button)
+        buttons.addWidget(self.splat_button)
         buttons.addWidget(self.cancel_button)
         buttons.addStretch(1)
 
@@ -332,7 +349,7 @@ class ProjectPage(QWidget):
     def _show_previous_stages(self) -> None:
         self.stages.clear()
         self._stage_items.clear()
-        for stage in STAGES:
+        for stage in ALL_STAGES:
             manifest = load_manifest(self.project.stage_dir(stage))
             if manifest is None:
                 continue
@@ -347,6 +364,7 @@ class ProjectPage(QWidget):
         busy = running or importing
         has_photos = any(b.images for b in list_bundles(self.project))
         self.run_button.setEnabled(not busy and has_photos)
+        self.splat_button.setEnabled(not busy and has_photos)
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
@@ -459,7 +477,10 @@ class ProjectPage(QWidget):
         self.status.setText(f"Importing {path.name}…")
         self.video_importer.start(self.project, path, tool, self.video_frames.value())
 
-    def start_run(self) -> None:
+    def start_splats(self) -> None:
+        self.start_run(run_splat)
+
+    def start_run(self, function: PipelineFunction = run_mesh) -> None:
         try:
             tools = self.tools_factory()
         except BackendError as exc:
@@ -478,10 +499,20 @@ class ProjectPage(QWidget):
         self._stage_items.clear()
         self.overall.setValue(0)
         self.status.setText("Starting…")
-        for name, tool, pinned in (
+        if function is run_splat and tools.brush is None:
+            QMessageBox.warning(
+                self,
+                "Brush not found",
+                "Splats need Brush. Set its location in Settings → Reconstruction tools.",
+            )
+            return
+        checked: list[tuple[str, Any, str]] = [
             ("COLMAP", tools.colmap, colmap.PINNED_VERSION),
             ("OpenMVS", tools.openmvs, openmvs.PINNED_VERSION),
-        ):
+        ]
+        if function is run_splat and tools.brush is not None:
+            checked.append(("Brush", tools.brush, brush.PINNED_VERSION))
+        for name, tool, pinned in checked:
             if not tool.supported:
                 self._on_notice(
                     f"{name} {tool.version} found; {pinned} is the tested version, steps may fail"
@@ -489,7 +520,7 @@ class ProjectPage(QWidget):
         if self.project.preset != self.chosen_quality:
             self.project.preset = self.chosen_quality
             self.project.save()
-        self.runner.start(self.project, tools, self.settings())
+        self.runner.start(self.project, tools, self.settings(), function)
 
     def cancel_run(self) -> None:
         self.status.setText("Cancelling…")
@@ -503,10 +534,12 @@ class ProjectPage(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _result_folder(self) -> Path | None:
-        """The export folder (holding obj/ and the GLB), else the texture stage's."""
+        """The export folder (holding obj/ and the GLB), else the stage's."""
         result = self.last_result
         if result is None:
             return None
+        if isinstance(result, SplatResult):
+            return (result.exports or [result.file])[0].parent
         if result.exports:
             first = result.exports[0]
             return first.parent.parent if first.parent.name in ("obj", "ply") else first.parent
@@ -628,12 +661,13 @@ class ProjectPage(QWidget):
             item.setText(1, {"succeeded": "Done", "failed": "Failed"}.get(status, "Cancelled"))
             item.setText(2, f"{seconds:.1f} s")
 
-    def _on_succeeded(self, result: MeshResult) -> None:
+    def _on_succeeded(self, result: MeshResult | SplatResult) -> None:
         self.last_result = result
         self.overall.setValue(1000)
         self.status.setText("Finished")
         folder = self._result_folder()
-        self.result_label.setText(f"Textured mesh saved in {folder}" if folder else "Finished.")
+        what = "Splats" if isinstance(result, SplatResult) else "Textured mesh"
+        self.result_label.setText(f"{what} saved in {folder}" if folder else "Finished.")
         self._update_buttons()
 
     def _on_failed(self, failure: Failure) -> None:

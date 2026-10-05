@@ -11,9 +11,10 @@ from pathlib import Path
 import pytest
 
 from ez2digitize import pipeline
+from ez2digitize.backends.brush import Brush
 from ez2digitize.core.capture import import_files, list_bundles
 from ez2digitize.core.project import Project
-from ez2digitize.core.runner import CancelToken, Output
+from ez2digitize.core.runner import CancelToken, Output, Progress
 from ez2digitize.pipeline import (
     MeshSettings,
     Notice,
@@ -280,3 +281,46 @@ def test_feature_threads_are_capped_by_memory(
     assert "--FeatureExtraction.num_threads 7" in log
     notices = [e.message for e in events if isinstance(e, Notice)]
     assert any(n.startswith("finding features with 7 of 16 CPU threads") for n in notices)
+
+
+def test_splats(
+    project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    events: list[pipeline.PipelineEvent] = []
+    result = pipeline.run_splat(project, replace(tools, brush=fake_brush), on_event=events.append)
+    assert result.file.read_text() == "ply splats"
+    assert result.exports and result.exports[0].name.endswith("_splat.ply")
+    started = [e.stage for e in events if isinstance(e, pipeline.StageStarted)]
+    assert started == ["features", "matching", "mapping", "undistort", "splat"]
+    assert result.splat.host["gpu"]
+    progress = [
+        e.event.fraction
+        for e in events
+        if isinstance(e, pipeline.StageOutput) and e.stage == "splat"
+        and isinstance(e.event, Progress) and e.event.fraction is not None
+    ]  # fmt: skip
+    assert progress == [0.5, 1.0]
+    # Nothing changed: the splats are reused too.
+    again = pipeline.run_splat(project, replace(tools, brush=fake_brush))
+    assert again.splat.run_id == result.splat.run_id
+
+
+def test_splats_need_brush_and_a_real_gpu(
+    project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    with pytest.raises(pipeline.PipelineError, match="need Brush"):
+        pipeline.run_splat(project, tools)
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("cpu", "llvmpipe")])
+    with_brush = replace(tools, brush=fake_brush)
+    with pytest.raises(pipeline.PipelineError, match="software renderer"):
+        pipeline.run_splat(project, with_brush)
+    assert pipeline.run_splat(project, with_brush, allow_software_gpu=True).file.is_file()

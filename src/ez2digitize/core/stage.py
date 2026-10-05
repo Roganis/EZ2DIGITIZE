@@ -45,6 +45,8 @@ from ez2digitize.core.files import (
     sha256_file,
     write_json_atomic,
 )
+from ez2digitize.core.hardware import describe as describe_gpu
+from ez2digitize.core.hardware import detect_gpus
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import CancelToken, EventHandler, LineParser, run_process
 
@@ -80,6 +82,8 @@ class StageSpec:
     # Called with the (new, empty) stage folder just before the command runs,
     # to write files the command reads (image lists, copies of a database).
     prepare: Callable[[Path], None] | None = None
+    # Runs on the GPU: the manifest then records the GPU and its driver.
+    gpu: bool = False
 
     def resolved_backend(self) -> Backend:
         """The backend with its build: the hash of the executable that runs."""
@@ -251,18 +255,22 @@ def run_stage(
         cpu_s=result.cpu_s,
         peak_rss_mb=result.peak_rss_mb,
         exit_code=result.exit_code,
-        host=_host_info(),
+        host=_host_info(gpu=spec.gpu),
     )
     write_json_atomic(stage_dir / MANIFEST_FILE, manifest.to_dict())
     return StageRun(manifest, reused=False)
 
 
-def _host_info() -> dict[str, str]:
-    # The GPU driver (Mesa version on Linux) is added with the first GPU
-    # backend (Brush, Phase 3); the CPU-only backends don't depend on it.
-    return {
+def _host_info(*, gpu: bool = False) -> dict[str, str]:
+    info = {
         "system": platform.system(),
         "release": platform.release(),
         "machine": platform.machine(),
         "app_version": ez2digitize.__version__,
     }
+    if gpu:
+        # The CPU-only backends don't depend on it; GPU ones do, down to the
+        # driver (the Mesa version on Linux).
+        gpus = detect_gpus()
+        info["gpu"] = describe_gpu(gpus[0]) if gpus else "none found"
+    return info

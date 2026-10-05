@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 from ez2digitize import diagnostics, presets, video
-from ez2digitize.backends import colmap, ffmpeg, openmvs
+from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
 from ez2digitize.core.capture import (
@@ -44,7 +44,7 @@ from ez2digitize.core.runner import CancelToken, Output, Progress
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.export import FORMATS, ExportError, ExportFormat, export_mesh, export_notes
 from ez2digitize.pipeline import (
-    STAGES,
+    ALL_STAGES,
     MeshResult,
     MeshSettings,
     Notice,
@@ -52,6 +52,7 @@ from ez2digitize.pipeline import (
     PipelineError,
     PipelineEvent,
     SparseResult,
+    SplatResult,
     StageFailed,
     StageFinished,
     StageOutput,
@@ -60,6 +61,7 @@ from ez2digitize.pipeline import (
     run_dense,
     run_mesh,
     run_sparse,
+    run_splat,
 )
 
 
@@ -124,6 +126,16 @@ def _parser() -> argparse.ArgumentParser:
     part = run.add_mutually_exclusive_group()
     part.add_argument("--sparse-only", action="store_true", help="stop after camera poses")
     part.add_argument("--dense-only", action="store_true", help="only the OpenMVS stages")
+    part.add_argument(
+        "--splat", action="store_true", help="Gaussian splats with Brush instead of a mesh"
+    )
+    run.add_argument("--brush", type=Path, help="Brush executable (brush_app)")
+    run.add_argument("--steps", type=int, help="splat training steps (default from --quality)")
+    run.add_argument(
+        "--allow-software-gpu",
+        action="store_true",
+        help="train splats even on a software renderer (llvmpipe; very slow, for testing)",
+    )
     run.add_argument(
         "--quality",
         choices=presets.QUALITIES,
@@ -152,7 +164,7 @@ def _parser() -> argparse.ArgumentParser:
         "--no-align", action="store_true", help="export in the reconstruction's own frame"
     )
     run.add_argument("--threads", type=int, help="limit CPU threads of every tool")
-    run.add_argument("--force-from", choices=STAGES, help="re-run this stage and all after it")
+    run.add_argument("--force-from", choices=ALL_STAGES, help="re-run this stage and all after it")
     run.add_argument("--colmap", type=Path, help="COLMAP executable")
     run.add_argument("--openmvs-dir", type=Path, help="folder with the OpenMVS tools")
     run.add_argument("-v", "--verbose", action="store_true", help="print the tools' output")
@@ -176,6 +188,7 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--colmap", type=Path, help="COLMAP executable")
     check.add_argument("--openmvs-dir", type=Path, help="folder with the OpenMVS tools")
     check.add_argument("--ffmpeg", type=Path, help="FFmpeg executable (for video import)")
+    check.add_argument("--brush", type=Path, help="Brush executable (for splats)")
     check.set_defaults(func=_cmd_check)
 
     diag = sub.add_parser(
@@ -331,6 +344,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
         state = "ok" if tool.supported else f"not the tested version {pinned}"
         print(f"{name} {tool.version}: {state}, {getattr(tool, where)}{bundled}")
         ok = ok and tool.supported
+    # Only splats need Brush: reported, but not required.
+    try:
+        splats = brush.locate(args.brush)
+    except BackendError as exc:
+        print(f"Brush (for splats): {exc}")
+    else:
+        bundled = " (bundled)" if _is_bundled(splats.path) else ""
+        state = "ok" if splats.supported else f"not the tested version {brush.PINNED_VERSION}"
+        print(f"Brush {splats.version} (for splats): {state}, {splats.path}{bundled}")
     # Only video import needs FFmpeg: reported, but not required.
     try:
         video_tool = ffmpeg.locate(args.ffmpeg)
@@ -364,7 +386,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             kinds += f" ({len(bundle.excluded)} left out)"
         print(f"  {bundle.id}  {bundle.source:<8} {kinds}")
     print("stages:")
-    for stage in STAGES:
+    for stage in ALL_STAGES:
         manifest = load_manifest(project.stage_dir(stage))
         if manifest is None:
             state = "-"
@@ -377,11 +399,18 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
-    tools = Tools(colmap=colmap.locate(args.colmap), openmvs=openmvs.locate(args.openmvs_dir))
-    for name, tool, pinned in (
+    tools = Tools(
+        colmap=colmap.locate(args.colmap),
+        openmvs=openmvs.locate(args.openmvs_dir),
+        brush=brush.locate(args.brush) if args.splat else None,
+    )
+    checked: list[tuple[str, colmap.Colmap | openmvs.OpenMVS | brush.Brush, str]] = [
         ("COLMAP", tools.colmap, colmap.PINNED_VERSION),
         ("OpenMVS", tools.openmvs, openmvs.PINNED_VERSION),
-    ):
+    ]
+    if tools.brush is not None:
+        checked.append(("Brush", tools.brush, brush.PINNED_VERSION))
+    for name, tool, pinned in checked:
         if not tool.supported:
             print(
                 f"warning: {name} {tool.version} found, {pinned} is the supported version; "
@@ -398,11 +427,24 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"  {label}: {value}")
     printer = _Printer(sys.stdout, verbose=args.verbose)
     cancel = CancelToken()
-    outcome: list[SparseResult | MeshResult | BaseException] = []
+    outcome: list[SparseResult | MeshResult | SplatResult | BaseException] = []
 
     def work() -> None:
         run = run_sparse if args.sparse_only else run_dense if args.dense_only else run_mesh
         try:
+            if args.splat:
+                outcome.append(
+                    run_splat(
+                        project,
+                        tools,
+                        settings,
+                        on_event=printer,
+                        cancel=cancel,
+                        force_from=args.force_from,
+                        allow_software_gpu=args.allow_software_gpu,
+                    )
+                )
+                return
             outcome.append(
                 run(
                     project,
@@ -446,6 +488,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"sparse model: {result.model} "
             f"({result.registered_images}/{result.total_images} images)"
         )
+    elif isinstance(result, SplatResult):
+        print("splats:")
+        for path in result.exports or [result.file]:
+            print(f"  {path}")
     else:
         print("textured mesh:")
         for path in result.exports or result.files:
@@ -483,6 +529,7 @@ def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSetting
         refine=args.refine,
         max_image_size=args.max_image_size,
         faces=args.faces,
+        steps=args.steps,
     )
     threads = args.threads
     return replace(

@@ -24,20 +24,24 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize.backends import colmap, openmvs
-from ez2digitize.backends.common import BackendError
+from ez2digitize.backends import brush, colmap, openmvs
+from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core.capture import CaptureBundle, list_bundles
+from ez2digitize.core.hardware import detect_gpus
 from ez2digitize.core.project import Project
 from ez2digitize.core.resources import GIB, available_memory, cpu_threads
 from ez2digitize.core.runner import CancelToken
 from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
 from ez2digitize.diagnosis import explain
-from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes
+from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
 STAGES = SPARSE_STAGES + DENSE_STAGES
+SPLAT_STAGE = "splat"
+# Every stage a project can have: the mesh path and the splat branch.
+ALL_STAGES = (*STAGES, SPLAT_STAGE)
 
 # Below this share of registered images the result is suspect: tell the user.
 MIN_REGISTERED_SHARE = 0.5
@@ -47,11 +51,18 @@ MIN_REGISTERED_SHARE = 0.5
 class Tools:
     colmap: colmap.Colmap
     openmvs: openmvs.OpenMVS
+    # Only needed for splats; None if it isn't installed.
+    brush: brush.Brush | None = None
 
     @classmethod
     def locate(cls) -> Tools:
-        """Find both backends (raises backends.common.BackendMissing)."""
-        return cls(colmap=colmap.locate(), openmvs=openmvs.locate())
+        """Find the backends (raises backends.common.BackendMissing for COLMAP
+        or OpenMVS; Brush is optional)."""
+        try:
+            splats: brush.Brush | None = brush.locate()
+        except BackendMissing:
+            splats = None
+        return cls(colmap=colmap.locate(), openmvs=openmvs.locate(), brush=splats)
 
 
 @dataclass(frozen=True)
@@ -72,6 +83,8 @@ class MeshSettings:
     export_formats: tuple[ExportFormat, ...] = ("obj", "glb")
     # Stand the export upright, centred, on the ground (see orientation).
     align: bool = True
+    # Splat training (run_splat only).
+    splat: brush.SplatOptions = field(default_factory=brush.SplatOptions)
 
 
 # --- events --------------------------------------------------------------------
@@ -107,6 +120,7 @@ class Notice:
 
 
 PipelineEvent = StageStarted | StageOutput | StageFinished | Notice
+PipelineFunction = Callable[..., "MeshResult | SplatResult"]
 PipelineHandler = Callable[[PipelineEvent], None]
 
 
@@ -160,6 +174,14 @@ class MeshResult:
     exports: list[Path] = field(default_factory=list)
 
 
+@dataclass
+class SplatResult:
+    sparse: SparseResult
+    splat: StageManifest
+    file: Path
+    exports: list[Path] = field(default_factory=list)
+
+
 # --- running -------------------------------------------------------------------
 
 _running = threading.Lock()
@@ -186,8 +208,8 @@ class _Run:
         cancel: CancelToken | None,
         force_from: str | None,
     ) -> None:
-        if force_from is not None and force_from not in STAGES:
-            raise PipelineError(f"unknown stage {force_from!r}; stages are {', '.join(STAGES)}")
+        if force_from is not None and force_from not in ALL_STAGES:
+            raise PipelineError(f"unknown stage {force_from!r}; stages are {', '.join(ALL_STAGES)}")
         self.project = project
         self.stages = stages
         self.emit = on_event or (lambda _event: None)
@@ -261,6 +283,56 @@ def run_mesh(
         return _dense(project, tools, settings, sparse, on_event, cancel, force_from)
 
 
+def run_splat(
+    project: Project,
+    tools: Tools,
+    settings: MeshSettings | None = None,
+    *,
+    on_event: PipelineHandler | None = None,
+    cancel: CancelToken | None = None,
+    force_from: str | None = None,
+    allow_software_gpu: bool = False,
+) -> SplatResult:
+    """Camera poses (reused if unchanged), then Gaussian splats with Brush.
+
+    Refuses to train on a software renderer (llvmpipe), which would take
+    days, unless `allow_software_gpu` (tests, CI).
+    """
+    settings = settings or MeshSettings()
+    if tools.brush is None:
+        raise PipelineError(
+            "splats need Brush, which wasn't found; set its location in the "
+            "reconstruction tools settings"
+        )
+    gpus = detect_gpus()
+    if not allow_software_gpu and not any(not g.is_cpu for g in gpus):
+        raise PipelineError(
+            "training splats needs a GPU with a Vulkan driver (or Metal on macOS); only a "
+            "software renderer was found"
+            if gpus
+            else "no GPU with a Vulkan driver was found"
+        )
+    with _exclusive():
+        masked = settings.use_masks and _has_masks(project.masks_dir)
+        stages = (*(s for s in SPARSE_STAGES if masked or s != "mask-undistort"), SPLAT_STAGE)
+        sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
+        run = _Run(project, stages, on_event, cancel, force_from)
+        manifest = run(
+            brush.train(tools.brush, project, sparse.undistorted, options=settings.splat)
+        )
+        file = project.stage_dir(SPLAT_STAGE) / brush.SPLAT_FILE
+        if not file.is_file():
+            raise PipelineError("Brush finished but wrote no splat file; see its log")
+        exports: list[Path] = []
+        if settings.export_formats:
+            try:
+                exports = export_splat(project)
+            except ExportError as exc:
+                raise PipelineError(str(exc)) from exc
+            run.emit(Notice(f"exported to {exports[0].parent}"))
+        return SplatResult(sparse=sparse, splat=manifest, file=file, exports=exports)
+
+
 def _sparse(
     project: Project,
     tools: Tools,
@@ -268,6 +340,8 @@ def _sparse(
     on_event: PipelineHandler | None,
     cancel: CancelToken | None,
     force_from: str | None,
+    *,
+    stages: tuple[str, ...] | None = None,
 ) -> SparseResult:
     bundles = list_bundles(project)
     if not bundles:
@@ -277,7 +351,8 @@ def _sparse(
     except BackendError as exc:
         raise PipelineError(str(exc)) from exc
     masks = project.masks_dir if settings.use_masks and _has_masks(project.masks_dir) else None
-    run = _Run(project, _stages(settings, masked=masks is not None), on_event, cancel, force_from)
+    stages = stages or _stages(settings, masked=masks is not None)
+    run = _Run(project, stages, on_event, cancel, force_from)
     sfm = tools.colmap
 
     feature_options = settings.features

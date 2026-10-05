@@ -170,6 +170,13 @@ outputs.
 
 ## Backend modules (`backends/`)
 
+- `brush.py` trains Gaussian splats (Brush 0.3.0, GPU via Vulkan/Metal) on
+  the undistort stage's output, through a `dataset/` of relative symlinks
+  in the splat stage folder; it runs under a pty (progress only on a
+  terminal). GPU stages (`StageSpec.gpu`) record the GPU and driver in
+  their manifest. `pipeline.run_splat` reuses the camera stages and
+  refuses software renderers unless allowed.
+
 - `common.find_tool` looks for an executable in this order: an explicit
   path from settings, an `EZ2D_*` environment variable, the bundle's
   `backends/bin`, then `PATH`. A configured path that is wrong is reported,

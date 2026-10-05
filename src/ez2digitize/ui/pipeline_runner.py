@@ -27,6 +27,7 @@ from ez2digitize.pipeline import (
     PipelineCancelled,
     PipelineError,
     PipelineEvent,
+    SplatResult,
     StageFailed,
     StageFinished,
     StageOutput,
@@ -37,7 +38,7 @@ from ez2digitize.pipeline import (
 
 FLUSH_S = 0.1
 
-PipelineFunction = Callable[..., MeshResult]
+PipelineFunction = Callable[..., MeshResult | SplatResult]
 
 
 @dataclass(frozen=True)

@@ -138,6 +138,20 @@ def add_backends(onedir: Path, archive: Path) -> dict[str, object]:
     return {"versions": {k: info.get(k) for k in ("colmap", "openmvs")}, "bundled": sorted(bundled)}
 
 
+def add_brush(onedir: Path, release: Path) -> str:
+    """Copy Brush (an unpacked release: brush_app, LICENSE) next to the other backends.
+
+    It is one static binary needing only libc; it loads the Vulkan loader
+    itself at run time, from the host like any Vulkan program.
+    """
+    target = onedir / "_internal" / "backends"
+    shutil.copy2(release / "brush_app", target / "bin" / "brush_app")
+    licenses = target / "licenses" / "brush"
+    licenses.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(release / "LICENSE", licenses / "LICENSE")
+    return output([target / "bin" / "brush_app", "--version"]).strip()
+
+
 def _resolved_libraries(binary: Path) -> list[tuple[str, Path | None]]:
     libraries = []
     for line in output(["ldd", binary]).splitlines():
@@ -190,7 +204,7 @@ def appimage(onedir: Path, out: Path) -> Path:
     return target
 
 
-def smoke(image: Path, photos: Path) -> dict[str, object]:
+def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object]:
     """Run the AppImage like a user would; raise SystemExit on any failure."""
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     for var in ("EZ2D_COLMAP", "EZ2D_OPENMVS_DIR"):
@@ -204,8 +218,9 @@ def smoke(image: Path, photos: Path) -> dict[str, object]:
         raise SystemExit(f"GUI self-test failed:\n{gui}")
     check = output([image, "check"], env=env)
     print(check)
-    if check.count("(bundled)") != 2 or "not the tested" in check:
-        raise SystemExit("check did not find both bundled tools at the pinned versions")
+    expected = 3 if brush else 2
+    if check.count("(bundled)") != expected or "not the tested" in check:
+        raise SystemExit(f"check did not find the {expected} bundled tools at pinned versions")
     results["check"] = check.strip().splitlines()
 
     with tempfile.TemporaryDirectory(prefix="ez2d-smoke-") as scratch:
@@ -233,6 +248,9 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--backends", type=Path, required=True, help="ez2d-backends-*.tar.gz")
+    parser.add_argument(
+        "--brush", type=Path, metavar="DIR", help="unpacked Brush release (brush_app, LICENSE)"
+    )
     parser.add_argument("--out", type=Path, default=REPO / "build" / "appimage")
     parser.add_argument("--smoke", type=Path, metavar="PHOTOS", help="test with these photos")
     args = parser.parse_args()
@@ -245,6 +263,8 @@ def main() -> int:
 
     onedir = pyinstaller(out)
     backends = add_backends(onedir, args.backends.resolve())
+    if args.brush:
+        backends["brush"] = add_brush(onedir, args.brush.resolve())
     removed = prune_host_libraries(onedir)
     print(f"removed {len(removed)} host libraries")
     image = appimage(onedir, out)
@@ -255,7 +275,7 @@ def main() -> int:
         "host_libraries_removed": len(removed),
     }
     if args.smoke:
-        report["smoke"] = smoke(image, args.smoke.resolve())
+        report["smoke"] = smoke(image, args.smoke.resolve(), brush=args.brush is not None)
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
     return 0

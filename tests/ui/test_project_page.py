@@ -10,6 +10,7 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
+from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.common import BackendMissing
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.project import Project
@@ -239,3 +240,39 @@ def test_export_diagnostics(page: ProjectPage, photos: Path, tmp_path: Path) -> 
     path = page.export_diagnostics(tmp_path / "d.zip")
     assert path is not None and zipfile.is_zipfile(path)
     assert "Diagnostics saved" in page.status.text()
+
+
+def test_build_splats(
+    qtbot: QtBot,
+    tmp_path: Path,
+    photos: Path,
+    fake_tools: Tools,
+    fake_brush: Brush,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize import pipeline
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    tools = replace(fake_tools, brush=fake_brush)
+    page = ProjectPage(Project.create(tmp_path / "sp"), lambda: tools)
+    qtbot.addWidget(page)
+    page.import_folder(photos)
+    page.start_splats()
+    _wait_idle(qtbot, page)
+    assert page.last_failure is None, page.last_failure
+    assert "splat" in page._stage_items
+    assert page.result_label.text().startswith("Splats saved in")
+    assert page.photo_checks.wait()
+
+
+def test_build_splats_without_brush(
+    qtbot: QtBot, page: ProjectPage, photos: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _p, title, text: warnings.append(text))
+    page.import_folder(photos)
+    page.start_splats()
+    assert not page.runner.running and "Splats need Brush" in warnings[0]

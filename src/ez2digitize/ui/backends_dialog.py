@@ -20,14 +20,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize.backends import colmap, ffmpeg, openmvs
-from ez2digitize.backends.common import BackendError
+from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
+from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.pipeline import Tools
 
 COLMAP_KEY = "backends/colmap"
 OPENMVS_KEY = "backends/openmvs_dir"
 FFMPEG_KEY = "backends/ffmpeg"
+BRUSH_KEY = "backends/brush"
 
 
 def locate_tools(settings: QSettings) -> Tools:
@@ -37,9 +38,15 @@ def locate_tools(settings: QSettings) -> Tools:
     """
     colmap_path = str(settings.value(COLMAP_KEY, "") or "")
     openmvs_dir = str(settings.value(OPENMVS_KEY, "") or "")
+    brush_path = str(settings.value(BRUSH_KEY, "") or "")
+    try:
+        splats: brush.Brush | None = brush.locate(Path(brush_path) if brush_path else None)
+    except BackendMissing:
+        splats = None  # only needed for splats
     return Tools(
         colmap=colmap.locate(Path(colmap_path) if colmap_path else None),
         openmvs=openmvs.locate(Path(openmvs_dir) if openmvs_dir else None),
+        brush=splats,
     )
 
 
@@ -62,6 +69,8 @@ class BackendsDialog(QDialog):
         self.openmvs_edit.setPlaceholderText("found automatically (EZ2D_OPENMVS_DIR, bundle, PATH)")
         self.ffmpeg_edit = QLineEdit(str(settings.value(FFMPEG_KEY, "") or ""))
         self.ffmpeg_edit.setPlaceholderText("found automatically (EZ2D_FFMPEG, PATH)")
+        self.brush_edit = QLineEdit(str(settings.value(BRUSH_KEY, "") or ""))
+        self.brush_edit.setPlaceholderText("found automatically (EZ2D_BRUSH, bundle, PATH)")
         self.check_label = QLabel()
         self.check_label.setWordWrap(True)
 
@@ -69,6 +78,7 @@ class BackendsDialog(QDialog):
         form.addRow("COLMAP program:", self._with_browse(self.colmap_edit, folder=False))
         form.addRow("OpenMVS folder:", self._with_browse(self.openmvs_edit, folder=True))
         form.addRow("FFmpeg program:", self._with_browse(self.ffmpeg_edit, folder=False))
+        form.addRow("Brush program:", self._with_browse(self.brush_edit, folder=False))
         check = QPushButton("Check")
         check.clicked.connect(self.check)
         buttons = QDialogButtonBox(
@@ -81,8 +91,9 @@ class BackendsDialog(QDialog):
         layout.addWidget(
             QLabel(
                 f"EZ2DIGITIZE is tested with COLMAP {colmap.PINNED_VERSION} and "
-                f"OpenMVS {openmvs.PINNED_VERSION}; FFmpeg is only needed to import "
-                "videos. Leave a field empty to search for it."
+                f"OpenMVS {openmvs.PINNED_VERSION} and Brush {brush.PINNED_VERSION}; FFmpeg is "
+                "only needed to import videos, Brush for splats. Leave a field empty to "
+                "search for it."
             )
         )
         layout.addLayout(form)
@@ -114,10 +125,11 @@ class BackendsDialog(QDialog):
         self.settings.setValue(COLMAP_KEY, self.colmap_edit.text().strip())
         self.settings.setValue(OPENMVS_KEY, self.openmvs_edit.text().strip())
         self.settings.setValue(FFMPEG_KEY, self.ffmpeg_edit.text().strip())
+        self.settings.setValue(BRUSH_KEY, self.brush_edit.text().strip())
 
     def check(self) -> None:
         """Try the entered paths without saving them."""
-        keys = (COLMAP_KEY, OPENMVS_KEY, FFMPEG_KEY)
+        keys = (COLMAP_KEY, OPENMVS_KEY, FFMPEG_KEY, BRUSH_KEY)
         previous = [self.settings.value(key) for key in keys]
         self._store()
         lines = []
@@ -133,6 +145,13 @@ class BackendsDialog(QDialog):
                 f"OpenMVS {mvs.version}{_untested(mvs.supported, openmvs.PINNED_VERSION)}: "
                 f"{mvs.bin_dir}",
             ]
+            if tools.brush is None:
+                lines.append("Brush (only for splats): not found")
+            else:
+                lines.append(
+                    f"Brush {tools.brush.version}"
+                    f"{_untested(tools.brush.supported, brush.PINNED_VERSION)}: {tools.brush.path}"
+                )
         try:
             video = locate_ffmpeg(self.settings)
         except BackendError as exc:

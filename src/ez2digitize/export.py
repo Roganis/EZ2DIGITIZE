@@ -47,11 +47,12 @@ from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.orientation import Placement, estimate_up, place
 
-ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points"]
+ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat"]
 FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
 PRINT_FORMATS = frozenset({"stl", "3mf"})
 TEXTURED_PLY = "scene_textured.ply"
 DENSE_PLY = "scene_dense.ply"
+SPLAT_PLY = "splat.ply"
 
 
 class ExportError(Exception):
@@ -144,6 +145,43 @@ def export_mesh(
         },
     )
     return files
+
+
+def export_splat(
+    project: Project, *, stage: str = "splat", now: datetime | None = None
+) -> list[Path]:
+    """Copy the trained splats to `exports/<timestamp>/<name>_splat.ply`.
+
+    Splats keep the reconstruction's frame: standing them upright would mean
+    rotating every splat's orientation and its spherical harmonics too.
+    """
+    manifest = load_manifest(project.stage_dir(stage))
+    source = project.stage_dir(stage) / SPLAT_PLY
+    if manifest is None or not manifest.succeeded or not source.is_file():
+        raise ExportError("there are no splats to export yet; train them first")
+    formats: list[ExportFormat] = ["splat"]
+    previous = _find_export(project.exports_dir, manifest.run_id, formats, False)
+    if previous is not None:
+        return previous
+    folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
+    target = folder / f"{_file_stem(project.name)}_splat.ply"
+    try:
+        shutil.copyfile(source, target)
+    except OSError as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise ExportError(f"export failed: {exc}") from exc
+    write_json_atomic(
+        folder / "export.json",
+        {
+            "schema_version": 1,
+            "created": utc_now(),
+            "formats": formats,
+            "source": {"stage": stage, "run_id": manifest.run_id},
+            "align": False,
+            "files": [target.name],
+        },
+    )
+    return [target]
 
 
 def export_notes(files: list[Path]) -> list[str]:

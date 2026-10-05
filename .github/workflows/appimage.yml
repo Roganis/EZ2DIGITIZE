@@ -3,7 +3,8 @@
 # bundled tools, and a full pipeline run on the synthetic scene exports a GLB.
 #
 # The backends come from the newest Backends workflow run (this branch first,
-# then main) that uploaded a Linux archive.
+# then main) that uploaded a Linux archive; Brush from its pinned release
+# (keep in step with ez2digitize.backends.brush.PINNED_VERSION).
 name: AppImage
 
 on:
@@ -21,6 +22,9 @@ on:
 permissions:
   contents: read
   actions: read  # to download the backend archive from the Backends workflow
+
+env:
+  BRUSH_VERSION: v0.3.0
 
 concurrency:
   group: appimage-${{ github.ref }}
@@ -61,6 +65,12 @@ jobs:
           echo "no Backends run with a Linux archive found" >&2
           exit 1
 
+      - name: Get Brush
+        run: |
+          curl -sSLf -o brush.tar.xz \
+            "https://github.com/ArthurBrussee/brush/releases/download/${BRUSH_VERSION}/brush-app-x86_64-unknown-linux-gnu.tar.xz"
+          mkdir -p build/brush && tar xf brush.tar.xz -C build/brush --strip-components 1
+
       - name: Synthetic test scene
         run: uv run --group feasibility tools/feasibility/bench.py synth build/synthetic
 
@@ -68,6 +78,7 @@ jobs:
         run: |
           uv run --group packaging python tools/packaging/build.py \
             --backends artifact/backends/ez2d-backends-linux-x86_64.tar.gz \
+            --brush build/brush \
             --smoke build/synthetic/images
 
       - name: Summary

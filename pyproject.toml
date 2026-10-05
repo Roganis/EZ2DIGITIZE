@@ -20,6 +20,10 @@ dev = [
     "pytest-qt>=4.4",
     "ruff>=0.8",
 ]
+# Phase 1 packaging spike (tools/spikes/packaging). Never shipped with the app.
+packaging = [
+    "pyinstaller>=6.11",
+]
 # Phase 1 benchmark tooling (tools/feasibility). Never shipped with the app.
 feasibility = [
     "numpy>=2.0",
@@ -67,7 +71,7 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 [tool.mypy]
 strict = true
 files = ["src", "tests", "tools/feasibility", "tools/spikes"]
-mypy_path = "src:tools/feasibility"
+mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]

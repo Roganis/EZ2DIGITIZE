@@ -55,7 +55,7 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 |---|---|---|
 | (a) OpenMVS on CPU fast enough for small objects? Default resolution level? | | |
 | (b) Masking model and runtime | | |
-| (c) Python packaging acceptable? | Not covered by these scripts (separate spike) | |
+| (c) Python packaging acceptable? | Likely yes: AppImage 144 MB without viewer, 285 MB with, 0.3-0.4 s to a window ([spike](../../tools/spikes/packaging/README.md)); size is dominated by Brush and QtWebEngine, not Python. Still to check: the macOS `.app` on the M1 | |
 | (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); works on software rendering, needs fps/memory on the GRE and M1 | |
 
 ## Notes from validating the harness

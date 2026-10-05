@@ -40,7 +40,10 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 STARTED = time.monotonic()
-WEB_DIR = Path(__file__).resolve().parent / "web"
+if getattr(sys, "frozen", False):  # inside a PyInstaller bundle (packaging spike)
+    WEB_DIR = Path(getattr(sys, "_MEIPASS", ".")) / "viewer_web"
+else:
+    WEB_DIR = Path(__file__).resolve().parent / "web"
 SCHEME = b"ez2d"
 MIME = {".js": b"text/javascript", ".html": b"text/html", ".ply": b"application/octet-stream"}
 
@@ -132,7 +135,7 @@ def register_scheme() -> None:
     QWebEngineUrlScheme.registerScheme(scheme)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -143,7 +146,7 @@ def main() -> int:
     parser.add_argument("--screenshot", type=Path, help="save a screenshot (implies --measure)")
     parser.add_argument("--timeout", type=float, default=120, help="seconds before giving up")
     parser.add_argument("--size", default="1280x800", help="window size, WIDTHxHEIGHT")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     model = args.model.expanduser().resolve()
     kind, texture = detect(model)
     measure = args.measure or args.screenshot is not None

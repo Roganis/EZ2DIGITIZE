@@ -275,7 +275,8 @@ fails, they can see which stage failed and why.
 - Unified embedded viewer for sparse cloud, splat and mesh.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
-  what to do with shiny objects (matte spray, cross-polarization).
+  what to do with shiny objects (matte spray, cross-polarization). Written
+  (docs/CAPTURE.md); to check against the Phase 1 captures.
 - Photo set health check: overlap estimate, coverage gaps shown on the
   camera rings, warnings for blur and shiny/transparent subjects. Partly
   done: blur is in the photo checks; after camera placement
@@ -300,7 +301,9 @@ fails, they can see which stage failed and why.
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,
-  sample datasets with explicit licenses.
+  sample datasets with explicit licenses. Written (docs/QUICKSTART.md,
+  CAPTURE.md, TROUBLESHOOTING.md, CONTRIBUTING.md); to revise against
+  release builds. Sample datasets wait for your own captures.
 - Release testing: AMD Linux and M1 by the maintainer; NVIDIA, Intel and
   Windows through a call for community testers before calling them
   supported.

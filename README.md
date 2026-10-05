@@ -4,11 +4,17 @@ Turn photos or video of small objects into textured meshes and Gaussian
 splats, on any GPU vendor. EZ2DIGITIZE is a desktop app that drives
 open-source reconstruction tools (COLMAP, OpenMVS, Brush) for you.
 
-**Status:** early development ([roadmap](docs/ROADMAP.md)). The mesh
-pipeline runs from a first GUI (`uv run ez2digitize`: create a project,
-import a folder of photos, Build mesh) and from the command line (below).
+**Status:** early development ([roadmap](docs/ROADMAP.md)). Photos, a
+video or a phone upload in; a textured mesh (OBJ, GLB, STL, 3MF) or
+Gaussian splats out; from the GUI or the command line. CI builds a Linux
+AppImage and a macOS app with the tools inside.
 
 Primary platform: Linux with an AMD GPU. Secondary: macOS on Apple Silicon.
+
+- [Quick start](docs/QUICKSTART.md)
+- [Capturing a small object](docs/CAPTURE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Development
 

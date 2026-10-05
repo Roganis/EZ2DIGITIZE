@@ -259,7 +259,8 @@ def import_files(
 
     def fill(staging: Path) -> list[CaptureFile]:
         used: set[str] = set()
-        return [copy_into(staging, path, used) for path in sources]
+        entries = [copy_into(staging, path, used) for path in sources]
+        return add_jpeg_copies(staging, entries, used)
 
     return assemble_bundle(
         project, fill, source=source, device=device, source_info=source_info, now=now
@@ -305,6 +306,32 @@ def assemble_bundle(
         raise
     bundle.root = final
     return bundle
+
+
+def add_jpeg_copies(folder: Path, entries: list[CaptureFile], used: set[str]) -> list[CaptureFile]:
+    """A JPEG copy of every HEIC/HEIF photo, which is then left out (see core.heic).
+
+    A photo that can't be decoded stays as it is; the photo checks report it.
+    """
+    from ez2digitize.core import heic
+
+    result = []
+    for entry in entries:
+        result.append(entry)
+        if entry.kind != "image" or not heic.is_heif(entry.name):
+            continue
+        name = _unique_name(f"{Path(entry.name).stem}.jpg", used)
+        try:
+            heic.to_jpeg(folder / entry.name, folder / name)
+        except (OSError, ValueError):
+            (folder / name).unlink(missing_ok=True)
+            continue
+        copy = add_file(folder, name, original_name=entry.original_name, kind="image")
+        copy.metadata["converted_from"] = entry.name
+        entry.metadata["converted_to"] = name
+        entry.excluded = True
+        result.append(copy)
+    return result
 
 
 def copy_into(folder: Path, path: Path, used: set[str]) -> CaptureFile:

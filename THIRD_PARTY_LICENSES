@@ -37,6 +37,14 @@ Pillow
             zstd (BSD-3-Clause), liblzma (0BSD), libxcb and libXau (MIT).
             Their license texts are in the wheel's dist-info/licenses.
 
+pillow-heif
+  License:  BSD-3-Clause (its code); the wheel bundles libheif and libde265
+            (LGPL-3.0) and x265 (GPL-2.0-or-later), so the binary wheel as a
+            whole is GPL; all compatible with GPL-3.0-or-later.
+  Source:   https://github.com/bigcat88/pillow_heif
+  Notes:    Decodes iPhone HEIC photos into JPEG copies on import
+            (ez2digitize.core.heic). License texts in its dist-info.
+
 segno
   License:  BSD-3-Clause
   Source:   https://github.com/heuer/segno

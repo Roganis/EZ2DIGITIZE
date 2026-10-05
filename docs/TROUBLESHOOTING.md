@@ -27,7 +27,7 @@ logs and settings, never your photos. The logs do contain file paths.
 | The step ran out of memory | Choose a lower Quality (or Advanced → Detail), close other programs. On 8 GB machines start with Fast. |
 | The disk is full | A run needs a few GB in the project folder. Delete old exports or projects. |
 | The cameras could not be placed | Too little overlap or texture: more photos, closer together, a patterned mat; for a turntable, masks (see the [capture guide](CAPTURE.md)). |
-| Some photos could not be read | Leave them out in the Photo checks tab. HEIC isn't supported yet. |
+| Some photos could not be read | Leave them out in the Photo checks tab. |
 | No dense points / No mesh could be built | Usually wrong camera positions: check how many photos were placed (log), try a lower detail level, check the masks don't hide the object. |
 | The tool crashed / needs a newer processor | A bug: please report it with Export Diagnostics. |
 

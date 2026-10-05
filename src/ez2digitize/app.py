@@ -12,6 +12,17 @@ from ez2digitize import __version__
 from ez2digitize.ui.main_window import MainWindow
 
 
+def _heif_works() -> bool:
+    """Whether HEIC decoding loads (its native library must be in the package)."""
+    try:
+        from ez2digitize.core import heic
+
+        heic._register()
+    except (ImportError, OSError):
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv if argv is None else argv
     self_test = "--self-test" in args[1:]
@@ -24,7 +35,12 @@ def main(argv: list[str] | None = None) -> int:
     if self_test:
         # For packaging checks: the window came up; report and quit.
         def report() -> None:
-            info = {"self-test": "gui", "version": __version__, "visible": window.isVisible()}
+            info = {
+                "self-test": "gui",
+                "version": __version__,
+                "visible": window.isVisible(),
+                "heif": _heif_works(),
+            }
             print(json.dumps(info), flush=True)
             app.quit()
 

@@ -37,8 +37,8 @@ photos.
   is calibrated on its own automatically, but one per set is more accurate.
 - **Keep EXIF data** (copy the original files, don't export or resize):
   the focal length in it helps a lot.
-- **iPhone:** set Settings → Camera → Formats → Most Compatible (JPEG);
-  HEIC can't be read yet.
+- **iPhone:** HEIC photos are fine: a JPEG copy of each is made on import
+  (the original is kept).
 
 ## Video instead of photos
 

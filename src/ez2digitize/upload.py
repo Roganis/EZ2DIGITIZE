@@ -43,6 +43,7 @@ from ez2digitize.core.capture import (
     CaptureError,
     CaptureFile,
     add_file,
+    add_jpeg_copies,
     assemble_bundle,
     classify,
 )
@@ -136,7 +137,7 @@ class UploadSession:
                 kind = classify(Path(name))
                 assert kind is not None  # checked when the upload started
                 entries.append(add_file(staging, name, original_name=upload.name, kind=kind))
-            return entries
+            return add_jpeg_copies(staging, entries, used)
 
         try:
             return assemble_bundle(
@@ -314,10 +315,9 @@ input[type=file] { display: none; }
 </style></head><body>
 <h1>Send photos to EZ2DIGITIZE</h1>
 <p>Pick the photos (or a video) of your object. Keep this page open until every file is
-sent. iPhone: HEIC photos can't be used yet; set Settings → Camera → Formats → Most
-Compatible before taking them.</p>
+sent. iPhone HEIC photos are fine: a JPEG copy is made on the computer.</p>
 <label class="pick">Choose photos<input id="pick" type="file" multiple
-  accept="image/jpeg,image/png,image/tiff,image/webp,video/*"></label>
+  accept="image/*,video/*"></label>
 <div id="summary"></div>
 <div id="list"></div>
 <button id="done" class="secondary">I'm done</button>

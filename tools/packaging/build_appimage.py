@@ -216,8 +216,8 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
     results: dict[str, object] = {}
 
     gui = output([image, "--self-test"], env=env)
-    if '"self-test": "gui"' not in gui:
-        raise SystemExit(f"GUI self-test failed:\n{gui}")
+    if '"self-test": "gui"' not in gui or '"heif": true' not in gui:
+        raise SystemExit(f"GUI self-test failed (or no HEIC decoding):\n{gui}")
     check = output([image, "check"], env=env)
     print(check)
     expected = 3 if brush else 2

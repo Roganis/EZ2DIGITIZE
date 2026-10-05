@@ -238,10 +238,10 @@ fails, they can see which stage failed and why.
   - Done (`ez2digitize.upload`, "From phone…" in the GUI, `ez2d upload`):
     token URL in a QR code (segno), LAN address only, private clients only,
     4 MB chunks resumed after drops (tested in Chromium with a dropped
-    chunk), bit-for-bit originals in a new bundle. Not done: HEIC
-    conversion (adds pillow-heif/libheif, LGPL, and a rule for converted
-    copies next to originals; the page asks iPhone users for JPEG for now)
-    and the watch folder (when is a synced set complete?).
+    chunk), bit-for-bit originals in a new bundle. HEIC: on import (folder
+    or phone) a JPEG copy is made next to the original, which is kept and
+    left out (`core.heic`, pillow-heif). Not done: the watch folder (when
+    is a synced set complete?).
 
 ## Phase 4: Mesh quality for real-world use
 

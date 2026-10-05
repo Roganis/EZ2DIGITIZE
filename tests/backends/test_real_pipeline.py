@@ -65,7 +65,10 @@ def test_mesh_path_on_synthetic_scene(tmp_path: Path) -> None:
             options=colmap.FeatureOptions(max_image_size=1600),
         )
     )  # fmt: skip
-    assert any(p.fraction == 1.0 for p in progress), "no feature progress parsed"
+    log = (project.stage_dir("features") / "log.txt").read_text(errors="replace")
+    assert any(p.fraction == 1.0 for p in progress), (
+        "no feature progress parsed; the log starts:\n" + "\n".join(log.splitlines()[:40])
+    )
     matching = run(colmap.match_features(sfm, project, features))
     mapping = run(colmap.map_sparse(sfm, project, matching, total_images=count))
     model = colmap.best_model(project.stage_dir("mapping") / "sparse")

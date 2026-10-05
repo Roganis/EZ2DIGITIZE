@@ -30,10 +30,13 @@ PySide6 / Shiboken6 (Qt for Python)
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
 
-None are bundled yet. Planned (Phase 1 evaluates them):
+None are bundled yet. Planned (Phase 1 evaluates them). tools/backends/build.sh
+builds the pinned versions with all their dependencies linked statically; each
+archive carries a licenses/ folder with the copyright file of every library
+linked in:
 
-COLMAP          BSD-3-Clause        https://github.com/colmap/colmap
-OpenMVS         AGPL-3.0            https://github.com/cdcseacave/openMVS
+COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
+OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
                 (depends on CGAL, parts of which are GPL-3.0+)
 Brush           Apache-2.0          https://github.com/ArthurBrussee/brush
 FFmpeg          LGPL-2.1+ or GPL-2.0+ depending on build configuration

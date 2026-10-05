@@ -124,7 +124,9 @@ you will hit.
   macOS `.app`.
 - **Backend builds:** CI jobs that build pinned COLMAP and OpenMVS for Linux
   x86_64 and macOS arm64. Distro packages lag and differ in versions, so
-  don't rely on them.
+  don't rely on them. Done in `tools/backends/` (COLMAP 4.2.1, OpenMVS
+  v2.4.0, static vcpkg builds). COLMAP 4.2.1 also has a `HIP_ENABLED`
+  option for AMD GPUs through ROCm, worth a test build on the GRE.
 
 **Exit decision:** written yes/no on (a) OpenMVS on CPU is fast enough for
 small objects, and at which resolution level by default, (b) which masking

@@ -1,0 +1,91 @@
+# Build pinned, CPU-only COLMAP and OpenMVS (tools/backends/build.sh) for
+# Linux x86_64 and macOS arm64, check them with the benchmark harness on the
+# synthetic scene, and upload the packages as artifacts.
+name: Backends
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/backends/**"
+      - "tools/feasibility/plans/backends-smoke.toml"
+      - ".github/workflows/backends.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/backends/**"
+      - ".github/workflows/backends.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux: the oldest supported runner, because binaries need a glibc at
+        # least as new as the build machine's.
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gfortran nasm autoconf autoconf-archive automake \
+            libtool bison flex pkg-config zip unzip curl linux-libc-dev
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config
+
+      # vcpkg's binary cache. Saved even when the build fails, so a failure late
+      # in a multi-hour build doesn't throw away the dependencies built so far.
+      - name: Restore vcpkg cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/backends/vcpkg-cache
+          key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: backends-vcpkg-${{ runner.os }}-
+
+      - name: Build
+        run: tools/backends/build.sh
+
+      - name: Save vcpkg cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: build/backends/vcpkg-cache
+          key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Smoke test with the benchmark harness
+        run: |
+          B="uv run --group feasibility tools/feasibility/bench.py"
+          $B synth ~/ez2d-data/synthetic
+          $B run tools/feasibility/plans/backends-smoke.toml --results build/smoke \
+            --machine "ci-${{ runner.os }}" \
+            --colmap build/backends/prefix/bin/colmap --openmvs-dir build/backends/prefix/bin
+
+      - name: Summary
+        if: always()
+        run: |
+          B="uv run --group feasibility tools/feasibility/bench.py"
+          $B report --results build/smoke --out build/smoke-report || true
+          cat build/backends/prefix/BUILDINFO.json >> "$GITHUB_STEP_SUMMARY" || true
+          cat build/smoke-report/*.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backends-${{ runner.os }}
+          retention-days: 14
+          path: |
+            build/backends/ez2d-backends-*.tar.gz
+            build/backends/prefix/BUILDINFO.json
+            build/smoke-report/

@@ -91,7 +91,7 @@ def _parser() -> argparse.ArgumentParser:
     part.add_argument("--sparse-only", action="store_true", help="stop after camera poses")
     part.add_argument("--dense-only", action="store_true", help="only the OpenMVS stages")
     run.add_argument("--max-image-size", type=int, help="COLMAP feature image size")
-    run.add_argument("--mapper", choices=["incremental", "global"], default="incremental")
+    run.add_argument("--mapper", choices=["global", "incremental"], default="global")
     run.add_argument("--level", type=int, help="OpenMVS resolution level (0 = full size)")
     run.add_argument("--refine", action="store_true", help="run RefineMesh (slow)")
     run.add_argument(

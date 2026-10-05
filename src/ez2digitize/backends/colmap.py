@@ -124,7 +124,11 @@ class MatchOptions:
 
 @dataclass(frozen=True)
 class MapperOptions:
-    kind: MapperKind = "incremental"
+    # Global SfM by default: on a real turntable capture (62 photos, 39 mm on
+    # APS-C) the incremental mapper split into 9 partial models with focal
+    # lengths 20-60% off, while the global mapper placed all 62 photos in one
+    # model (0.50 px reprojection error) in a fifth of the time.
+    kind: MapperKind = "global"
     threads: int | None = None
 
 

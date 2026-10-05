@@ -74,6 +74,27 @@ only, synthetic scene; CI timings, not the reference machines):
 - Linux binaries need glibc ≥ 2.35 and libgfortran/libquadmath/libgomp
   next to the C/C++ runtime (see `tools/backends/README.md`).
 
+## First real capture through the app (GRE, CI AppImage)
+
+Skull, turntable, strong lights, no background, dotted (62 photos, Canon
+EOS 1100D/T3, 39 mm, 4272x2848; [test set](https://gitlab.com/photogrammetry-test-sets/skull-turntable-strong-lights-no-background-dotted),
+CC BY 4.0).
+
+- **Crash:** the run took the desktop session down (swap full, terminal
+  killed). Reproduced in a 4-thread container: COLMAP feature extraction
+  peaked at 7.8 GB, about 2 GB per thread at 3200 px, and COLMAP uses one
+  thread per core. Fixed by capping feature threads to the free memory.
+- **Mapping:** the incremental mapper split the set into 9 partial models
+  (largest 25 images) with focal lengths of 8,500-11,500 px against the
+  EXIF-based 7,248 px and large distortion. COLMAP 4.2.1's global mapper
+  placed all 62 images in one model, focal 7,101 px, 14,849 points, 0.50 px
+  mean reprojection error, in 69 s instead of 346 s. Now the default.
+- Other steps (container, 4 threads): matching 73 s / 210 MB, mapping
+  (incremental) 346 s / 162 MB, undistortion 5 s / 270 MB.
+- The folder also holds `Preview.jpg`, a collage of the set, which folder
+  import took as a 63rd photo: photo checks (Phase 2) should flag images
+  whose size or camera differ from the rest.
+
 ## Notes from validating the harness
 
 Found while testing the scripts in a CPU-only Ubuntu 24.04 container with

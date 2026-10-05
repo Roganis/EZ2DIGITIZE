@@ -37,6 +37,11 @@ Pillow
             zstd (BSD-3-Clause), liblzma (0BSD), libxcb and libXau (MIT).
             Their license texts are in the wheel's dist-info/licenses.
 
+segno
+  License:  BSD-3-Clause
+  Source:   https://github.com/heuer/segno
+  Notes:    QR codes for phone upload (pure Python, no dependencies).
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------

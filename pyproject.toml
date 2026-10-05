@@ -9,6 +9,7 @@ dynamic = ["version"]
 dependencies = [
     "pillow>=11.0",
     "PySide6>=6.8",
+    "segno>=1.6",
 ]
 
 [project.gui-scripts]

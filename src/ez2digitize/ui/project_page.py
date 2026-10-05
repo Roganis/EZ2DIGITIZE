@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -57,6 +58,7 @@ from ez2digitize.pipeline import (
     run_mesh,
     run_splat,
 )
+from ez2digitize.ui.phone_upload import PhoneUploadDialog
 from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 from ez2digitize.ui.video_import import VideoImporter
@@ -139,6 +141,9 @@ class ProjectPage(QWidget):
         self.import_button.clicked.connect(self.choose_folder_to_import)
         self.import_video_button = QPushButton("Import video…")
         self.import_video_button.clicked.connect(self.choose_video_to_import)
+        self.phone_button = QPushButton("From phone…")
+        self.phone_button.setToolTip("Send photos from a phone over Wi-Fi (scan a QR code)")
+        self.phone_button.clicked.connect(self.add_from_phone)
 
         header = QHBoxLayout()
         header_text = QVBoxLayout()
@@ -147,6 +152,7 @@ class ProjectPage(QWidget):
         header.addLayout(header_text, 1)
         header.addWidget(self.import_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.import_video_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.phone_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self.quality = QComboBox()
         for quality in presets.QUALITIES:
@@ -368,6 +374,7 @@ class ProjectPage(QWidget):
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
+        self.phone_button.setEnabled(not busy)
         busy_widgets = (
             self.quality, self.advanced, self.export_formats, self.mesh_size,
             self.video_frames, self.align,
@@ -451,6 +458,14 @@ class ProjectPage(QWidget):
         self.refresh()
         self.tabs.setCurrentWidget(self.photo_checks)
         self.project_changed.emit()
+
+    def add_from_phone(self) -> None:
+        dialog = PhoneUploadDialog(self.project, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.bundle is not None:
+            self.status.setText(f"Imported {len(dialog.bundle.files)} files from the phone.")
+            self.refresh()
+            self.tabs.setCurrentWidget(self.photo_checks)
+            self.project_changed.emit()
 
     def choose_video_to_import(self) -> None:
         patterns = " ".join(f"*{suffix}" for suffix in sorted(VIDEO_SUFFIXES))

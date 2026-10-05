@@ -59,6 +59,18 @@ my-scan/
   pipeline from feature extraction and bringing it back reuses the old run.
 - JSON files are written atomically (temporary file, fsync, rename).
 
+## Phone upload (`upload.py`, `ui/phone_upload.py`)
+
+`UploadSession` serves a one-page upload site (stdlib `http.server`) on
+the LAN address while the dialog is open. The URL carries a random token
+(compared in constant time; every other path is a 404), clients outside
+private ranges get a 403. The page sends each file in 4 MB PUTs that must
+start where the stored part ends (a 409 tells it where to resume), so a
+Wi-Fi drop costs at most one chunk. File names are reduced to their last
+component and must be photos or videos. `finish` moves the complete files
+into a capture bundle (`source: "upload"`, the phone's user agent as
+device) through `assemble_bundle`; `close` deletes what wasn't imported.
+
 ## Video import (`video.py`, `backends/ffmpeg.py`)
 
 A video becomes a capture bundle (`source: "video"`) holding the original

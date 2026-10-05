@@ -228,6 +228,13 @@ fails, they can see which stage failed and why.
   - Uploads land in a new capture bundle, with live progress on both sides.
   - Also a "watch folder" option for people who already sync their phone
     (Syncthing and similar).
+  - Done (`ez2digitize.upload`, "From phone…" in the GUI, `ez2d upload`):
+    token URL in a QR code (segno), LAN address only, private clients only,
+    4 MB chunks resumed after drops (tested in Chromium with a dropped
+    chunk), bit-for-bit originals in a new bundle. Not done: HEIC
+    conversion (adds pillow-heif/libheif, LGPL, and a rule for converted
+    copies next to originals; the page asks iPhone users for JPEG for now)
+    and the watch folder (when is a synced set complete?).
 
 ## Phase 4: Mesh quality for real-world use
 

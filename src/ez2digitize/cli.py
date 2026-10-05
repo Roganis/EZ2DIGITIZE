@@ -22,10 +22,13 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TextIO, cast
+
+import segno
 
 from ez2digitize import diagnostics, presets, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
@@ -63,6 +66,7 @@ from ez2digitize.pipeline import (
     run_sparse,
     run_splat,
 )
+from ez2digitize.upload import UploadSession
 
 
 def commands() -> tuple[str, ...]:
@@ -106,6 +110,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     imp.add_argument("--ffmpeg", type=Path, help="FFmpeg executable")
     imp.set_defaults(func=_cmd_import)
+
+    phone = sub.add_parser(
+        "upload", help="receive photos from a phone over Wi-Fi (prints a QR code to scan)"
+    )
+    phone.add_argument("project", type=Path)
+    phone.add_argument("--port", type=int, default=0, help="port to listen on (default: any)")
+    phone.set_defaults(func=_cmd_upload)
 
     checks = sub.add_parser(
         "photos", help="check the photos; leave some out of the reconstruction or bring them back"
@@ -261,6 +272,31 @@ def _import_video(project: Project, path: Path, args: argparse.Namespace) -> Cap
     except KeyboardInterrupt:
         cancel.cancel()
         raise
+
+
+def _cmd_upload(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    session = UploadSession(project, port=args.port)
+    url = session.start()
+    segno.make(url, error="m").terminal(compact=True)
+    print(f"scan the code with the phone, or open {url}")
+    print("waiting until the phone taps \u201cI'm done\u201d (Ctrl+C to cancel)...", flush=True)
+    try:
+        shown = -1
+        while not session.phone_done:
+            time.sleep(0.5)
+            received = [f for f in session.status() if f.complete]
+            if len(received) != shown:
+                shown = len(received)
+                print(f"  {shown} file(s) received", flush=True)
+    except KeyboardInterrupt:
+        session.close()
+        print("cancelled; nothing imported", file=sys.stderr)
+        return 130
+    bundle = session.finish()
+    print(f"{len(bundle.files)} files -> capture {bundle.id}")
+    _check_photos(project)
+    return 0
 
 
 def _cmd_photos(args: argparse.Namespace) -> int:

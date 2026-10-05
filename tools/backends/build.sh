@@ -22,11 +22,9 @@
 #   JOBS                 parallel build jobs      (default: all cores)
 set -euo pipefail
 
-COLMAP_VERSION=4.2.1
-OPENMVS_VERSION=v2.4.0
-VCPKG_VERSION=2026.07.29   # used for OpenMVS; COLMAP pins its own vcpkg baseline
-
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=pins.sh
+. "$REPO/tools/backends/pins.sh"  # versions, fetch, prepare_openmvs
 WORK=${EZ2D_BACKENDS_WORK:-$REPO/build/backends}
 JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)}
 export VCPKG_BINARY_CACHE=${VCPKG_BINARY_CACHE:-$WORK/vcpkg-cache}
@@ -50,20 +48,7 @@ export VCPKG_INSTALL_OPTIONS="--clean-after-build"
 export VCPKG_DEFAULT_TRIPLET=$TRIPLET VCPKG_DEFAULT_HOST_TRIPLET=$TRIPLET
 
 log "vcpkg $VCPKG_VERSION"
-if [ ! -d vcpkg ]; then
-  # Full history (without blobs): manifest baselines need older commits.
-  git clone --filter=blob:none https://github.com/microsoft/vcpkg.git vcpkg
-fi
-git -C vcpkg fetch --tags --quiet
-git -C vcpkg -c advice.detachedHead=false checkout --quiet "$VCPKG_VERSION"
-[ -x vcpkg/vcpkg ] || vcpkg/bootstrap-vcpkg.sh -disableMetrics
-
-fetch() {  # fetch <dir> <git url> <tag>
-  if [ ! -d "$1" ]; then
-    git clone --quiet --depth 1 --branch "$3" --recurse-submodules --shallow-submodules \
-      -c advice.detachedHead=false "$2" "$1"
-  fi
-}
+fetch_vcpkg vcpkg
 
 # Apple's compiler has no OpenMP; use Homebrew's libomp and ship it in lib/
 # (rewritten below), so the archive doesn't depend on Homebrew.
@@ -89,7 +74,7 @@ TOOLCHAIN=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 # build; they are only linked with the GUI or GPU features, which are off. The
 # dev packages are installed just to satisfy the lookup (checked below).
 log "COLMAP $COLMAP_VERSION"
-fetch colmap https://github.com/colmap/colmap.git "$COLMAP_VERSION"
+fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
 cmake -S colmap -B colmap-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
@@ -106,37 +91,8 @@ cmake --install colmap-build
 cp "$WORK/colmap-install/bin/colmap" "$PREFIX/bin/"
 
 log "OpenMVS $OPENMVS_VERSION"
-fetch openmvs https://github.com/cdcseacave/openMVS.git "$OPENMVS_VERSION"
-# Upstream fixes released after the pinned version (see each patch's header).
-# A checkout kept from an earlier run may already carry them.
-for patch in "$REPO"/tools/backends/patches/openmvs-*.patch; do
-  if git -C openmvs apply --reverse --check "$patch" 2>/dev/null; then
-    echo "already applied: $(basename "$patch")"
-  else
-    git -C openmvs apply "$patch"
-  fi
-done
-# OpenMVS asks for vcpkg's "opencv" with its default features, which on Linux
-# include the GTK GUI backend: a large GTK/X11 build (it failed on at-spi2-core)
-# for windows OpenMVS only opens in debug builds. Ask for OpenCV without
-# default features, keeping what OpenMVS uses: calib3d (stereo matching,
-# speckle filter, rectification) and the image formats it reads and writes.
-python3 - openmvs/vcpkg.json <<'EOF'
-import json, sys
-path = sys.argv[1]
-manifest = json.load(open(path))
-deps = [
-    d for d in manifest["dependencies"]
-    if not (isinstance(d, dict) and d["name"] in ("opencv", "opencv4"))
-]
-deps.append({
-    "name": "opencv4",
-    "default-features": False,
-    "features": ["calib3d", "eigen", "jpeg", "jpegxl", "openexr", "png", "tiff"],
-})
-manifest["dependencies"] = deps
-json.dump(manifest, open(path, "w"), indent=2)
-EOF
+fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
+prepare_openmvs openmvs "$REPO"
 cmake -S openmvs -B openmvs-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \

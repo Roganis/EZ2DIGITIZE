@@ -120,6 +120,19 @@ part of these portable builds.
 ## Licensing
 
 Statically linking means the binaries contain all those libraries.
-Distributing them (in Phase 6) requires shipping `licenses/` and offering
-the exact source of every GPL/LGPL/AGPL component: COLMAP and OpenMVS
-tags, the vcpkg commit, and the ports' sources, all pinned here.
+Distributing them requires shipping `licenses/` (the apps do) and the exact
+source of every GPL/LGPL/AGPL component. The pins live in `pins.sh`, shared
+by `build.sh` and `collect_sources.sh`, which packs that source without
+compiling anything:
+
+```sh
+tools/backends/collect_sources.sh   # -> build/backend-sources/ez2d-backends-source-<os>-<arch>.tar
+```
+
+The archive holds COLMAP and OpenMVS as tagged, `build.sh`, `pins.sh` and
+the patches, vcpkg as pinned, the port scripts of the versions COLMAP's
+own baseline selects, and every dependency's source archive as `vcpkg
+install --only-downloads` fetches it for the same manifests, features and
+triplet; `SOURCES.txt` says what is where. The
+[Backend sources workflow](../../.github/workflows/backend-sources.yml)
+builds it for Linux and macOS; releases publish it next to the binaries.

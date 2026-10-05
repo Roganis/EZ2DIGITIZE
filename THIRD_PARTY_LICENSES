@@ -83,10 +83,11 @@ Source for the bundled backends. COLMAP and OpenMVS in the apps are built
 from the tags, the vcpkg release and the patches pinned in
 tools/backends/build.sh, which records them in backends/BUILDINFO.json; all
 of it is in this repository and the upstream projects. Development builds
-(CI artifacts) point there. For releases, the exact corresponding source
-(both projects, the patches, vcpkg and every port's sources) is published
-next to the binaries (Phase 6); until then, anyone who got a binary can ask
-for it through the project's issue tracker.
+(CI artifacts) point there. tools/backends/collect_sources.sh packs the
+exact corresponding source (both projects, the patches, vcpkg and every
+port's source archive; the Backend sources workflow builds it), and each
+release publishes that archive next to the binaries. Anyone who got a binary
+can also ask for it through the project's issue tracker.
 
 
 3. Development-only tools (never distributed)

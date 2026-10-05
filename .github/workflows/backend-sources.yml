@@ -1,0 +1,61 @@
+# Pack the exact source of the bundled backends (tools/backends/
+# collect_sources.sh): COLMAP and OpenMVS as tagged, the patches, vcpkg as
+# pinned, and every dependency's source archive. Releases publish these next
+# to the binaries (the corresponding source the GPL and AGPL ask for). Runs
+# by hand, on main when the pins change, and on pull requests that change
+# the collector.
+name: Backend sources
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/backends/collect_sources.sh"
+      - ".github/workflows/backend-sources.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/backends/pins.sh"
+      - "tools/backends/patches/**"
+      - "tools/backends/collect_sources.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-sources-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sources:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tools vcpkg needs to read the manifests
+        if: runner.os == 'macOS'
+        run: brew install pkg-config
+
+      - name: Collect
+        run: tools/backends/collect_sources.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            ls -la build/backend-sources/*.tar 2>/dev/null || echo "no archive"
+            cat build/backend-sources/ez2d-backends-source-*/SOURCES.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-sources-${{ runner.os }}
+          retention-days: 14
+          path: build/backend-sources/*.tar

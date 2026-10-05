@@ -303,7 +303,10 @@ fails, they can see which stage failed and why.
   Windows installer (community-tested).
 - Backend binaries bundled or auto-downloaded with SHA-256 checksums and
   pinned versions; source tarballs for every GPL/AGPL binary published with
-  each release.
+  each release. Bundled (AppImage, macOS app); the source archive is built
+  by `tools/backends/collect_sources.sh` (Backend sources workflow).
+  Attaching both to a release waits for the release process (versioning,
+  where releases live).
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,

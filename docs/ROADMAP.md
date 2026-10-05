@@ -277,8 +277,16 @@ fails, they can see which stage failed and why.
   two or three height rings, enough depth of field, the flip workflow, and
   what to do with shiny objects (matte spray, cross-polarization).
 - Photo set health check: overlap estimate, coverage gaps shown on the
-  camera rings, warnings for blur and shiny/transparent subjects.
+  camera rings, warnings for blur and shiny/transparent subjects. Partly
+  done: blur is in the photo checks; after camera placement
+  `ez2digitize.coverage` reports gaps around the object (over 90°), photos
+  all from one height, and photos placed far from the rest (notices in the
+  log). Showing them on the rings needs the viewer; shiny/transparent
+  subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
+  The coverage check spots a camera that didn't move (all views within
+  10°) and says to mask the background; a dedicated mode waits for real
+  turntable captures and the masking decision.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
   Gaussian splatting extension.
 

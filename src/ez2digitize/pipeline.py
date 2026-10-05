@@ -24,10 +24,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from ez2digitize import coverage
 from ez2digitize.backends import brush, colmap, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.hardware import detect_gpus
+from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.resources import GIB, available_memory, cpu_threads
 from ez2digitize.core.runner import CancelToken
@@ -395,6 +397,12 @@ def _sparse(
         run.emit(
             Notice(f"only {registered} of {total} images were placed; the mesh may be partial")
         )
+    try:
+        placed = coverage.analyse(model, exif_orientations(bundles))
+    except (OSError, ValueError, BackendError):
+        placed = None  # advice only: never stop the run for it
+    for finding in placed.findings if placed else ():
+        run.emit(Notice(finding))
 
     undistorted = run(
         colmap.undistort(sfm, project, mapping, model=model, options=settings.undistort)

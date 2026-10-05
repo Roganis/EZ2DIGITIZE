@@ -179,6 +179,16 @@ def photo_infos(bundle: CaptureBundle) -> dict[str, PhotoInfo | None]:
     }
 
 
+def exif_orientations(bundles: Iterable[CaptureBundle]) -> dict[str, int]:
+    """EXIF orientation of every inspected photo, by COLMAP image name."""
+    found = {}
+    for bundle in bundles:
+        for name, info in photo_infos(bundle).items():
+            if info is not None:
+                found[f"{bundle.id}/{name}"] = info.orientation
+    return found
+
+
 def needs_inspection(bundle: CaptureBundle) -> bool:
     return any(info is None for info in photo_infos(bundle).values())
 

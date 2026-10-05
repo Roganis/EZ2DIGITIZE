@@ -108,6 +108,19 @@ Import video in the GUI).
   from `system_profiler` on macOS (Apple GPUs share system memory).
   Software renderers (llvmpipe) are flagged. `ez2d check` prints them.
 
+## Coverage (`coverage.py`)
+
+After camera placement, `analyse` takes the model's cameras: the object is
+the point closest to all viewing axes (least squares reweighted by each
+axis's miss, so a few cameras looking elsewhere don't pull it away),
+cameras over 5 median distances from it are counted as misplaced and left
+out, and with "up" from `orientation` each camera gets an angle around the
+object and a height angle. Findings, emitted as pipeline notices: a gap
+over 90° around the object, every photo within 15° of height, misplaced
+photos, and a camera that didn't move (all views within 10° of their mean;
+scale-free, unlike positions). On the skull: 23° largest gap, heights from
+-28° to 44°; two video frames misplaced.
+
 ## Photo checks (`core/photos.py`)
 
 Each photo is inspected once, on import or when a project from an older

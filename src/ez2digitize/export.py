@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from ez2digitize.backends.common import BackendError
 from ez2digitize.core.capture import list_bundles
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
 from ez2digitize.core.meshio import (
@@ -42,7 +43,7 @@ from ez2digitize.core.meshio import (
     write_point_cloud,
     write_stl,
 )
-from ez2digitize.core.photos import photo_infos
+from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.orientation import Placement, estimate_up, place
@@ -209,14 +210,9 @@ def _placement(project: Project, mesh: TexturedMesh) -> Placement | None:
     model = project.stage_dir("undistort") / "sparse"
     if not (model / "images.bin").is_file():
         return None
-    orientations = {}
-    for bundle in list_bundles(project):
-        for name, info in photo_infos(bundle).items():
-            if info is not None:
-                orientations[f"{bundle.id}/{name}"] = info.orientation
     try:
-        estimate = estimate_up(model, orientations)
-    except (OSError, ValueError, FormatError):
+        estimate = estimate_up(model, exif_orientations(list_bundles(project)))
+    except (OSError, ValueError, FormatError, BackendError):
         return None
     return place(mesh.positions, estimate.up) if estimate is not None else None
 

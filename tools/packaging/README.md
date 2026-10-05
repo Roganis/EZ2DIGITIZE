@@ -1,12 +1,12 @@
 # Packaging
 
-`build.py` builds the Linux AppImage: the app (PyInstaller onedir, without
+`build_appimage.py` builds the Linux AppImage: the app (PyInstaller onedir, without
 QtWebEngine until the viewer lands) with the pinned COLMAP and OpenMVS from
 [`tools/backends`](../backends/README.md) inside.
 
 ```sh
 tools/backends/build.sh            # or download the backends-Linux CI artifact
-uv run --group packaging python tools/packaging/build.py \
+uv run --group packaging python tools/packaging/build_appimage.py \
     --backends build/backends/ez2d-backends-linux-x86_64.tar.gz \
     --smoke path/to/photos         # optional: test the result
 ```
@@ -49,6 +49,33 @@ Earlier local build (Ubuntu 24.04 container, so not for distribution): 137 MB,
 with both bundled tools found at the pinned versions; the synthetic scene
 went through all nine steps with masks, to a GLB, in 69 s.
 
-Not done yet: the macOS `.app` with backends (the backend archive is
-relocatable already), code signing, AppStream metadata, and the viewer's
+Brush (the pinned release binary, for splats) is bundled next to the other
+backends with `--brush DIR`; the workflow does.
+
+## macOS app
+
+```sh
+uv run --group packaging python tools/packaging/build_macos.py \
+    --backends build/backends/ez2d-backends-macos-arm64.tar.gz \
+    --brush build/brush --smoke build/synthetic/images
+```
+
+PyInstaller builds `EZ2DIGITIZE.app` with the same entry point (the GUI, or
+the CLI: `EZ2DIGITIZE.app/Contents/MacOS/ez2digitize check`). The backends
+go into `Contents/Resources/backends`, not `Contents/Frameworks`: code
+signing treats everything in Frameworks as nested code and refuses plain
+files there. Their binaries are already ad-hoc signed by the backend build
+and find libomp through `@executable_path/../lib`. The whole app is then
+signed ad hoc and zipped with `ditto`. The
+[macOS app workflow](../../.github/workflows/macos-app.yml) builds it on
+Apple Silicon and runs the same smoke test as the AppImage.
+
+It is not notarized (that needs a paid Apple developer account, Phase 6),
+so a downloaded copy has to be un-quarantined once:
+
+```sh
+xattr -dr com.apple.quarantine EZ2DIGITIZE.app
+```
+
+Not done yet: notarization, AppStream metadata, and the viewer's
 QtWebEngine (about +140 MB, see the spike).

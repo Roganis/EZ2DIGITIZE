@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Build the EZ2DIGITIZE AppImage (Linux x86_64) with the backends inside.
 
-    uv run --group packaging python tools/packaging/build.py \\
+    uv run --group packaging python tools/packaging/build_appimage.py \\
         --backends build/backends/ez2d-backends-linux-x86_64.tar.gz
 
 Steps: PyInstaller onedir of the app (no QtWebEngine yet), the backend

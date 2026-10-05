@@ -30,12 +30,22 @@ class BackendMissing(BackendError):
 
 
 def bundled_bin_dir() -> Path | None:
-    """`backends/bin` inside a PyInstaller bundle, if running from one."""
+    """`backends/bin` inside a PyInstaller bundle, if running from one.
+
+    Linux (AppImage): `_internal/backends`. macOS (.app): `Contents/Resources/
+    backends`, outside `Contents/Frameworks` (which _MEIPASS points to),
+    because code signing treats everything there as nested code.
+    """
     base = getattr(sys, "_MEIPASS", None)
     if base is None:
         return None
-    candidate = Path(base) / "backends" / "bin"
-    return candidate if candidate.is_dir() else None
+    for candidate in (
+        Path(base) / "backends" / "bin",
+        Path(base).parent / "Resources" / "backends" / "bin",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def find_tool(

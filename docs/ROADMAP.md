@@ -213,7 +213,9 @@ fails, they can see which stage failed and why.
   bug reports (images only if the user opts in). Done
   (`ez2digitize.diagnostics`, Help → Export Diagnostics and a button after
   a failure, `ez2d diagnostics`); images are never included for now.
-- macOS `.app` build in CI, tested on the M1.
+- macOS `.app` build in CI, tested on the M1. Built and smoke-tested in CI
+  (`tools/packaging/build_macos.py`, macOS app workflow); testing on the M1
+  is yours.
 - **Phone upload over Wi-Fi.** An "Add photos from phone" dialog shows a QR
   code; the phone opens it in its browser and gets a small upload page served
   by the desktop app. The user picks the photos taken with the normal camera

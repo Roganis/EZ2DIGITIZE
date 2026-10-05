@@ -66,6 +66,7 @@ def test_progress() -> None:
     assert parse("evaluating every 1000 steps") is None
 
 
-def test_appimage_bundles_the_pinned_version() -> None:
-    workflow = Path(__file__).parents[2] / ".github" / "workflows" / "appimage.yml"
-    assert f"BRUSH_VERSION: v{brush.PINNED_VERSION}" in workflow.read_text()
+@pytest.mark.parametrize("workflow", ["appimage.yml", "macos-app.yml"])
+def test_packages_bundle_the_pinned_version(workflow: str) -> None:
+    path = Path(__file__).parents[2] / ".github" / "workflows" / workflow
+    assert f"BRUSH_VERSION: v{brush.PINNED_VERSION}" in path.read_text()

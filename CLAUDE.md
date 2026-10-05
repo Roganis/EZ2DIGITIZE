@@ -29,7 +29,8 @@ CI (`.github/workflows/ci.yml`) runs lint, format check, mypy and pytest on
 Linux and macOS with all dependency groups (`uv sync --all-groups`). Run all
 four before committing.
 
-The AppImage is built by `tools/packaging/build.py` (see its README).
+The AppImage is built by `tools/packaging/build_appimage.py`, the macOS app by
+`build_macos.py` (see their README).
 
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.

@@ -188,7 +188,9 @@ fails, they can see which stage failed and why.
   downscale, OpenMVS resolution level and splat count cap from them.
 - Full resume and invalidation of downstream stages when parameters change.
 - Quality presets (fast, balanced, high) mapped to concrete parameters, with
-  an "advanced" panel showing the actual values.
+  an "advanced" panel showing the actual values. Done (`ez2digitize.presets`;
+  GUI Quality plus an Advanced box, `ez2d run --quality`; the choice is
+  saved as the project's `preset`).
 - Error translation for common failures: too few registered images, several
   disconnected models (often "the two sides didn't connect"), out-of-memory,
   missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own

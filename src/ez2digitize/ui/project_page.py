@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Signal
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import video
+from ez2digitize import presets, video
 from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -125,10 +126,16 @@ class ProjectPage(QWidget):
         header.addWidget(self.import_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.import_video_button, 0, Qt.AlignmentFlag.AlignTop)
 
+        self.quality = QComboBox()
+        for quality in presets.QUALITIES:
+            self.quality.addItem(presets.LABELS[quality], quality)
+            self.quality.setItemData(
+                self.quality.count() - 1, presets.HINTS[quality], Qt.ItemDataRole.ToolTipRole
+            )
+        self.quality.setCurrentIndex(presets.QUALITIES.index(presets.parse_quality(project.preset)))
         self.detail = QComboBox()
         for label, level in DETAIL_LEVELS:
             self.detail.addItem(label, level)
-        self.detail.setCurrentIndex(1)
         self.detail.setToolTip("Image size used for the dense point cloud; High is slowest")
         self.export_formats = QComboBox()
         for label, formats in EXPORT_CHOICES:
@@ -150,11 +157,28 @@ class ProjectPage(QWidget):
         )
         settings_box = QGroupBox("Settings")
         form = QFormLayout(settings_box)
-        form.addRow("Detail:", self.detail)
+        form.addRow("Quality:", self.quality)
         form.addRow("Save as:", self.export_formats)
-        form.addRow(self.refine)
         form.addRow(self.use_masks)
         form.addRow("Video frames:", self.video_frames)
+        # Advanced: override the preset's dense detail and refinement, and see
+        # the values a run will use.
+        self.advanced = QGroupBox("Advanced: change the preset")
+        self.advanced.setCheckable(True)
+        self.advanced.setChecked(False)
+        advanced_form = QFormLayout(self.advanced)
+        advanced_form.addRow("Detail:", self.detail)
+        advanced_form.addRow(self.refine)
+        self.values = QLabel()
+        self.values.setWordWrap(True)
+        self.values.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        advanced_form.addRow(self.values)
+        form.addRow(self.advanced)
+        self.quality.currentIndexChanged.connect(self._show_values)
+        self.advanced.toggled.connect(self._show_values)
+        self.detail.currentIndexChanged.connect(self._show_values)
+        self.refine.toggled.connect(self._show_values)
+        self._show_values()
 
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
@@ -292,7 +316,7 @@ class ProjectPage(QWidget):
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
-        for widget in (self.detail, self.export_formats, self.refine, self.video_frames):
+        for widget in (self.quality, self.advanced, self.export_formats, self.video_frames):
             widget.setEnabled(not busy)
         self.photo_checks.set_locked(busy)
         self.use_masks.setEnabled(not busy and any(self.project.masks_dir.rglob("*.png")))
@@ -311,16 +335,40 @@ class ProjectPage(QWidget):
 
     # --- actions ------------------------------------------------------------
 
+    @property
+    def chosen_quality(self) -> presets.Quality:
+        return presets.parse_quality(str(self.quality.currentData()))
+
     def settings(self) -> MeshSettings:
-        level = int(self.detail.currentData())
-        return MeshSettings(
-            densify=openmvs.DensifyOptions(resolution_level=level),
-            refine=openmvs.RefineOptions(resolution_level=level)
-            if self.refine.isChecked()
-            else None,
+        """The preset, with the advanced panel's values if it is switched on."""
+        if self.advanced.isChecked():
+            settings = presets.mesh_settings(
+                self.chosen_quality,
+                level=int(self.detail.currentData()),
+                refine=self.refine.isChecked(),
+            )
+        else:
+            settings = presets.mesh_settings(self.chosen_quality)
+        return replace(
+            settings,
             export_formats=tuple(self.export_formats.currentData()),
             use_masks=self.use_masks.isChecked(),
         )
+
+    def _show_values(self) -> None:
+        if not self.advanced.isChecked():
+            # Show what the preset uses, as the starting point for changing it.
+            preset = presets.mesh_settings(self.chosen_quality)
+            for widget in (self.detail, self.refine):
+                widget.blockSignals(True)
+            levels = [level for _, level in DETAIL_LEVELS]
+            self.detail.setCurrentIndex(levels.index(preset.densify.resolution_level))
+            self.refine.setChecked(preset.refine is not None)
+            for widget in (self.detail, self.refine):
+                widget.blockSignals(False)
+        rows = presets.describe(self.settings())
+        self.values.setText("\n".join(f"{label}: {value}" for label, value in rows))
+        self.quality.setToolTip(presets.HINTS[self.chosen_quality])
 
     def choose_folder_to_import(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Import a folder of photos")
@@ -396,6 +444,9 @@ class ProjectPage(QWidget):
                 self._on_notice(
                     f"{name} {tool.version} found; {pinned} is the tested version, steps may fail"
                 )
+        if self.project.preset != self.chosen_quality:
+            self.project.preset = self.chosen_quality
+            self.project.save()
         self.runner.start(self.project, tools, self.settings())
 
     def cancel_run(self) -> None:

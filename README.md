@@ -33,7 +33,7 @@ uv run ez2d new ~/scans/skull
 uv run ez2d import ~/scans/skull ~/Pictures/skull   # --masks DIR to add masks
 uv run ez2d import ~/scans/skull ~/Videos/skull.mp4  # a video: --frames N (100)
 uv run ez2d photos ~/scans/skull --exclude Preview.jpg  # photo checks, leave out
-uv run ez2d run ~/scans/skull                       # --help for the options
+uv run ez2d run ~/scans/skull --quality fast        # fast, balanced (default), high
 uv run ez2d status ~/scans/skull
 uv run ez2d export ~/scans/skull --formats glb      # OBJ and GLB are exported after run
 ```

@@ -212,6 +212,11 @@ outputs.
   failed step's log with a button to open the full log.
 - `VideoImporter` (`ui/video_import.py`) runs a video import on a thread;
   the page shows its progress and its Cancel button stops it.
+- Settings: a Quality preset (`presets.py`: fast, balanced, high as full
+  `MeshSettings`), saved in `project.json`'s `preset`; an Advanced box
+  overrides the dense detail level and refinement and lists the values a
+  run will use (`presets.describe`). The CLI has `--quality` plus the same
+  single-value overrides.
 - `PhotoChecks` (`ui/photo_checks.py`), in a tab beside the log: inspects
   new photos on a thread, then lists findings with their photos; unchecking
   a photo leaves it out, a "Left out" group brings photos back.

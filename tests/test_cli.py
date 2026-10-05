@@ -7,6 +7,7 @@ import pytest
 
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.cli import main
+from ez2digitize.pipeline import Tools
 
 
 def test_new_import_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -135,3 +136,33 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {"new", "import", "photos", "run", "export", "check", "status"}
+
+
+def test_run_with_quality(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    fake_tools: Tools,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ez2digitize.backends import colmap, openmvs
+    from ez2digitize.core.project import Project
+
+    monkeypatch.setattr(colmap, "locate", lambda _path: fake_tools.colmap)
+    monkeypatch.setattr(openmvs, "locate", lambda _path: fake_tools.openmvs)
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for name in ("a.jpg", "b.jpg", "c.jpg"):
+        (photos / name).write_bytes(name.encode())
+    scan = str(tmp_path / "scan")
+    assert main(["new", scan]) == 0
+    assert main(["import", scan, str(photos)]) == 0
+    tools: list[str] = []
+    assert main(["run", scan, "--quality", "fast", "--export", "none", *tools]) == 0
+    out = capsys.readouterr().out
+    assert "quality: Fast" in out and "Dense point cloud: 1/4 size photos" in out
+    assert Project.open(Path(scan)).preset == "fast"
+    # The project remembers it; --level overrides one value.
+    assert main(["run", scan, "--level", "0", "--export", "none", *tools]) == 0
+    out = capsys.readouterr().out
+    assert "quality: Fast" in out and "Dense point cloud: full size photos" in out

@@ -23,10 +23,11 @@ import argparse
 import sys
 import threading
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO, cast
 
-from ez2digitize import video
+from ez2digitize import presets, video
 from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import photos
@@ -123,10 +124,18 @@ def _parser() -> argparse.ArgumentParser:
     part = run.add_mutually_exclusive_group()
     part.add_argument("--sparse-only", action="store_true", help="stop after camera poses")
     part.add_argument("--dense-only", action="store_true", help="only the OpenMVS stages")
+    run.add_argument(
+        "--quality",
+        choices=presets.QUALITIES,
+        help="preset: fast, balanced or high (default: the project's last, else balanced); "
+        "the options below override single values",
+    )
     run.add_argument("--max-image-size", type=int, help="COLMAP feature image size")
     run.add_argument("--mapper", choices=["global", "incremental"], default="global")
     run.add_argument("--level", type=int, help="OpenMVS resolution level (0 = full size)")
-    run.add_argument("--refine", action="store_true", help="run RefineMesh (slow)")
+    run.add_argument(
+        "--refine", action=argparse.BooleanOptionalAction, help="run RefineMesh (slow)"
+    )
     run.add_argument(
         "--export",
         type=_formats,
@@ -342,7 +351,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 f"stages may fail",
                 file=sys.stderr,
             )
-    settings = _settings(args)
+    quality = args.quality or presets.parse_quality(project.preset)
+    if project.preset != quality:
+        project.preset = quality
+        project.save()
+    settings = _settings(args, quality)
+    print(f"quality: {presets.LABELS[quality]}")
+    for label, value in presets.describe(settings):
+        print(f"  {label}: {value}")
     printer = _Printer(sys.stdout, verbose=args.verbose)
     cancel = CancelToken()
     outcome: list[SparseResult | MeshResult | BaseException] = []
@@ -420,22 +436,19 @@ def _formats(text: str) -> tuple[ExportFormat, ...]:
     return tuple(cast(ExportFormat, n) for n in names)
 
 
-def _settings(args: argparse.Namespace) -> MeshSettings:
+def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSettings:
+    settings = presets.mesh_settings(
+        quality, level=args.level, refine=args.refine, max_image_size=args.max_image_size
+    )
     threads = args.threads
-    features = colmap.FeatureOptions(threads=threads)
-    if args.max_image_size:
-        features = colmap.FeatureOptions(max_image_size=args.max_image_size, threads=threads)
-    densify = openmvs.DensifyOptions(threads=threads)
-    if args.level is not None:
-        densify = openmvs.DensifyOptions(resolution_level=args.level, threads=threads)
-    return MeshSettings(
-        features=features,
-        matching=None,
-        mapper=colmap.MapperOptions(kind=args.mapper, threads=threads),
-        densify=densify,
-        mesh=openmvs.MeshOptions(threads=threads),
-        refine=openmvs.RefineOptions(threads=threads) if args.refine else None,
-        texture=openmvs.TextureOptions(threads=threads),
+    return replace(
+        settings,
+        features=replace(settings.features, threads=threads),
+        mapper=replace(settings.mapper, kind=args.mapper, threads=threads),
+        densify=replace(settings.densify, threads=threads),
+        mesh=replace(settings.mesh, threads=threads),
+        refine=None if settings.refine is None else replace(settings.refine, threads=threads),
+        texture=replace(settings.texture, threads=threads),
         export_formats=args.export,
         use_masks=not args.no_masks,
     )

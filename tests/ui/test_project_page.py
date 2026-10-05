@@ -57,7 +57,7 @@ def test_import_enables_run(page: ProjectPage, photos: Path) -> None:
 
 def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
     page.import_folder(photos)
-    page.detail.setCurrentIndex(2)  # Low -> resolution level 2
+    page.quality.setCurrentIndex(0)  # Fast -> resolution level 2
     page.start_run()
     assert page.runner.running and not page.run_button.isEnabled()
     assert page.cancel_button.isEnabled()
@@ -202,3 +202,31 @@ def test_video_import_without_ffmpeg(
     page.import_video(_clip(tmp_path))
     assert not page.video_importer.running
     assert warnings and "Importing a video needs FFmpeg" in warnings[0]
+
+
+def test_quality_presets_and_advanced_values(page: ProjectPage) -> None:
+    assert page.chosen_quality == "balanced"
+    assert page.settings().densify.resolution_level == 1 and page.settings().refine is None
+    page.quality.setCurrentIndex(2)  # High
+    assert page.detail.currentText() == "High" and page.refine.isChecked()
+    assert "Refine mesh: yes, 1/2 size" in page.values.text()
+    # The advanced panel overrides the preset only while it is switched on.
+    page.advanced.setChecked(True)
+    page.refine.setChecked(False)
+    assert page.settings().refine is None and page.settings().densify.resolution_level == 0
+    page.advanced.setChecked(False)
+    assert page.settings().refine is not None and page.refine.isChecked()
+
+
+def test_quality_is_saved_with_the_project(
+    qtbot: QtBot, page: ProjectPage, photos: Path, fake_tools: Tools
+) -> None:
+    page.import_folder(photos)
+    page.quality.setCurrentIndex(0)
+    page.start_run()
+    _wait_idle(qtbot, page)
+    assert Project.open(page.project.root).preset == "fast"
+    reopened = ProjectPage(Project.open(page.project.root), lambda: fake_tools)
+    qtbot.addWidget(reopened)
+    assert reopened.chosen_quality == "fast"
+    assert reopened.photo_checks.wait()

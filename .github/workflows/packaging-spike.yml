@@ -1,0 +1,77 @@
+# Phase 1 packaging spike: build the AppImage (Linux) and .app (macOS) and
+# measure them. Run it from the Actions tab; it also runs on pull requests
+# that change the spike. Artifacts are kept for 7 days.
+name: Packaging spike
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/spikes/**"
+      - ".github/workflows/packaging-spike.yml"
+
+permissions:
+  contents: read
+
+env:
+  BRUSH_VERSION: v0.3.0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest supported Ubuntu runner: the AppImage requires the glibc of
+          # the machine it was built on (or newer).
+          - os: ubuntu-22.04
+            brush_asset: brush-app-x86_64-unknown-linux-gnu.tar.xz
+          - os: macos-latest  # Apple Silicon
+            brush_asset: brush-app-aarch64-apple-darwin.tar.xz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt and QtWebEngine system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 libnss3 libxcomposite1 libxdamage1 libxrandr2 \
+            libxtst6 libxkbfile1 libasound2 libxshmfence1 libgbm1 libxcb-cursor0
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Download Brush
+        run: |
+          curl -sSL -o brush.tar.xz \
+            "https://github.com/ArthurBrussee/brush/releases/download/${BRUSH_VERSION}/${{ matrix.brush_asset }}"
+          mkdir brush && tar xf brush.tar.xz -C brush
+          echo "BRUSH_BIN=$(find "$PWD/brush" -type f -name brush_app | head -1)" >> "$GITHUB_ENV"
+
+      - name: Fetch viewer libraries
+        run: uv run python tools/spikes/viewer/fetch_vendor.py
+
+      - name: Build and measure
+        run: uv run --group packaging python tools/spikes/packaging/build.py --brush "$BRUSH_BIN" --headless
+
+      - name: Required glibc (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          find build/packaging-spike/dist -type f -name '*.so*' -print0 \
+            | xargs -0 -n 50 objdump -T 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' \
+            | sort -t. -k2 -n -u | tail -1 | tee -a build/packaging-spike/report.md
+
+      - name: Summary
+        if: always()
+        run: cat build/packaging-spike/report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaging-spike-${{ runner.os }}
+          retention-days: 7
+          path: |
+            build/packaging-spike/report.*
+            build/packaging-spike/*.AppImage
+            build/packaging-spike/*-macos.zip

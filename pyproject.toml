@@ -7,11 +7,17 @@ license-files = ["LICENSE", "THIRD_PARTY_LICENSES"]
 requires-python = ">=3.12"
 dynamic = ["version"]
 dependencies = [
+    "pillow>=11.0",
+    "pillow-heif>=1.0",
     "PySide6>=6.8",
+    "segno>=1.6",
 ]
 
 [project.gui-scripts]
 ez2digitize = "ez2digitize.app:main"
+
+[project.scripts]
+ez2d = "ez2digitize.cli:main"
 
 [dependency-groups]
 dev = [
@@ -20,11 +26,15 @@ dev = [
     "pytest-qt>=4.4",
     "ruff>=0.8",
 ]
+# Phase 1 packaging spike (tools/spikes/packaging). Never shipped with the app.
+packaging = [
+    "pyinstaller>=6.11",
+]
 # Phase 1 benchmark tooling (tools/feasibility). Never shipped with the app.
 feasibility = [
     "numpy>=2.0",
-    "pillow>=11.0",
     "rembg[cpu]>=2.0.60",
+    "scipy>=1.13",
 ]
 
 [build-system]
@@ -66,12 +76,12 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests", "tools/feasibility"]
-mypy_path = "src:tools/feasibility"
+files = ["src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging"]
+mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["pytestqt.*", "rembg.*"]
+module = ["pytestqt.*", "rembg.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

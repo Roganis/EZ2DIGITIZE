@@ -18,6 +18,7 @@ M1 Mac with 8 GB (secondary, low end). Changes must not assume CUDA.
 ```sh
 uv sync                  # install everything (Python 3.12, from .python-version)
 uv run ez2digitize       # run the app
+uv run ez2d --help       # headless CLI: new, import, run, status
 uv run pytest            # tests (Qt runs offscreen, see tests/conftest.py)
 uv run ruff check        # lint;  --fix to autofix
 uv run ruff format       # format
@@ -27,6 +28,12 @@ uv run mypy              # strict type check of src/ and tests/
 CI (`.github/workflows/ci.yml`) runs lint, format check, mypy and pytest on
 Linux and macOS with all dependency groups (`uv sync --all-groups`). Run all
 four before committing.
+
+The AppImage is built by `tools/packaging/build_appimage.py`, the macOS app by
+`build_macos.py` (see their README).
+
+Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
+README holding its results; same rules as the benchmark tooling.
 
 Phase 1 benchmark tooling lives in `tools/feasibility/` (package
 `ez2d_bench`, CLI `bench.py`, needs `--group feasibility`). It is throwaway
@@ -44,9 +51,9 @@ when the tool is missing.
 2. **Qt stays in the UI.** Only `ez2digitize.ui` and `ez2digitize.app` may
    import PySide6 (enforced by ruff TID251). Everything else must run headless
    so the pipeline works from a CLI and in CI.
-3. **Every stage writes a manifest** (`stage.json`): backend name and version,
-   exact command line, parameters, input hashes, timing, exit code. Caching and
-   resume are decided from manifests only.
+3. **Every stage writes a manifest** (`stage.json`): backend name, version and
+   build (executable hash), exact command line, parameters, input hashes,
+   timing, exit code. Caching and resume are decided from manifests only.
 4. **Projects are versioned folders.** `project.json` has a `schema_version`;
    any format change bumps it and adds a migration.
 5. **Masks are first-class project data** and are passed to every stage that

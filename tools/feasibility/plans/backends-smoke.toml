@@ -1,0 +1,33 @@
+# Smoke test for the backend builds (.github/workflows/backends.yml): checks
+# that the harness works with the pinned COLMAP and OpenMVS versions on the
+# synthetic scene. Also answers two open questions: does COLMAP's global
+# mapper work, and does OpenMVS 2.4.0 export OBJ (2.3.0 crashed)?
+
+[dataset]
+name = "synthetic"
+images = "~/ez2d-data/synthetic/images"
+masks = "~/ez2d-data/synthetic/masks"
+
+[[colmap]]
+label = "masked-incremental"
+max_image_size = 1600
+masks = true
+
+[[colmap]]
+label = "masked-global"
+max_image_size = 1600
+masks = true
+mapper = "global"
+
+[[openmvs]]
+label = "lvl2-masked"
+source = "masked-incremental"
+resolution_level = 2
+masks = true
+
+[[openmvs]]
+label = "lvl2-masked-obj"
+source = "masked-incremental"
+resolution_level = 2
+masks = true
+texture_export = "obj"

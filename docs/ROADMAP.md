@@ -124,7 +124,9 @@ you will hit.
   macOS `.app`.
 - **Backend builds:** CI jobs that build pinned COLMAP and OpenMVS for Linux
   x86_64 and macOS arm64. Distro packages lag and differ in versions, so
-  don't rely on them.
+  don't rely on them. Done in `tools/backends/` (COLMAP 4.2.1, OpenMVS
+  v2.4.0, static vcpkg builds). COLMAP 4.2.1 also has a `HIP_ENABLED`
+  option for AMD GPUs through ROCm, worth a test build on the GRE.
 
 **Exit decision:** written yes/no on (a) OpenMVS on CPU is fast enough for
 small objects, and at which resolution level by default, (b) which masking
@@ -137,24 +139,48 @@ path is investigated separately.
 Photos or video of a small object in, a textured mesh out, inside a GUI,
 installable on Linux as an AppImage.
 
-- Project model: folder with `project.json`, `images/`, `masks/`, per-stage
-  output folders with manifests.
+- Project model: folder with `project.json`, `captures/` (capture bundles),
+  `masks/`, per-stage output folders with manifests. Done in
+  `ez2digitize.core` (`project`, `capture`, `stage`).
 - Import photos or video. Video: ffmpeg frame extraction, keeping the
-  sharpest frame per window rather than uniform sampling.
+  sharpest frame per window rather than uniform sampling. Done
+  (`ez2digitize.video`): 4 candidates per window, scored like the photo
+  checks; FFmpeg is the system's for now (bundling it is Phase 6).
 - Basic checks: resolution, EXIF focal length (missing EXIF is a warning,
   not an error), blur score relative to the rest of the set, mixed cameras.
+  Done (`ez2digitize.core.photos`, the GUI's photo checks tab, `ez2d
+  photos`), plus odd-sized files (a collage in the skull set), duplicates
+  and too few photos; flagged photos can be left out and brought back.
 - Automatic masking with the model chosen in Phase 1, with a quick review
   grid where the user can drop bad masks.
-- Camera grouping: one intrinsics set per camera/lens.
+- Camera grouping: one intrinsics set per camera/lens. Done: one per
+  capture as before, and when a capture mixes cameras, lenses, zoom
+  settings (beyond 5 %) or sizes, features are extracted with a camera per
+  photo and merged per group in the matching stage's copy of the database
+  (`colmap.merge_cameras`; checked against COLMAP: the merged database is
+  identical to single-camera extraction and maps).
 - Pipeline runner: subprocess stages with live logs, progress parsing,
   cancel, and **minimal caching** (skip a stage if its inputs and parameters
-  are unchanged).
+  are unchanged). Runner, manifests and caching done in `ez2digitize.core`
+  (`runner`, `stage`); COLMAP and OpenMVS modules with progress parsers in
+  `ez2digitize.backends`; the pipeline that chains them in
+  `ez2digitize.pipeline`, with a headless CLI (`ez2d`). Masks are warped to
+  the undistorted images and used by OpenMVS densification.
 - Stages: features (masked), matching (sequential for video, exhaustive
   for photo sets), mapping, undistortion, OpenMVS densify/mesh/texture.
+  Video frames are matched exhaustively up to 200, which closes the loop
+  of an orbit; sequentially beyond.
+- GUI: project page with import, settings, Run/Cancel, per-step progress,
+  log and failure details, driving the pipeline on a worker thread (done,
+  `ez2digitize.ui`).
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
-  user adjusts before densification.
-- Export OBJ (+MTL + textures) and GLB.
-- AppImage with pinned backend binaries.
+  user adjusts before densification. The automatic part exists: OpenMVS
+  estimates a region of interest from the sparse points and crops to it
+  (`--estimate-roi`, `--crop-to-roi`, on by default). Adjusting it needs
+  the viewer (decision (d) in Phase 1).
+- Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
+- AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
+  workflow): GUI and CLI in one file, backends bundled.
 
 **Done when:** a non-expert on a clean Linux machine with an AMD GPU
 installs the AppImage, drops in photos or a video of a small object, presses
@@ -168,17 +194,33 @@ fails, they can see which stage failed and why.
 - Hardware detection: GPU vendor and VRAM (enumerate adapters via
   Vulkan/wgpu rather than vendor tools), RAM, CPU cores; pick image
   downscale, OpenMVS resolution level and splat count cap from them.
+  Detection done (`ez2digitize.core.hardware`: `vulkaninfo`, sysfs VRAM for
+  amdgpu, `system_profiler` on macOS; RAM and cores in
+  `core.resources`), and feature threads are already capped by free memory.
+  Picking the default preset from it waits for the M1 numbers (Phase 1).
 - Full resume and invalidation of downstream stages when parameters change.
 - Quality presets (fast, balanced, high) mapped to concrete parameters, with
-  an "advanced" panel showing the actual values.
+  an "advanced" panel showing the actual values. Done (`ez2digitize.presets`;
+  GUI Quality plus an Advanced box, `ez2d run --quality`; the choice is
+  saved as the project's `preset`).
 - Error translation for common failures: too few registered images, several
   disconnected models (often "the two sides didn't connect"), out-of-memory,
-  missing backend.
+  missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
+  notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
-  viewable in the embedded viewer.
+  viewable in the embedded viewer. Done except masks and the viewer
+  (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
+  run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
+  renderers. Masking splats (Brush reads alpha) waits for the masking
+  decision; viewing waits for the viewer decision. Rotating splats upright
+  on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
-  bug reports (images only if the user opts in).
-- macOS `.app` build in CI, tested on the M1.
+  bug reports (images only if the user opts in). Done
+  (`ez2digitize.diagnostics`, Help → Export Diagnostics and a button after
+  a failure, `ez2d diagnostics`); images are never included for now.
+- macOS `.app` build in CI, tested on the M1. Built and smoke-tested in CI
+  (`tools/packaging/build_macos.py`, macOS app workflow); testing on the M1
+  is yours.
 - **Phone upload over Wi-Fi.** An "Add photos from phone" dialog shows a QR
   code; the phone opens it in its browser and gets a small upload page served
   by the desktop app. The user picks the photos taken with the normal camera
@@ -193,33 +235,65 @@ fails, they can see which stage failed and why.
   - Uploads land in a new capture bundle, with live progress on both sides.
   - Also a "watch folder" option for people who already sync their phone
     (Syncthing and similar).
+  - Done (`ez2digitize.upload`, "From phone…" in the GUI, `ez2d upload`):
+    token URL in a QR code (segno), LAN address only, private clients only,
+    4 MB chunks resumed after drops (tested in Chromium with a dropped
+    chunk), bit-for-bit originals in a new bundle. HEIC: on import (folder
+    or phone) a JPEG copy is made next to the original, which is kept and
+    left out (`core.heic`, pillow-heif). Not done: the watch folder (when
+    is a synced set complete?).
 
 ## Phase 4: Mesh quality for real-world use
 
 - **Scale:** set real-world size from a known distance between two picked
   points; then automatic scale from printed ArUco markers on the capture mat.
 - **Orientation:** up-axis alignment (`colmap model_orientation_aligner` or
-  fit to the mat plane) with manual adjust.
+  fit to the mat plane) with manual adjust. Automatic part done
+  (`ez2digitize.orientation`): up from the photos' down directions,
+  corrected for EXIF rotation (COLMAP reads pixels unrotated, and its
+  aligner maps gravity to +Y, upside down for glTF); exports stand upright,
+  centred, on the ground, Y-up for OBJ/GLB and Z-up for STL/3MF. Manual
+  adjust needs the viewer.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
 - Mesh cleanup: keep largest component, remove floaters, decimate to a
   target face count, hole filling and watertightness check for printing
-  (Open3D is MIT; PyMeshLab is GPL-3.0, both fine).
+  (Open3D is MIT; PyMeshLab is GPL-3.0, both fine). Done without a new
+  dependency: OpenMVS's ReconstructMesh already removes spurious components
+  and spikes, closes small holes and smooths (its defaults); a Mesh size
+  setting simplifies to a target face count in TextureMesh, before
+  texturing (`--faces`); the export checks watertightness (edges not shared
+  by exactly two faces). The skull's meshes come out closed.
 - Export STL and 3MF for printing (untextured; warn if not watertight),
-  PLY point cloud.
+  PLY point cloud. Done (`stl`, `3mf`, `points` export formats). Units are
+  the reconstruction's until the scale step exists.
 - License notice for OpenMVS (AGPL-3.0) and its dependencies (some CGAL
   components are GPL) in `THIRD_PARTY_LICENSES`, with a source offer for the
-  exact bundled versions.
+  exact bundled versions. Done: `THIRD_PARTY_LICENSES` lists what the apps
+  bundle (backends, GCC runtime, libomp) and says where their source is;
+  both packages carry it and LICENSE, shown under Help → Licenses (with the
+  bundled backends' versions and license folder) and by `ez2d licenses`.
+  Publishing the source archive with each release is Phase 6.
 
 ## Phase 5: UX and capture guidance
 
 - Unified embedded viewer for sparse cloud, splat and mesh.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
-  what to do with shiny objects (matte spray, cross-polarization).
+  what to do with shiny objects (matte spray, cross-polarization). Written
+  (docs/CAPTURE.md); to check against the Phase 1 captures.
 - Photo set health check: overlap estimate, coverage gaps shown on the
-  camera rings, warnings for blur and shiny/transparent subjects.
+  camera rings, warnings for blur and shiny/transparent subjects. Partly
+  done: blur is in the photo checks; after camera placement
+  `ez2digitize.coverage` reports gaps around the object (over 90°), photos
+  all from one height, photos placed far from the rest, photos not placed,
+  and the overlap estimate: photos with verified matches to fewer than two
+  others (notices in the log). Showing them on the rings needs the viewer; shiny/transparent
+  subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
+  The coverage check spots a camera that didn't move (all views within
+  10°) and says to mask the background; a dedicated mode waits for real
+  turntable captures and the masking decision.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
   Gaussian splatting extension.
 
@@ -229,11 +303,16 @@ fails, they can see which stage failed and why.
   Windows installer (community-tested).
 - Backend binaries bundled or auto-downloaded with SHA-256 checksums and
   pinned versions; source tarballs for every GPL/AGPL binary published with
-  each release.
+  each release. Bundled (AppImage, macOS app); the source archive is built
+  by `tools/backends/collect_sources.sh` (Backend sources workflow).
+  Attaching both to a release waits for the release process (versioning,
+  where releases live).
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,
-  sample datasets with explicit licenses.
+  sample datasets with explicit licenses. Written (docs/QUICKSTART.md,
+  CAPTURE.md, TROUBLESHOOTING.md, CONTRIBUTING.md); to revise against
+  release builds. Sample datasets wait for your own captures.
 - Release testing: AMD Linux and M1 by the maintainer; NVIDIA, Intel and
   Windows through a call for community testers before calling them
   supported.

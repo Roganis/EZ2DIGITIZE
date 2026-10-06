@@ -1,0 +1,93 @@
+# Build the EZ2DIGITIZE macOS app (Apple Silicon) with the pinned backends
+# inside, and test it like the AppImage: the GUI starts, `check` finds the
+# bundled tools, and a full pipeline run on the synthetic scene exports a GLB.
+#
+# The backends come from the newest Backends workflow run (this branch first,
+# then main) that uploaded a macOS archive; Brush from its pinned release
+# (keep in step with ez2digitize.backends.brush.PINNED_VERSION). The app is
+# signed ad hoc, not notarized: see tools/packaging/README.md.
+name: macOS app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tools/packaging/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/macos-app.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read  # to download the backend archive from the Backends workflow
+
+env:
+  BRUSH_VERSION: v0.3.0
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: macos-latest  # Apple Silicon
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Get the backend archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          for branch in "$BRANCH" main; do
+            for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow backends.yml \
+                           --branch "$branch" --limit 20 --json databaseId -q '.[].databaseId'); do
+              if gh run download "$run" -R "$GITHUB_REPOSITORY" -n backends-macOS -D artifact \
+                 && ls artifact/backends/ez2d-backends-macos-arm64.tar.gz; then
+                echo "backends from Backends run $run ($branch)" | tee -a "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              rm -rf artifact
+            done
+          done
+          echo "no Backends run with a macOS archive found" >&2
+          exit 1
+
+      - name: Get Brush
+        run: |
+          curl -sSLf -o brush.tar.xz \
+            "https://github.com/ArthurBrussee/brush/releases/download/${BRUSH_VERSION}/brush-app-aarch64-apple-darwin.tar.xz"
+          mkdir -p build/brush && tar xf brush.tar.xz -C build/brush --strip-components 1
+
+      - name: Synthetic test scene
+        run: uv run --group feasibility tools/feasibility/bench.py synth build/synthetic
+
+      - name: Build and test the app
+        run: |
+          uv run --group packaging python tools/packaging/build_macos.py \
+            --backends artifact/backends/ez2d-backends-macos-arm64.tar.gz \
+            --brush build/brush \
+            --smoke build/synthetic/images
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```json'
+            cat build/macos/report.json || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EZ2DIGITIZE-macOS
+          retention-days: 14
+          path: |
+            build/macos/*.zip
+            build/macos/report.json

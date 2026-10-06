@@ -1,0 +1,112 @@
+# Build pinned, CPU-only COLMAP and OpenMVS (tools/backends/build.sh) for
+# Linux x86_64 and macOS arm64, check them with the benchmark harness and the
+# app's own backend modules on the synthetic scene, and upload the packages
+# as artifacts.
+name: Backends
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/backends/**"
+      - "tools/feasibility/plans/backends-smoke.toml"
+      - ".github/workflows/backends.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/backends/**"
+      - ".github/workflows/backends.yml"
+
+permissions:
+  contents: read
+
+# One build per branch at a time. A new push waits for the running build
+# instead of cancelling it: most pushes don't touch the backends, and a
+# cancelled multi-hour build loses its compile progress. Only the newest
+# waiting run is kept, and it starts from the cache the first one saves.
+concurrency:
+  group: backends-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux: the oldest supported runner, because binaries need a glibc at
+        # least as new as the build machine's.
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gfortran nasm autoconf autoconf-archive automake \
+            libtool bison flex pkg-config zip unzip curl linux-libc-dev \
+            libgl-dev libglew-dev  # only to satisfy COLMAP's configure checks
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        # glew: only to satisfy COLMAP's configure checks
+        run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config libomp glew
+
+      # vcpkg's binary cache. Saved even when the build fails, so a failure late
+      # in a multi-hour build doesn't throw away the dependencies built so far.
+      - name: Restore vcpkg cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/backends/vcpkg-cache
+          key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: backends-vcpkg-${{ runner.os }}-
+
+      # Before the build, so the summary step can run even when the build fails.
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build
+        run: tools/backends/build.sh
+
+      - name: Save vcpkg cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: build/backends/vcpkg-cache
+          key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Smoke test with the benchmark harness
+        run: |
+          B="uv run --group feasibility tools/feasibility/bench.py"
+          $B synth ~/ez2d-data/synthetic
+          $B run tools/feasibility/plans/backends-smoke.toml --results build/smoke \
+            --machine "ci-${{ runner.os }}" \
+            --colmap build/backends/prefix/bin/colmap --openmvs-dir build/backends/prefix/bin
+
+      - name: App pipeline with the fresh builds
+        env:
+          EZ2D_COLMAP: build/backends/prefix/bin/colmap
+          EZ2D_OPENMVS_DIR: build/backends/prefix/bin
+          EZ2D_REQUIRE_BACKENDS: "1"
+        # The backend tests don't use Qt; without pytest-qt they also run on
+        # runners without the libraries Qt needs (libEGL on Ubuntu).
+        run: uv run --all-groups pytest tests/backends -rs -p no:pytest-qt
+
+      - name: Summary
+        if: always()
+        run: |
+          B="uv run --group feasibility tools/feasibility/bench.py"
+          $B report --results build/smoke --out build/smoke-report || true
+          cat build/backends/prefix/BUILDINFO.json >> "$GITHUB_STEP_SUMMARY" || true
+          cat build/smoke-report/*.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backends-${{ runner.os }}
+          retention-days: 14
+          path: |
+            build/backends/ez2d-backends-*.tar.gz
+            build/backends/prefix/BUILDINFO.json
+            build/smoke-report/

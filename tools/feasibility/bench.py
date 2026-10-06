@@ -83,6 +83,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    from ez2d_bench import evaluate
+
+    try:
+        result = evaluate.evaluate_project(
+            args.project, args.gt_mesh, args.gt_cameras, mesh=args.mesh, samples=args.samples
+        )
+    except evaluate.EvalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(result.markdown())
+    if args.out:
+        args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n")
+        print(f"wrote {args.out}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     if not args.results.is_dir():
         print(f"no results in {args.results}", file=sys.stderr)
@@ -150,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", nargs="+", metavar="LABEL", help="run only these labels")
     p.add_argument("--force", action="store_true", help="rerun runs that already succeeded")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("eval", help="measure a project's mesh and cameras against ground truth")
+    p.add_argument("project", type=Path, help="EZ2DIGITIZE project folder")
+    p.add_argument("--gt-mesh", type=Path, required=True, help="ground-truth mesh (.ply/.obj)")
+    p.add_argument("--gt-cameras", type=Path, required=True, help="ground_truth.json")
+    p.add_argument("--mesh", type=Path, help="evaluate this mesh instead of the project's")
+    p.add_argument("--samples", type=int, default=200_000, help="points sampled per surface")
+    p.add_argument("--out", type=Path, help="write the full report as JSON here")
+    p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("report", help="write Markdown/JSON summaries for docs/feasibility")
     p.add_argument("--results", type=Path, default=DEFAULT_RESULTS)

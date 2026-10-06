@@ -21,3 +21,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Viewer spike: vendored JS fetched by tools/spikes/viewer/fetch_vendor.py
+/tools/spikes/viewer/web/vendor/

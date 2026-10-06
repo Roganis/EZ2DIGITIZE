@@ -26,18 +26,68 @@ PySide6 / Shiboken6 (Qt for Python)
             modules that are GPL-3.0 only. Both are compatible with this
             project's license.
 
+Pillow
+  License:  MIT-CMU (HPND)
+  Source:   https://github.com/python-pillow/Pillow
+  Notes:    Photo checks (size, EXIF, sharpness; ez2digitize.core.photos).
+            Its wheels bundle (Linux, 12.x): libjpeg-turbo (IJG/BSD-3-Clause),
+            libpng (libpng), libtiff (libtiff), libwebp and libsharpyuv
+            (BSD-3-Clause), libavif (BSD-2-Clause), OpenJPEG (BSD-2-Clause),
+            FreeType (FTL), HarfBuzz (MIT), LittleCMS (MIT), Brotli (MIT),
+            zstd (BSD-3-Clause), liblzma (0BSD), libxcb and libXau (MIT).
+            Their license texts are in the wheel's dist-info/licenses.
+
+pillow-heif
+  License:  BSD-3-Clause (its code); the wheel bundles libheif and libde265
+            (LGPL-3.0) and x265 (GPL-2.0-or-later), so the binary wheel as a
+            whole is GPL; all compatible with GPL-3.0-or-later.
+  Source:   https://github.com/bigcat88/pillow_heif
+  Notes:    Decodes iPhone HEIC photos into JPEG copies on import
+            (ez2digitize.core.heic). License texts in its dist-info.
+
+segno
+  License:  BSD-3-Clause
+  Source:   https://github.com/heuer/segno
+  Notes:    QR codes for phone upload (pure Python, no dependencies).
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
 
-None are bundled yet. Planned (Phase 1 evaluates them):
+The AppImage and the macOS app bundle COLMAP and OpenMVS, built by
+tools/backends/build.sh with all their dependencies linked statically, and
+the Brush release binary. Their license texts are inside the app, in
+backends/licenses/ (the copyright file of every library linked in), and the
+app shows this file under Help -> Licenses.
 
-COLMAP          BSD-3-Clause        https://github.com/colmap/colmap
-OpenMVS         AGPL-3.0            https://github.com/cdcseacave/openMVS
-                (depends on CGAL, parts of which are GPL-3.0+)
-Brush           Apache-2.0          https://github.com/ArthurBrussee/brush
+COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
+OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
+                (depends on CGAL, parts of which are GPL-3.0+), with the
+                upstream fix in tools/backends/patches applied
+Brush 0.3.0     Apache-2.0          https://github.com/ArthurBrussee/brush
+                The release binary, unmodified, with its LICENSE under
+                backends/licenses/brush. Its Rust dependencies' notices are
+                not in the release; collecting them (cargo-about) is a Phase
+                6 release task.
+GCC runtime     GPL-3.0 with the GCC Runtime Library Exception
+                (libgomp, libgfortran, libquadmath; AppImage only, copied
+                from the build machine for the backends)
+libomp          Apache-2.0 with LLVM exceptions (macOS app only, Homebrew's)
 FFmpeg          LGPL-2.1+ or GPL-2.0+ depending on build configuration
                                     https://ffmpeg.org/
+                Used for video import (decoding, JPEG frames). Not bundled
+                yet: the user's installed FFmpeg is run as a process.
+
+
+Source for the bundled backends. COLMAP and OpenMVS in the apps are built
+from the tags, the vcpkg release and the patches pinned in
+tools/backends/build.sh, which records them in backends/BUILDINFO.json; all
+of it is in this repository and the upstream projects. Development builds
+(CI artifacts) point there. tools/backends/collect_sources.sh packs the
+exact corresponding source (both projects, the patches, vcpkg and every
+port's source archive; the Backend sources workflow builds it), and each
+release publishes that archive next to the binaries. Anyone who got a binary
+can also ask for it through the project's issue tracker.
 
 
 3. Development-only tools (never distributed)
@@ -50,13 +100,27 @@ pytest-qt       MIT
 ruff            MIT
 uv              MIT or Apache-2.0
 
+Viewer spike (tools/spikes/viewer; fetched by fetch_vendor.py, not committed).
+Would become bundled components if the web viewer is adopted:
+
+three.js        MIT                 https://github.com/mrdoob/three.js (0.186.1)
+Spark           MIT                 https://github.com/sparkjsdev/spark (2.3.1)
+
+Packaging spike (tools/spikes/packaging, "packaging" dependency group):
+
+PyInstaller     GPL-2.0-or-later with an exception allowing bundled apps
+                under any license (only its bootloader ends up in the app)
+appimagetool    MIT (downloaded at build time; adds the AppImage runtime,
+                also MIT)
+
 Phase 1 feasibility harness (tools/feasibility, "feasibility" dependency
 group). Never part of the app; listed because they run on contributors'
 machines:
 
 numpy           BSD-3-Clause
-Pillow          MIT-CMU (HPND)
+Pillow          (bundled with the app, see section 1)
 rembg           MIT
+scipy           BSD-3-Clause (k-d trees for the reconstruction evaluation)
 onnxruntime     MIT
 rembg models    downloaded at first use, licensed per model:
                 birefnet-general / -lite (BiRefNet)   MIT

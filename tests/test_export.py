@@ -188,3 +188,18 @@ def test_point_cloud_round_trip(tmp_path: Path) -> None:
     again = read_point_cloud(tmp_path / "out.ply")
     assert list(again.positions) == [1, 5, 0, 2, 5, 0] and again.colors == cloud.colors
     assert isinstance(again, PointCloud) and list(again.normals or array("f")) == [0, 1, 0] * 2
+
+
+def test_orientation_correction_is_used(built: Project) -> None:
+    from ez2digitize import upright
+
+    before = export_mesh(built, ["stl"], now=NOW)
+    upright.change(built, upright.tilted(upright.starting_point(built), "x"))
+    rotation = upright.rotation(built)
+    assert rotation is not None
+    after = export_mesh(built, ["stl"], now=NOW)
+    assert after[0].parent != before[0].parent  # not the export stood up the old way
+    info = json.loads((after[0].parent / "export.json").read_text())
+    assert info["upright"] == [list(row) for row in rotation]
+    assert info["placement"]["rotation"] == info["upright"]
+    assert export_mesh(built, ["stl"]) == after  # reused while nothing changes

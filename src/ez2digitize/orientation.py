@@ -124,6 +124,11 @@ class Placement:
 def place(positions: array[float], up: Vector | None) -> Placement:
     """Rotate `up` to +Y, centre on the vertical axis, lowest point at y = 0."""
     rotation = rotation_between(up, (0.0, 1.0, 0.0)) if up is not None else IDENTITY
+    return place_rotated(positions, rotation)
+
+
+def place_rotated(positions: array[float], rotation: Matrix) -> Placement:
+    """Rotate by `rotation` (model to upright), then centre and put on the ground."""
     turned = Placement(rotation, (0.0, 0.0, 0.0)).apply(positions)
     if not turned:
         return Placement(rotation, (0.0, 0.0, 0.0))

@@ -14,6 +14,11 @@ it, saves it to the project, and the next build keeps only what is inside.
 On the same views the scale is set (see ez2digitize.scale): "Pick two
 points", click them, type their real distance, "Set scale"; exports then
 come out in millimetres and metres.
+
+And the orientation (see ez2digitize.upright): which way is up comes from
+the photos; "Level" (three points on the surface the object stands on),
+the tip buttons (quarter turns) and "Turn" correct it, "Automatic" goes
+back to the estimate. The view reloads stood up the new way.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTemporaryDir
+from PySide6.QtCore import Qt, QTemporaryDir, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -35,9 +40,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import crop, scale, views
+from ez2digitize import crop, scale, upright, views
 from ez2digitize.core.project import Project
-from ez2digitize.orientation import Vector
+from ez2digitize.orientation import IDENTITY, Vector
 from ez2digitize.ui.viewer import ViewerWidget
 
 # The views drawn in the reconstruction's frame, where the box belongs (the
@@ -45,6 +50,7 @@ from ez2digitize.ui.viewer import ViewerWidget
 CROP_VIEWS = ("cameras", "dense")
 CROP_HINT = "Drag the yellow handles to move the box's faces. The next build keeps what is inside."
 PICK_HINT = "Click two points whose real distance you know (the ends of the object, say)."
+LEVEL_HINT = "Click three points, far apart, on the surface the object stands on."
 
 
 class ViewPanel(QWidget):
@@ -126,6 +132,47 @@ class ViewPanel(QWidget):
         scale_layout.addWidget(self.scale_hint, 1)
         self.scale_row.hide()
 
+        self.level = QPushButton("Level: pick 3 points")
+        self.level.setCheckable(True)
+        self.level.setToolTip("Make the surface the object stands on the ground")
+        self.level.toggled.connect(self._on_level_toggled)
+        self.tip_forward = QPushButton("Tip forward")
+        self.tip_forward.setToolTip("A quarter turn about the left-right axis")
+        self.tip_forward.clicked.connect(lambda: self._tilt("x"))
+        self.tip_sideways = QPushButton("Tip sideways")
+        self.tip_sideways.setToolTip("A quarter turn about the front-back axis")
+        self.tip_sideways.clicked.connect(lambda: self._tilt("z"))
+        self.turn = QDoubleSpinBox()
+        self.turn.setRange(-180.0, 180.0)
+        self.turn.setSingleStep(15.0)
+        self.turn.setSuffix("°")
+        self.turn.setWrapping(True)
+        self.turn.setKeyboardTracking(False)
+        self.turn.setToolTip("Turn about the vertical: which way the model faces in exports")
+        # Applied once the value rests: each change reloads the view.
+        self._turn_timer = QTimer(self)
+        self._turn_timer.setSingleShot(True)
+        self._turn_timer.setInterval(400)
+        self._turn_timer.timeout.connect(self._apply_turn)
+        self.turn.valueChanged.connect(self._on_turn_changed)
+        self.automatic_up = QPushButton("Automatic")
+        self.automatic_up.setToolTip("Back to the estimate from how the photos were held")
+        self.automatic_up.clicked.connect(lambda: self._orient(None))
+        self.orient_hint = QLabel()
+        self.orient_hint.setWordWrap(True)
+        self.orient_row = QWidget()
+        orient_layout = QHBoxLayout(self.orient_row)
+        orient_layout.setContentsMargins(0, 0, 0, 0)
+        orient_layout.addWidget(QLabel("Upright:"))
+        orient_layout.addWidget(self.level)
+        orient_layout.addWidget(self.tip_forward)
+        orient_layout.addWidget(self.tip_sideways)
+        orient_layout.addWidget(QLabel("Turn:"))
+        orient_layout.addWidget(self.turn)
+        orient_layout.addWidget(self.automatic_up)
+        orient_layout.addWidget(self.orient_hint, 1)
+        self.orient_row.hide()
+
         self.body = QVBoxLayout()
         self.body.addWidget(self.placeholder, 1)
         layout = QVBoxLayout(self)
@@ -133,6 +180,7 @@ class ViewPanel(QWidget):
         layout.addLayout(row)
         layout.addWidget(self.crop_row)
         layout.addWidget(self.scale_row)
+        layout.addWidget(self.orient_row)
         layout.addLayout(self.body, 1)
 
     def refresh(self, prefer: views.ViewKey | None = None) -> None:
@@ -192,6 +240,7 @@ class ViewPanel(QWidget):
             self.viewer.failed.connect(lambda message: self.status.setText(message))
             self.viewer.crop_changed.connect(self._on_crop_dragged)
             self.viewer.measured.connect(self._on_measured)
+            self.viewer.level_picked.connect(self._on_level_picked)
             self.body.addWidget(self.viewer, 1)
             self._sync_crop()
         return self.viewer
@@ -232,6 +281,7 @@ class ViewPanel(QWidget):
             shown = upright_box.to_dict() if (here and upright_box) else None
             self.viewer.set_crop_box(shown, editable=editable)
         self._sync_scale()
+        self._sync_orientation()
 
     def _save(self, upright_box: crop.UprightBox | None) -> None:
         run = crop.camera_run(self.project)
@@ -315,6 +365,11 @@ class ViewPanel(QWidget):
             self.viewer.set_measure(shown, label)
 
     def _on_pick_toggled(self, on: bool) -> None:
+        if on and self.level.isChecked():  # one picking at a time
+            self.level.blockSignals(True)
+            self.level.setChecked(False)
+            self.level.blockSignals(False)
+            self._sync_orientation()
         if self.viewer is None:
             return
         self.viewer.set_measuring(on)
@@ -363,3 +418,90 @@ class ViewPanel(QWidget):
         self._picked = None
         scale.save(self.project, None)
         self._sync_scale()
+
+    # --- the orientation --------------------------------------------------------
+
+    def _sync_orientation(self) -> None:
+        view = self._chosen()
+        here = view is not None and view.key in CROP_VIEWS
+        self.orient_row.setVisible(here)
+        editable = here and not self._locked and crop.camera_run(self.project) is not None
+        for widget in (self.level, self.tip_forward, self.tip_sideways, self.turn):
+            widget.setEnabled(editable)
+        manual = upright.current(self.project)
+        self.automatic_up.setEnabled(editable and upright.stored(self.project) is not None)
+        if not editable and self.level.isChecked():
+            self.level.setChecked(False)
+        if not self._turn_timer.isActive():
+            self.turn.blockSignals(True)
+            self.turn.setValue(manual.turn if manual is not None else 0.0)
+            self.turn.blockSignals(False)
+        if self.level.isChecked():
+            self.orient_hint.setText(LEVEL_HINT)
+        elif manual is not None:
+            self.orient_hint.setText("Corrected by hand; exports stand this way up.")
+        elif upright.stored(self.project) is not None:
+            self.orient_hint.setText(
+                "Corrected on an earlier camera placement; from the photos until set again."
+            )
+        elif upright.automatic(self.project) is not None:
+            self.orient_hint.setText("From how the photos were held.")
+        else:
+            self.orient_hint.setText("The photos don't say which way is up: level it.")
+
+    def _orient(self, orientation: upright.Orientation | None) -> None:
+        """Save a correction (None: automatic) and show the view stood up the new way."""
+        upright.change(self.project, orientation)
+        self.refresh()
+        view = self._chosen()
+        if self.viewer is not None and view is not None and self.isVisible():
+            self.viewer.show_view(view)  # same run, new upright rotation
+        self.status.setText("Orientation saved: exports stand this way up")
+
+    def _start(self) -> upright.Orientation | None:
+        try:
+            return upright.starting_point(self.project)
+        except upright.OrientationError:
+            return None
+
+    def _tilt(self, axis: str) -> None:
+        start = self._start()
+        if start is not None:
+            self._orient(upright.tilted(start, axis))
+
+    def _on_turn_changed(self, _value: float) -> None:
+        self._turn_timer.start()
+
+    def _apply_turn(self) -> None:
+        start = self._start()
+        if start is not None and abs(start.turn - self.turn.value()) > 1e-9:
+            self._orient(upright.turned(start, self.turn.value()))
+
+    def _on_level_toggled(self, on: bool) -> None:
+        if on and self.pick.isChecked():  # one picking at a time
+            self.pick.blockSignals(True)
+            self.pick.setChecked(False)
+            self.pick.blockSignals(False)
+        if self.viewer is not None:
+            self.viewer.set_picking(3 if on else 0, "level")
+        self._sync_orientation()
+
+    def _on_level_picked(self, event: dict[str, Any]) -> None:
+        self.level.blockSignals(True)
+        self.level.setChecked(False)
+        self.level.blockSignals(False)
+        try:
+            shown = [tuple(float(v) for v in p) for p in event["points"]]
+        except (KeyError, TypeError, ValueError):
+            shown = []
+        start = self._start()
+        centre = upright.camera_centre(self.project)
+        if len(shown) != 3 or any(len(p) != 3 for p in shown) or start is None or centre is None:
+            self._sync_orientation()
+            return
+        rotation = views.upright_rotation(self.project)
+        points = tuple(upright.mul_transposed(rotation or IDENTITY, p) for p in shown)  # type: ignore[arg-type]
+        try:
+            self._orient(upright.levelled(start, points, centre))  # type: ignore[arg-type]
+        except upright.OrientationError as exc:
+            self.orient_hint.setText(f"Not levelled: {exc}.")

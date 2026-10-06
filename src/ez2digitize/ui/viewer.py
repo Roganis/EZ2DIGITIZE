@@ -192,6 +192,8 @@ class ViewerWidget(QWidget):
     crop_changed = Signal(dict)
     # Two points picked for the scale: {"points": [[x, y, z], [x, y, z]]} (upright frame).
     measured = Signal(dict)
+    # Three points picked to level the model: {"points": [...]} (upright frame).
+    level_picked = Signal(dict)
 
     def __init__(self, cache: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -267,6 +269,11 @@ class ViewerWidget(QWidget):
         if AVAILABLE and self.is_ready:
             self.page.runJavaScript(f"ez2d.setMeasuring({json.dumps(on)})")
 
+    def set_picking(self, count: int, kind: str = "") -> None:
+        """Let the user pick `count` points ("level": three, reported by `level_picked`)."""
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript(f"ez2d.setPicking({count}, {json.dumps(kind)})")
+
     def set_measure(self, points: list[list[float]] | None, label: str = "") -> None:
         """Show two points (upright frame) joined by a line, with `label`; None hides them."""
         self._measure = (points, label)
@@ -308,6 +315,8 @@ class ViewerWidget(QWidget):
             self.crop_changed.emit(event)
         elif kind == "measure":
             self.measured.emit(event)
+        elif kind == "level":
+            self.level_picked.emit(event)
         elif kind in ("error", "console-error"):
             self.failed.emit(str(event.get("message", "unknown error")))
 

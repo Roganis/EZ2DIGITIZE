@@ -28,17 +28,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from ez2digitize import upright
 from ez2digitize.backends import brush
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
-from ez2digitize.core.capture import list_bundles
 from ez2digitize.core.files import FormatError, read_json_object
 from ez2digitize.core.meshio import MeshFormatError, read_openmvs_ply, write_glb
-from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import StageManifest, load_manifest
-from ez2digitize.orientation import Matrix, estimate_up, quaternion_matrix, rotation_between
-from ez2digitize.sides import upright_names
+from ez2digitize.orientation import Matrix, quaternion_matrix
 
 ViewKey = Literal["cameras", "dense", "mesh", "splat"]
 # How the page draws a view (viewer.js): GLB mesh, PLY points, splats, or
@@ -81,7 +79,7 @@ def available(project: Project) -> list[View]:
 
     texture = _succeeded(project, "texture")
     if texture is not None:
-        glb = _exported_glb(project, texture.run_id)
+        glb = _exported_glb(project, texture.run_id, up)
         if glb is not None:
             views["mesh"] = View("mesh", "glb", texture.run_id, glb, None, texture.finished)
         else:
@@ -223,22 +221,12 @@ def _dense_ply(project: Project) -> Path:
 
 
 def upright_rotation(project: Project) -> Matrix | None:
-    """The rotation that stands the reconstruction up (as the export does)."""
-    model = project.stage_dir("undistort") / "sparse"
-    if not (model / "images.bin").is_file():
-        return None
-    try:
-        bundles = list_bundles(project)
-        estimate = estimate_up(model, exif_orientations(bundles), upright_names(bundles))
-    except (OSError, ValueError, BackendError, FormatError):
-        return None
-    if estimate is None:
-        return None
-    return rotation_between(estimate.up, (0.0, 1.0, 0.0))
+    """The rotation that stands the reconstruction up (as the export does; see upright)."""
+    return upright.rotation(project)
 
 
-def _exported_glb(project: Project, run_id: str) -> Path | None:
-    """The newest GLB exported from this texture run, upright."""
+def _exported_glb(project: Project, run_id: str, up: Matrix | None) -> Path | None:
+    """The newest GLB exported from this texture run, stood upright the way it is now."""
     if not project.exports_dir.is_dir():
         return None
     for folder in sorted(project.exports_dir.iterdir(), reverse=True):
@@ -253,6 +241,7 @@ def _exported_glb(project: Project, run_id: str) -> Path | None:
             and source.get("run_id") == run_id
             and isinstance(names, list)
             and info.get("align", False)
+            and info.get("upright") == ([list(row) for row in up] if up else None)
         ):
             for name in names:
                 if str(name).endswith(".glb") and (folder / str(name)).is_file():

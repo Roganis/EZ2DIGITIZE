@@ -130,6 +130,30 @@ def to_upright(box: CropBox, upright: Matrix | None) -> UprightBox:
     return UprightBox(_mul(u, box.centre), box.half_size, round(yaw, 3))
 
 
+def relevelled(box: CropBox, upright: Matrix | None) -> CropBox:
+    """The level box around `box` in another upright frame (the orientation changed).
+
+    The viewer can only edit a box that is level; after the up direction
+    changes, the old box is tilted, so it is replaced by the smallest level
+    box that holds all of it.
+    """
+    u = upright or IDENTITY
+    to_world = _transpose(box.rotation)  # box axes to model coordinates
+    corners = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                local = (sx * box.half_size[0], sy * box.half_size[1], sz * box.half_size[2])
+                model = _add(box.centre, _mul(to_world, local))
+                corners.append(_mul(u, model))
+    low = [min(c[i] for c in corners) for i in range(3)]
+    high = [max(c[i] for c in corners) for i in range(3)]
+    centre = tuple((lo + hi) / 2 for lo, hi in zip(low, high, strict=True))
+    half = tuple(max((hi - lo) / 2, 1e-9) for lo, hi in zip(low, high, strict=True))
+    level = UprightBox(centre, half)  # type: ignore[arg-type]
+    return from_upright(level, upright, box.camera_run)
+
+
 def automatic(points: Sequence[Vector], upright: Matrix | None) -> UprightBox | None:
     """A starting box: where most sparse points are (upright frame), grown by 10 %."""
     if not points:
@@ -206,6 +230,10 @@ def _mul(m: Matrix, v: Vector) -> Vector:
         m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
         m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
     )
+
+
+def _add(a: Vector, b: Vector) -> Vector:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
 
 def _sub(a: Vector, b: Vector) -> Vector:

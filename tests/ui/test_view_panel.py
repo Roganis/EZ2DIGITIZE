@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 
-from ez2digitize import crop, scale, views
+from ez2digitize import crop, scale, upright, views
 from ez2digitize.backends.colmap import Colmap
 from ez2digitize.core.files import write_json_atomic
 from ez2digitize.core.project import Project
@@ -119,3 +119,56 @@ def test_scale_controls(qtbot: QtBot, project: Project) -> None:
     panel.set_locked(False)
     panel.clear_scale.click()
     assert scale.stored(project) is None and "Not set" in panel.scale_hint.text()
+
+
+def test_orientation_controls(qtbot: QtBot, project: Project) -> None:
+    panel = ViewPanel(project)
+    qtbot.addWidget(panel)
+    panel.refresh(prefer="cameras")
+    assert not panel.orient_row.isHidden() and panel.level.isEnabled()
+    assert "From how the photos were held" in panel.orient_hint.text()
+    assert not panel.automatic_up.isEnabled()
+    before = views.upright_rotation(project)
+    assert before is not None
+
+    panel.tip_forward.click()
+    manual = upright.current(project)
+    assert manual is not None and "Corrected by hand" in panel.orient_hint.text()
+    expected = upright.matmul(upright._axis_matrix("x", 90.0), before)
+    assert [v for r in manual.rotation for v in r] == pytest.approx(
+        [v for r in expected for v in r], abs=1e-9
+    )
+
+    panel.turn.setValue(45.0)
+    panel._apply_turn()  # what the timer does once the value rests
+    turned = upright.current(project)
+    assert turned is not None and turned.turn == 45.0
+
+    # Three points picked (upright frame) on a tilted plane: it becomes the ground.
+    shown = [[0.0, -2.0, 0.0], [1.0, -1.5, 0.0], [0.0, -2.0, 1.0]]  # below the camera
+    panel._on_level_picked({"points": shown})
+    rotation = upright.rotation(project)
+    assert rotation is not None
+    old = turned.rotation
+    model = [upright.mul_transposed(old, (p[0], p[1], p[2])) for p in shown]
+    heights = [upright.mul(rotation, p)[1] for p in model]
+    assert heights == pytest.approx([heights[0]] * 3)
+    centre = upright.camera_centre(project)
+    assert centre is not None and upright.mul(rotation, centre)[1] > heights[0]  # cameras above
+
+    panel.set_locked(True)
+    assert not panel.level.isEnabled() and not panel.tip_forward.isEnabled()
+    panel.set_locked(False)
+    panel.automatic_up.click()
+    assert upright.stored(project) is None and views.upright_rotation(project) == before
+
+
+def test_one_picking_at_a_time(qtbot: QtBot, project: Project) -> None:
+    panel = ViewPanel(project)
+    qtbot.addWidget(panel)
+    panel.refresh(prefer="cameras")
+    panel.level.setChecked(True)
+    panel.pick.setChecked(True)
+    assert not panel.level.isChecked()
+    panel.level.setChecked(True)
+    assert not panel.pick.isChecked()

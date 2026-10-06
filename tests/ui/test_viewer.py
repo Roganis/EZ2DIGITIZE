@@ -162,4 +162,13 @@ def test_picking_two_points(qtbot: QtBot, tmp_path: Path) -> None:
     widget.set_measure([first, second], "25 mm")
     label = call("document.getElementById('measure').textContent")
     assert label == "25 mm"
+
+    # Three points to level: reported as "level", the measured pair hidden meanwhile.
+    widget.set_picking(3, "level")
+    qtbot.wait(100)
+    call(click([0.0, 0.0, 4.0]))
+    call(click([0.0, 0.0, 5.0]))
+    with qtbot.waitSignal(widget.level_picked, timeout=TIMEOUT_MS) as picked:
+        call(click([0.0, 0.0, 4.0]))
+    assert picked.args is not None and len(picked.args[0]["points"]) == 3
     assert errors == []

@@ -272,7 +272,11 @@ fails, they can see which stage failed and why.
   corrected for EXIF rotation (COLMAP reads pixels unrotated, and its
   aligner maps gravity to +Y, upside down for glTF); exports stand upright,
   centred, on the ground, Y-up for OBJ/GLB and Z-up for STL/3MF. Manual
-  adjust needs the viewer.
+  adjust done (`ez2digitize.upright`; in the 3D view on the camera
+  placement or dense cloud: Level from three points on the mat or base, Tip
+  forward/sideways by quarter turns, Turn about the vertical, Automatic;
+  `ez2d orient`): the view, the exports and the mesh view all use it, and a
+  crop box is re-fitted level when it changes.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
   Done (`ez2digitize.sides`): a capture can be marked as turned over
@@ -310,7 +314,7 @@ fails, they can see which stage failed and why.
   frustum per photo), dense cloud, textured mesh (the upright GLB export,
   or OpenMVS's PLY converted) and splats, all stood upright; a finished
   build opens in it. The crop box and the scale are set in it (Phases 2
-  and 4). Next on top of it: manual orientation, coverage on the camera
+  and 4), and so is the orientation. Next on top of it: coverage on the camera
   rings.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and

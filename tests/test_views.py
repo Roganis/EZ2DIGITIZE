@@ -126,7 +126,12 @@ def test_mesh_from_the_upright_export(project: Project, tmp_path: Path) -> None:
     assert mesh.source == exported / "skull.glb" and mesh.upright is None
     assert views.files(mesh, tmp_path)["model"] == exported / "skull.glb"
 
-    # An export of an older run, or one left unaligned, isn't used.
+    # An export stood up another way (the orientation was corrected since) isn't used,
+    info["upright"] = [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+    (exported / "export.json").write_text(json.dumps(info))
+    assert views.available(project)[0].source == project.stage_dir("texture")
+    # nor one of an older run, or one left unaligned.
+    info["upright"] = None
     info["source"] = {"stage": "texture", "run_id": "t0"}
     (exported / "export.json").write_text(json.dumps(info))
     assert views.available(project)[0].source == project.stage_dir("texture")

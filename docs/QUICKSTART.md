@@ -42,7 +42,8 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    puts a box around the object; drag its yellow handles to fit, then
    Build mesh. For a model at its real size, measure two points on the
    object (its height, say) and, in the same view, press **Pick two
-   points**, click them, type the distance and press **Set scale**.
+   points**, click them, type the distance and press **Set scale**. If the
+   model lies tilted, **Level: pick 3 points** on the mat stands it up.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),

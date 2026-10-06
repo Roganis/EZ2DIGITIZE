@@ -134,8 +134,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "photos", "masks", "crop", "scale", "run", "export",
-        "check", "diagnostics", "licenses", "status",
+        "new", "import", "flip", "upload", "photos", "masks", "crop", "scale", "orient", "run",
+        "export", "check", "diagnostics", "licenses", "status",
     }  # fmt: skip
 
 
@@ -316,3 +316,34 @@ def test_scale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["scale", str(project), "--clear"]) == 0
     assert main(["scale", str(project)]) == 0
     assert "no scale" in capsys.readouterr().out
+
+
+def test_orient(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["orient", str(project), "--tilt", "x"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    assert main(["orient", str(project)]) == 0
+    assert "the photos don't say which way is up" in capsys.readouterr().out
+    assert main(["orient", str(project), "--tilt", "x", "--turn", "30"]) == 0
+    out = capsys.readouterr().out
+    assert "corrected, turned 30°; up is (0.000, 0.000, -1.000)" in out
+    level = ["--level", "0", "0", "0", "1", "0", "0", "0", "0", "1"]
+    assert main(["orient", str(project), *level]) == 1  # no cameras to tell the side
+    assert "has no cameras" in capsys.readouterr().err
+    assert main(["orient", str(project), "--auto"]) == 0
+    assert main(["orient", str(project)]) == 0
+    assert "the photos don't say" in capsys.readouterr().out

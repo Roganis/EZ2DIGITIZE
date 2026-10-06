@@ -248,6 +248,18 @@ up is +Y, centred on the vertical axis and put on the ground (Z-up for STL
 and 3MF); export.json records the transform. If the directions disagree
 (mean shorter than 0.5) the model's own frame is kept.
 
+The user can correct it (`upright.py`): a `base` rotation (levelled from
+three picked points, the plane's normal on the cameras' side, or tipped by
+quarter turns about the horizontal axes as seen) and a `turn` about the
+vertical, stored in project.json `settings["orientation"]` with the mapping
+run id, stale after a new camera placement like the crop box.
+`upright.rotation` (the correction, else the estimate) is the one rotation
+the viewer, the export and the mesh view use; export.json records it as
+`upright`, and it is part of what decides whether an earlier export (or
+its GLB, for the mesh view) can be reused. Changing it re-fits a crop box
+level around the old one (`crop.relevelled`); the scale is in
+reconstruction coordinates and stays.
+
 - The texture step always writes OpenMVS's textured PLY. Exporting
   converts it in-process (architecture rule 1 allows mesh export there) into
   `exports/<timestamp>/`: `obj/<name>.obj` + `.mtl` + texture images,

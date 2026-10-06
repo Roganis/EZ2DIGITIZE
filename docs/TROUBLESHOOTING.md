@@ -57,10 +57,15 @@ logs and settings, never your photos. The logs do contain file paths.
   photos (see the photo checks). Development builds before the OpenMVS fix
   of October 2026 gave black blobs and coloured specks: update, and run the
   project again (the texture step re-runs by itself).
-- **The model lies on its side.** The upright estimate comes from how the
-  photos were held; if the photos were taken at all angles it can't tell
-  and keeps the reconstruction's own frame (the "Stand the model upright"
-  setting turns this off entirely). Turn it in your 3D program.
+- **The model lies on its side, or is tilted.** The upright estimate comes
+  from how the photos were held; if the photos were taken at all angles it
+  can't tell and keeps the reconstruction's own frame. Correct it in the 3D
+  view (camera placement or dense cloud): **Level: pick 3 points** and click
+  three points far apart on the mat or the surface the object stands on;
+  or **Tip forward** / **Tip sideways** by quarter turns. **Turn** sets
+  which way it faces, **Automatic** goes back to the estimate. Export
+  again afterwards. (The "Stand the model upright" setting turns all of
+  this off.)
 - **Wrong size.** Photos alone don't give the size: set the scale in the 3D
   view (camera placement or dense cloud: Pick two points, then their real
   distance) and export again. STL and 3MF are then in millimetres, OBJ and

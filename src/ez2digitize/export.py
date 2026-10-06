@@ -32,8 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize.backends.common import BackendError
-from ez2digitize.core.capture import list_bundles
+from ez2digitize import upright
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
 from ez2digitize.core.meshio import (
     MeshFormatError,
@@ -47,12 +46,10 @@ from ez2digitize.core.meshio import (
     write_point_cloud,
     write_stl,
 )
-from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
-from ez2digitize.orientation import IDENTITY, Placement, estimate_up, place
+from ez2digitize.orientation import IDENTITY, Placement, place_rotated
 from ez2digitize.scale import current as current_scale
-from ez2digitize.sides import upright_names
 
 ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat"]
 FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
@@ -102,7 +99,9 @@ def export_mesh(
 
     scale = current_scale(project)
     mm_per_unit = scale.mm_per_unit if scale is not None else None
-    previous = _find_export(project.exports_dir, manifest.run_id, wanted, align, mm_per_unit)
+    rotation = upright.rotation(project) if align else None
+    rows = [list(row) for row in rotation] if rotation is not None else None
+    previous = _find_export(project.exports_dir, manifest.run_id, wanted, align, mm_per_unit, rows)
     if previous is not None:
         return previous
 
@@ -113,15 +112,19 @@ def export_mesh(
     folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
     name = _file_stem(project.name)
     files: list[Path] = []
-    info: dict[str, object] = {"align": align, "scale_mm_per_unit": mm_per_unit}
+    info: dict[str, object] = {
+        "align": align,
+        "scale_mm_per_unit": mm_per_unit,
+        "upright": rows,  # the rotation used: the user's correction or the estimate
+    }
     if mm_per_unit is not None:
         info["units"] = {"stl": "mm", "3mf": "mm", "obj": "m", "glb": "m", "points": "m"}
-    placement = _placement(project, mesh) if align else None
+    placement = place_rotated(mesh.positions, rotation) if rotation is not None else None
     if placement is not None:
         info["placement"] = placement.to_dict()
     elif align:
         info["placement"] = None  # the photos' orientations disagree: model frame kept
-    upright = _placed(mesh, _in_units(placement, mm_per_unit, UNIT_MM))
+    standing = _placed(mesh, _in_units(placement, mm_per_unit, UNIT_MM))
     if PRINT_FORMATS & set(wanted):
         closed = check_watertight(mesh)
         info["watertight"] = closed.watertight
@@ -129,9 +132,9 @@ def export_mesh(
         info["non_manifold_edges"] = closed.non_manifold_edges
     try:
         if "obj" in wanted:
-            files += write_obj(upright, folder / "obj", name)
+            files += write_obj(standing, folder / "obj", name)
         if "glb" in wanted:
-            files.append(write_glb(upright, folder / f"{name}.glb"))
+            files.append(write_glb(standing, folder / f"{name}.glb"))
         if "ply" in wanted:
             files += _copy_ply(source, mesh.textures, folder / "ply", name)
         if PRINT_FORMATS & set(wanted):
@@ -177,7 +180,7 @@ def export_splat(
     if manifest is None or not manifest.succeeded or not source.is_file():
         raise ExportError("there are no splats to export yet; train them first")
     formats: list[ExportFormat] = ["splat"]
-    previous = _find_export(project.exports_dir, manifest.run_id, formats, False, None)
+    previous = _find_export(project.exports_dir, manifest.run_id, formats, False, None, None)
     if previous is not None:
         return previous
     folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
@@ -229,19 +232,6 @@ def export_notes(files: list[Path]) -> list[str]:
     return notes
 
 
-def _placement(project: Project, mesh: TexturedMesh) -> Placement | None:
-    """Upright placement from the undistorted model's cameras; None if unsure."""
-    model = project.stage_dir("undistort") / "sparse"
-    if not (model / "images.bin").is_file():
-        return None
-    try:
-        bundles = list_bundles(project)
-        estimate = estimate_up(model, exif_orientations(bundles), upright_names(bundles))
-    except (OSError, ValueError, FormatError, BackendError):
-        return None
-    return place(mesh.positions, estimate.up) if estimate is not None else None
-
-
 def _in_units(
     placement: Placement | None, mm_per_unit: float | None, unit_mm: float
 ) -> Placement | None:
@@ -276,6 +266,7 @@ def _find_export(
     formats: list[ExportFormat],
     align: bool,
     mm_per_unit: float | None,
+    rotation: list[list[float]] | None,
 ) -> list[Path] | None:
     if not exports.is_dir():
         return None
@@ -291,6 +282,7 @@ def _find_export(
             and info.get("formats") == formats
             and info.get("align", False) == align
             and info.get("scale_mm_per_unit") == mm_per_unit
+            and info.get("upright") == rotation
         ):
             files = [folder / str(name) for name in info.get("files", [])]
             if files and all(f.is_file() for f in files):

@@ -14,6 +14,7 @@
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d crop ~/scans/skull --auto          # crop box around the sparse points
     ez2d scale ~/scans/skull --distance 42  # the picked points are 42 mm apart
+    ez2d orient ~/scans/skull --tilt x      # it lay on its side: a quarter turn
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
     ez2d check                              # which COLMAP and OpenMVS are used
@@ -35,7 +36,18 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import crop, diagnostics, licenses, masks, presets, scale, sides, video, views
+from ez2digitize import (
+    crop,
+    diagnostics,
+    licenses,
+    masks,
+    presets,
+    scale,
+    sides,
+    upright,
+    video,
+    views,
+)
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -223,6 +235,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     size.add_argument("--clear", action="store_true", help="no scale: arbitrary units")
     size.set_defaults(func=_cmd_scale)
+
+    orient = sub.add_parser(
+        "orient",
+        help="which way the model stands (the export's up and facing)",
+        description="Without options: show the orientation. By default it comes from how "
+        "the photos were held; these correct it, after camera placement. Points are in the "
+        "upright frame the 3D view shows (Y up). A crop box is re-fitted level.",
+    )
+    orient.add_argument("project", type=Path)
+    how = orient.add_mutually_exclusive_group()
+    how.add_argument("--auto", action="store_true", help="back to the estimate from the photos")
+    how.add_argument(
+        "--level",
+        nargs=9,
+        type=float,
+        metavar="V",
+        help="three points (x y z each) on the surface the object stands on",
+    )
+    how.add_argument(
+        "--tilt",
+        choices=("x", "-x", "z", "-z"),
+        help="a quarter turn about a horizontal axis (- turns the other way)",
+    )
+    orient.add_argument("--turn", type=float, metavar="DEG", help="degrees about the vertical")
+    orient.set_defaults(func=_cmd_orient)
 
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
@@ -658,6 +695,45 @@ def _cmd_scale(args: argparse.Namespace) -> int:
     print(f"  points {shown}")
     if scale.current(project) is None:
         print("  picked on an earlier camera placement: not used until set again")
+    return 0
+
+
+def _cmd_orient(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.auto:
+        upright.change(project, None)
+        print("orientation: back to the estimate from the photos")
+    elif args.level is not None or args.tilt is not None or args.turn is not None:
+        try:
+            start = upright.starting_point(project)
+            if args.level is not None:
+                v = args.level
+                shown = start.rotation
+                points = tuple(
+                    upright.mul_transposed(shown, (v[i], v[i + 1], v[i + 2])) for i in (0, 3, 6)
+                )
+                centre = upright.camera_centre(project)
+                if centre is None:
+                    raise upright.OrientationError("the camera placement has no cameras")
+                start = upright.levelled(start, points, centre)  # type: ignore[arg-type]
+            if args.tilt is not None:
+                start = upright.tilted(start, args.tilt[-1], -90.0 if "-" in args.tilt else 90.0)
+            if args.turn is not None:
+                start = upright.turned(start, args.turn)
+        except upright.OrientationError as exc:
+            raise PipelineError(str(exc)) from exc
+        upright.change(project, start)
+    manual = upright.current(project)
+    rotation = upright.rotation(project)
+    if rotation is None:
+        print("orientation: the photos don't say which way is up; the reconstruction's own frame")
+    else:
+        up = upright.mul_transposed(rotation, (0.0, 1.0, 0.0))
+        source = f"corrected, turned {manual.turn:g}°" if manual is not None else "from the photos"
+        print(f"orientation: {source}; up is ({', '.join(f'{v:.3f}' for v in up)}) in the "
+              "reconstruction's coordinates")  # fmt: skip
+    if manual is None and upright.stored(project) is not None:
+        print("  a correction made on an earlier camera placement is not used")
     return 0
 
 

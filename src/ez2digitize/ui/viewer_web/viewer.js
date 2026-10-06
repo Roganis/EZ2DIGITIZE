@@ -30,7 +30,7 @@ try {
   const nothing = () => {};
   window.ez2d = {
     show: nothing, clear: nothing, setCropBox: nothing, frameCropBox: nothing,
-    setMeasuring: nothing, setMeasure: nothing,
+    setPicking: nothing, setMeasuring: nothing, setMeasure: nothing,
   };
   report("ready", { webgl: false, gpu: null, error: String(err && err.message ? err.message : err) });
   throw err;
@@ -382,18 +382,19 @@ function endDrag(event) {
 renderer.domElement.addEventListener("pointerup", endDrag);
 renderer.domElement.addEventListener("pointercancel", endDrag);
 
-// --- Measuring: two points for the real-world scale ---------------------------
+// --- Picking points: two for the scale, three to level -----------------------
 //
-// While measuring, a click (not a drag, which turns the view) picks the
-// point of the cloud nearest the mouse ray; the second pick reports both
-// ("measure" event, upright frame) and ends measuring. The app answers with
-// setMeasure(points, label) to keep showing them with the distance.
+// While picking, a click (not a drag, which turns the view) picks the point
+// of the cloud nearest the mouse ray. Once `count` points are picked they
+// are reported (a "measure" or "level" event, upright frame) and picking
+// ends. For the scale the app answers with setMeasure(points, label) to keep
+// showing the two points with their distance.
 
 const measureGroup = new THREE.Group();
 measureGroup.visible = false;
 scene.add(measureGroup);
 const measureColor = 0x81c995;
-const markers = [0, 1].map(() => {
+const markers = [0, 1, 2].map(() => {
   const marker = new THREE.Mesh(handleGeometry, new THREE.MeshBasicMaterial({ color: measureColor, depthTest: false }));
   marker.renderOrder = 2;
   marker.visible = false;
@@ -409,7 +410,8 @@ measureGroup.add(measureLine);
 const measureLabel = document.getElementById("measure");
 const help = document.getElementById("help");
 const HELP = help.textContent;
-let measuring = false;
+let pickCount = 0; // 0: not picking
+let pickKind = "";
 let picks = [];
 let pressedAt = null;
 
@@ -419,14 +421,17 @@ function layoutMeasure(label = "") {
     marker.visible = i < picks.length;
     if (marker.visible) marker.position.copy(picks[i]);
   });
-  measureLine.visible = picks.length === 2;
-  if (picks.length === 2) measureLine.geometry.setFromPoints(picks);
+  // Two points: the distance; three: the triangle of the ground plane.
+  measureLine.visible = picks.length >= 2;
+  if (picks.length >= 2) {
+    measureLine.geometry.setFromPoints(picks.length === 3 ? [...picks, picks[0]] : picks);
+  }
   measureLabel.textContent = label;
   measureLabel.style.display = picks.length === 2 && label ? "block" : "none";
 }
 
 function placeMeasureLabel() {
-  if (picks.length < 2 || measureLabel.style.display !== "block") return;
+  if (picks.length !== 2 || measureLabel.style.display !== "block") return;
   const middle = picks[0].clone().add(picks[1]).multiplyScalar(0.5).project(camera);
   const rect = renderer.domElement.getBoundingClientRect();
   measureLabel.style.left = `${rect.left + ((middle.x + 1) / 2) * rect.width}px`;
@@ -461,11 +466,11 @@ function pickPoint(event) {
 }
 
 renderer.domElement.addEventListener("pointerdown", (event) => {
-  if (measuring && event.button === 0) pressedAt = [event.clientX, event.clientY];
+  if (pickCount && event.button === 0) pressedAt = [event.clientX, event.clientY];
 });
 
 renderer.domElement.addEventListener("pointerup", (event) => {
-  if (!measuring || !pressedAt || event.button !== 0) return;
+  if (!pickCount || !pressedAt || event.button !== 0) return;
   const moved = Math.hypot(event.clientX - pressedAt[0], event.clientY - pressedAt[1]);
   pressedAt = null;
   if (moved > 4) return; // a drag turned the view
@@ -473,24 +478,37 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   if (!point) return;
   picks = [...picks, point];
   layoutMeasure();
-  if (picks.length === 2) {
-    setMeasuring(false);
-    report("measure", { points: picks.map((p) => p.toArray()) });
+  if (picks.length === pickCount) {
+    const kind = pickKind;
+    setPicking(0);
+    report(kind, { points: picks.map((p) => p.toArray()) });
   }
 });
 
-function setMeasuring(on) {
-  measuring = Boolean(on);
-  renderer.domElement.style.cursor = measuring ? "crosshair" : "";
-  help.textContent = measuring ? "Click two points of the model whose real distance you know" : HELP;
-  if (measuring) {
+const PICK_HELP = {
+  measure: "Click two points of the model whose real distance you know",
+  level: "Click three points on the surface the object stands on, far apart",
+};
+
+// count: how many points to pick (0 stops); kind: "measure" or "level".
+function setPicking(count, kind = "") {
+  pickCount = count;
+  pickKind = kind;
+  renderer.domElement.style.cursor = count ? "crosshair" : "";
+  help.textContent = count ? PICK_HELP[kind] ?? `Click ${count} points` : HELP;
+  if (count) {
     picks = [];
     layoutMeasure();
   }
 }
 
+function setMeasuring(on) {
+  setPicking(on ? 2 : 0, "measure");
+}
+
 window.ez2d = {
-  // Pick two points (see above); setMeasuring(false) stops without them.
+  // Pick points (see above); setPicking(0) or setMeasuring(false) stops.
+  setPicking,
   setMeasuring,
   // points: two [x, y, z] in the upright frame, or null to hide them.
   setMeasure(points, label = "") {
@@ -538,7 +556,7 @@ window.ez2d = {
   clear() {
     showing++;
     clear();
-    setMeasuring(false);
+    setPicking(0);
     picks = [];
     layoutMeasure();
     if (grid) scene.remove(grid);

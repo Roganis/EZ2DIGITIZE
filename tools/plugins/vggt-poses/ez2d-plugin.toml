@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Camera placement with VGGT (Meta, CVPR 2025): every camera predicted in one
+# pass, no feature matching. Install it, then run install_vggt.py in its
+# folder once (README.md).
+api = 1
+id = "vggt-poses"
+name = "VGGT camera placement"
+version = "1.0.0"
+provides = "poses"
+description = "Cameras and depth predicted by VGGT in one pass; needs a GPU and its own Python environment."
+homepage = "https://github.com/facebookresearch/vggt"
+command = [
+    "bin/run",
+    "--images", "{captures}",
+    "--image-list", "{image_list}",
+    "--output", "{output}",
+]
+gpu = true
+
+[progress]
+pattern = 'step (\d+) of (\d+)'
+message = "Placing the cameras (VGGT)"
+
+[[license]]
+covers = "plugin code"
+spdx = "GPL-3.0-or-later"
+file = "LICENSE.txt"
+
+[[license]]
+covers = "VGGT code"
+spdx = "LicenseRef-VGGT"
+file = "VGGT-LICENSE.txt"
+
+[[license]]
+covers = "model weights, VGGT-1B-Commercial (install_vggt.py --weights commercial)"
+spdx = "LicenseRef-VGGT"
+file = "VGGT-LICENSE.txt"
+
+[[license]]
+covers = "model weights, VGGT-1B (install_vggt.py --weights research)"
+spdx = "CC-BY-NC-4.0"
+file = "CC-BY-NC-4.0.txt"

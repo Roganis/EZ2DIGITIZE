@@ -1,0 +1,6 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Runs the plugin with the Python environment install_vggt.py made.
+here=$(dirname "$0")/..
+exec "$here/.venv/bin/python" "$here/vggt_poses.py" "$@"

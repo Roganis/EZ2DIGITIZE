@@ -62,6 +62,9 @@ output and the log go there. Cancelling stops the whole process group.
 
 [`tools/plugins/example-poses`](../tools/plugins/example-poses) is a
 working plugin to start from.
+[`tools/plugins/vggt-poses`](../tools/plugins/vggt-poses) is a real one: it
+places the cameras with VGGT, a neural network under its own licenses,
+in a Python environment of its own (see its README).
 
 ```toml
 api = 1                          # this format; required

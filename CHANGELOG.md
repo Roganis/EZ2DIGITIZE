@@ -65,6 +65,8 @@ The first release.
   model weights for non-commercial use only): camera placement or splat
   training by a program you install, with its licenses shown and accepted
   first (Settings → Plugins, `ez2d plugins`). See docs/PLUGINS.md.
+- A VGGT plugin (tools/plugins/vggt-poses): cameras placed by Meta's VGGT
+  network in one pass, on a GPU, under VGGT's own licenses.
 
 ### Packages
 

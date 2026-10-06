@@ -411,6 +411,12 @@ fails, they can see which stage failed and why.
 - Feed-forward pose estimation (VGGT, MASt3R-SfM and similar) as optional
   plugins. Most are PyTorch/CUDA-first (ROCm on Linux may work) and several
   carry non-commercial licenses, so they must not be bundled.
+  VGGT done as a plugin (`tools/plugins/vggt-poses`: GPL glue, VGGT and
+  its weights installed by the user under their licenses, shown before use).
+  Its COLMAP model is checked with real COLMAP (model_analyzer, the
+  undistorter); a run of VGGT itself on a GPU, and how it compares on the
+  Phase 1 datasets, wait for the reference machines. MASt3R-SfM (CC-BY-NC)
+  could follow the same way.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
 - Android capture companion, sending capture bundles through the Phase 3

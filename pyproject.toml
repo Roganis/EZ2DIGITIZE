@@ -83,16 +83,19 @@ files = [
     "src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging", "tools/viewer",
     "tools/plugins",
 ]
-mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging"
+mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging:tools/plugins/vggt-poses"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "pupil_apriltags.*", "pytestqt.*", "rembg.*", "scipy.*"]
+module = [
+    "onnxruntime.*", "pupil_apriltags.*", "pytestqt.*", "rembg.*", "scipy.*",
+    "torch.*", "vggt.*",  # the VGGT plugin's own environment (tools/plugins/vggt-poses)
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools/feasibility", "tools/packaging"]
+pythonpath = ["tools/feasibility", "tools/packaging", "tools/plugins/vggt-poses"]
 qt_api = "pyside6"
 # A test stuck this long prints every thread's stack, so a hang in CI shows
 # where it is.

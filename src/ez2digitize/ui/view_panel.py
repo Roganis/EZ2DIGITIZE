@@ -38,10 +38,12 @@ from typing import Any
 from PySide6.QtCore import Qt, QTemporaryDir, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -51,7 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import coverage, crop, scale, upright, views
+from ez2digitize import coverage, crop, markers, scale, upright, views
 from ez2digitize.core.project import Project
 from ez2digitize.orientation import IDENTITY, Vector
 from ez2digitize.ui.viewer import ViewerWidget
@@ -148,6 +150,22 @@ class ViewPanel(QWidget):
         self.clear_scale = QPushButton("Clear")
         self.clear_scale.setToolTip("No scale: exports in the reconstruction's arbitrary units")
         self.clear_scale.clicked.connect(self._on_clear_scale)
+        self.from_markers = QPushButton("From markers")
+        self.from_markers.setToolTip(
+            "Measure the printed scale markers in the photos (found by itself after camera "
+            "placement, unless a scale was set by hand)"
+        )
+        self.from_markers.clicked.connect(self._on_from_markers)
+        self.marker_size = QDoubleSpinBox()
+        self.marker_size.setRange(5.0, 200.0)
+        self.marker_size.setDecimals(1)
+        self.marker_size.setSuffix(" mm")
+        self.marker_size.setValue(markers.project_size(project))
+        self.marker_size.setToolTip("The markers' black squares as printed: measure one")
+        self.marker_size.valueChanged.connect(self._on_marker_size)
+        self.sheet = QPushButton("Marker sheet…")
+        self.sheet.setToolTip("Save the sheet of markers to print (A4, SVG)")
+        self.sheet.clicked.connect(self.save_marker_sheet)
         self.scale_hint = QLabel()
         self.scale_hint.setWordWrap(True)
         self.scale_row = QWidget()
@@ -158,6 +176,10 @@ class ViewPanel(QWidget):
         scale_layout.addWidget(self.distance)
         scale_layout.addWidget(self.set_scale)
         scale_layout.addWidget(self.clear_scale)
+        scale_layout.addWidget(QLabel("or"))
+        scale_layout.addWidget(self.from_markers)
+        scale_layout.addWidget(self.marker_size)
+        scale_layout.addWidget(self.sheet)
         scale_layout.addWidget(self.scale_hint, 1)
 
         self.level = QPushButton("Level: pick 3 points")
@@ -243,8 +265,11 @@ class ViewPanel(QWidget):
         self.choice.setCurrentIndex(keys.index(wanted) if wanted else 0 if keys else -1)
         self.choice.blockSignals(False)
         self.choice.setEnabled(bool(keys))
-        if (current := scale.current(self.project)) is not None:
+        if (current := scale.current(self.project)) is not None and current.source == "points":
             self.distance.setValue(current.distance_mm)
+        self.marker_size.blockSignals(True)
+        self.marker_size.setValue(markers.project_size(self.project))
+        self.marker_size.blockSignals(False)
         self.placeholder.setVisible(not keys and self.viewer is None)
         if self.isVisible():
             self._show_chosen()
@@ -418,7 +443,9 @@ class ViewPanel(QWidget):
         current = scale.current(self.project)
         self.pick.setEnabled(editable)
         self.distance.setEnabled(editable)
-        self.set_scale.setEnabled(editable and (self._picked is not None or current is not None))
+        self.from_markers.setEnabled(editable)
+        by_hand = current is not None and current.source == "points"
+        self.set_scale.setEnabled(editable and (self._picked is not None or by_hand))
         self.clear_scale.setEnabled(editable and scale.stored(self.project) is not None)
         if (not editable or self.tool != "scale") and self.pick.isChecked():
             self.pick.setChecked(False)
@@ -475,7 +502,7 @@ class ViewPanel(QWidget):
             return
         if self._picked is not None:
             points = scale.from_upright(self._picked, views.upright_rotation(self.project))
-        elif (current := scale.current(self.project)) is not None:
+        elif (current := scale.current(self.project)) is not None and current.source == "points":
             points = current.points  # a corrected distance for the same points
         else:
             return
@@ -487,6 +514,44 @@ class ViewPanel(QWidget):
         self._picked = None
         self._sync_scale()
         self.status.setText("Scale saved: exports are in millimetres (STL, 3MF) and metres")
+
+    def _on_from_markers(self) -> None:
+        run = crop.camera_run(self.project)
+        if run is None:
+            return
+        size = self.marker_size.value()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            found = markers.measure_project(self.project, size)
+        except markers.MarkerError as exc:
+            found = None
+            self.scale_hint.setText(f"Not set: {exc}.")
+        finally:
+            QApplication.restoreOverrideCursor()
+        if found is None:
+            if not self.scale_hint.text().startswith("Not set:"):
+                self.scale_hint.setText("No markers found in the photos.")
+            return
+        self._picked = None
+        scale.save(self.project, markers.to_scale(found, size, run))
+        self._sync_scale()
+        self.status.setText("Scale saved from the markers: exports are in real units")
+
+    def _on_marker_size(self, value: float) -> None:
+        self.project.settings[markers.SIZE_SETTING] = value
+        self.project.save()
+
+    def save_marker_sheet(self, target: Path | None = None) -> Path | None:
+        if target is None:
+            chosen, _ = QFileDialog.getSaveFileName(
+                self, "Save the marker sheet", str(Path.home() / "scale-markers.svg"), "SVG (*.svg)"
+            )
+            if not chosen:
+                return None
+            target = Path(chosen)
+        target.write_text(markers.sheet_svg(self.marker_size.value()), encoding="utf-8")
+        self.status.setText(f"Saved {target.name}: print it at 100 % (no fit to page)")
+        return target
 
     def _on_clear_scale(self) -> None:
         self._picked = None

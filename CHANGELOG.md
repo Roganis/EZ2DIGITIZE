@@ -36,7 +36,8 @@ The first release.
   - Coverage on the camera rings: where photos are missing, and the photos
     that matched few others.
   - A crop box: the dense cloud and mesh keep only what is inside.
-  - Real-world scale from two picked points and their measured distance.
+  - Real-world scale from two picked points and their measured distance, or
+    by itself from a printed sheet of markers in the photos.
   - Upright: which way is up comes from how the photos were held, or is
     set by hand (level on three points, tip, turn).
 

@@ -53,7 +53,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
      matched few others in orange. Take more photos there.
    - **Crop box** keeps the table out of the model: **Use a crop box**
      puts a box around the object; drag its yellow handles to fit.
-   - **Scale** gives the model its real size: measure two points on the
+   - **Scale** gives the model its real size. If you photographed it on
+     the printed marker sheet (**Marker sheet…** here; see the capture
+     guide), that is done already. Otherwise measure two points on the
      object (its height, say), press **Pick two points**, click them, type
      the distance and press **Set scale**.
    - **Upright**: if the model lies tilted, **Level: pick 3 points** on the

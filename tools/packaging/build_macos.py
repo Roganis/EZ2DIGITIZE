@@ -29,6 +29,7 @@ import tarfile
 from pathlib import Path
 
 from build_appimage import (
+    CTYPES_PACKAGES,
     EXCLUDED_MODULES,
     REPO,
     VIEWER_DATA,
@@ -57,6 +58,8 @@ def pyinstaller_app(out: Path) -> Path:
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd += ["--add-data", VIEWER_DATA]
+    for package in CTYPES_PACKAGES:
+        cmd += ["--collect-binaries", package]
     cmd.append(Path(__file__).resolve().parent / "entry.py")
     run(cmd)
     # Named EZ2DIGITIZE directly: macOS file systems ignore case, so a rename

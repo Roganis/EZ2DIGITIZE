@@ -11,6 +11,7 @@ dependencies = [
     "onnxruntime>=1.20",
     "pillow>=11.0",
     "pillow-heif>=1.0",
+    "pupil-apriltags>=1.0.4.post11",
     "PySide6>=6.8",
     "segno>=1.6",
 ]
@@ -83,7 +84,7 @@ mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packag
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "pytestqt.*", "rembg.*", "scipy.*"]
+module = ["onnxruntime.*", "pupil_apriltags.*", "pytestqt.*", "rembg.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

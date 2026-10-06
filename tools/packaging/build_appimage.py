@@ -69,6 +69,9 @@ EXCLUDED_MODULES = (
     "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtCharts",
     "PySide6.QtDataVisualization",
 )  # fmt: skip
+# Packages whose native library is loaded with ctypes, which PyInstaller doesn't
+# see: their binaries are collected explicitly (the marker detector's libapriltag).
+CTYPES_PACKAGES = ("pupil_apriltags",)
 # The viewer's page and JavaScript libraries: package data, which PyInstaller
 # doesn't collect by itself. Same place in the bundle as in the source tree.
 VIEWER_WEB = REPO / "src" / "ez2digitize" / "ui" / "viewer_web"
@@ -110,6 +113,8 @@ def pyinstaller(out: Path) -> Path:
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd += ["--add-data", VIEWER_DATA]
+    for package in CTYPES_PACKAGES:
+        cmd += ["--collect-binaries", package]
     cmd.append(HERE / "entry.py")
     run(cmd)
     return out / "dist" / NAME
@@ -251,6 +256,12 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
         new: list[str | Path] = [image, "new", project]
         for cmd in (new, imp):
             print(output(cmd, env=env))
+        # The marker sheet: drawn by the marker detector's library (ctypes, collected
+        # by hand), which the pipeline would otherwise only use if markers were found.
+        sheet = Path(scratch) / "markers.svg"
+        print(output([image, "markers", sheet], env=env))
+        if not sheet.is_file() or "<rect" not in sheet.read_text(encoding="utf-8"):
+            raise SystemExit("the marker sheet was not written (marker library missing?)")
         # Automatic masks: downloads the model through the app (HTTPS from the
         # frozen Python), then runs ONNX Runtime in the masking worker. The
         # imported masks stay; the run below uses those.

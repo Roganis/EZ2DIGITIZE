@@ -269,7 +269,13 @@ fails, they can see which stage failed and why.
   placement or dense cloud: Pick two points, the real distance, Set scale;
   `ez2d scale`): STL and 3MF export in millimetres, OBJ, GLB and the point
   cloud in metres. Checking against a caliper-measured object (see Testing)
-  waits for a capture; ArUco markers are next.
+  waits for a capture. Printed markers done (`ez2digitize.markers`; AprilTag
+  tag36h11 instead of ArUco: OpenCV's wheels bundle OpenSSL 1.1.1, not
+  GPL-compatible, while AprilTag is BSD and 4.5 MB): a printable A4 sheet
+  (`ez2d markers`, Marker sheet… in the Scale tool), and after camera
+  placement the scale is set from the markers found, unless one was set by
+  hand (then they are compared). On a rendered sheet the scale comes out
+  within 0.1 %; a real capture is still to come.
 - **Orientation:** up-axis alignment (`colmap model_orientation_aligner` or
   fit to the mat plane) with manual adjust. Automatic part done
   (`ez2digitize.orientation`): up from the photos' down directions,

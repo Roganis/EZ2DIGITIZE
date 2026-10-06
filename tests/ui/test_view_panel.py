@@ -212,3 +212,29 @@ def test_coverage_tool(qtbot: QtBot, project: Project) -> None:
     # (Up comes from the photos, tilted a little by the half ring.)
     assert text.startswith("Photos by height: 24 at ") and ", 12 at " in text
     assert "Gaps in the rings" in text
+
+
+def test_scale_from_markers(qtbot: QtBot, tmp_path: Path) -> None:
+    from models import marker_scene
+
+    project = Project.create(tmp_path / "markers")
+    _succeed(project, "mapping", "m1")
+    undistort = _succeed(project, "undistort", "u1")
+    truth = marker_scene(undistort / "sparse", undistort / "images")
+    panel = ViewPanel(project)
+    qtbot.addWidget(panel)
+    panel.refresh(prefer="cameras")
+    panel.choose_tool("scale")
+    assert panel.from_markers.isEnabled() and panel.marker_size.value() == 30.0
+
+    panel.marker_size.setValue(33.0)  # measured on the print
+    assert project.settings["marker_size_mm"] == 33.0
+    panel.from_markers.click()
+    current = scale.current(project)
+    assert current is not None and current.source == "markers"
+    assert current.mm_per_unit == pytest.approx(truth * 1.1, rel=0.005)
+    assert "4 marker(s) of 33 mm" in panel.scale_hint.text()
+    assert not panel.set_scale.isEnabled()  # nothing picked by hand to correct
+
+    sheet = panel.save_marker_sheet(tmp_path / "sheet.svg")
+    assert sheet is not None and "should measure 33 mm" in sheet.read_text()

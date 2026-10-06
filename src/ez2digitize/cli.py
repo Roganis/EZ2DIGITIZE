@@ -40,6 +40,7 @@ from ez2digitize import (
     crop,
     diagnostics,
     licenses,
+    markers,
     masks,
     presets,
     scale,
@@ -103,6 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PipelineError,
         ExportError,
         masks.MaskingError,
+        markers.MarkerError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -257,7 +259,36 @@ def _parser() -> argparse.ArgumentParser:
         "--distance", type=float, metavar="MM", help="their real distance, in millimetres"
     )
     size.add_argument("--clear", action="store_true", help="no scale: arbitrary units")
+    size.add_argument(
+        "--markers",
+        action="store_true",
+        help="from the printed markers in the photos (see `ez2d markers`), replacing a scale "
+        "set by hand; found after camera placement anyway, unless one was",
+    )
+    size.add_argument(
+        "--marker-size",
+        type=float,
+        metavar="MM",
+        help=f"the markers' black squares as printed (default {markers.DEFAULT_SIZE_MM:g}; "
+        "remembered for the project)",
+    )
     size.set_defaults(func=_cmd_scale)
+
+    sheet = sub.add_parser(
+        "markers",
+        help="write the printable sheet of scale markers (SVG, A4)",
+        description="Print it at 100 %, put the object in the middle, and take the photos: "
+        "after camera placement the scale is set from the markers.",
+    )
+    sheet.add_argument("output", type=Path, help="the SVG file to write")
+    sheet.add_argument(
+        "--size",
+        type=float,
+        default=markers.DEFAULT_SIZE_MM,
+        metavar="MM",
+        help=f"the markers' black squares (default {markers.DEFAULT_SIZE_MM:g})",
+    )
+    sheet.set_defaults(func=_cmd_markers)
 
     orient = sub.add_parser(
         "orient",
@@ -718,6 +749,20 @@ def _cmd_scale(args: argparse.Namespace) -> int:
         scale.save(project, None)
         print("scale removed: exports are in the reconstruction's own units")
         return 0
+    if args.marker_size is not None:
+        if not args.marker_size > 0:
+            raise PipelineError("the marker size must be more than 0 mm")
+        project.settings[markers.SIZE_SETTING] = args.marker_size
+        project.save()
+    if args.markers:
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        size_mm = markers.project_size(project)
+        found = markers.measure_project(project, size_mm)
+        if found is None:
+            raise PipelineError("no scale markers found in the photos (see `ez2d markers`)")
+        scale.save(project, markers.to_scale(found, size_mm, placement))
     upright = views.upright_rotation(project)
     if args.points is not None or args.distance is not None:
         if args.distance is None:
@@ -730,7 +775,7 @@ def _cmd_scale(args: argparse.Namespace) -> int:
             points = scale.from_upright(((a[0], a[1], a[2]), (b[0], b[1], b[2])), upright)
         else:
             picked = scale.current(project)
-            if picked is None:
+            if picked is None or picked.source != "points":
                 raise PipelineError("pick two points first (3D view, or --points)")
             points = picked.points
         try:
@@ -747,6 +792,12 @@ def _cmd_scale(args: argparse.Namespace) -> int:
     print(f"  points {shown}")
     if scale.current(project) is None:
         print("  picked on an earlier camera placement: not used until set again")
+    return 0
+
+
+def _cmd_markers(args: argparse.Namespace) -> int:
+    args.output.write_text(markers.sheet_svg(args.size), encoding="utf-8")
+    print(f"wrote {args.output}: print it at 100 % (the line on it measures 100 mm)")
     return 0
 
 

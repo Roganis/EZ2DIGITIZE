@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage, crop, scale, sides
+from ez2digitize import coverage, crop, markers, scale, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -436,6 +436,8 @@ def _sparse(
     undistorted = run(
         colmap.undistort(sfm, project, mapping, model=model, options=settings.undistort)
     )
+    if (note := markers.auto_scale(project)) is not None:
+        run.emit(Notice(note))
     warped = None
     if masks is not None:
         try:

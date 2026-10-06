@@ -448,6 +448,22 @@ ray into the cloud: of the points near the front-most hit, the one closest
 to the ray) and converts them back; `ez2d scale` sets the points and the
 distance, or just a corrected distance for the same points.
 
+Markers (`markers.py`): AprilTag tag36h11 squares printed at a known size
+(the black square; the sheet carries a 100 mm line to check the print).
+After undistort, `auto_scale` looks for them in the undistorted photos
+(pinhole cameras: a corner projects as K [R | t] X) with AprilTag (in
+process; quads found at half resolution, edges refined at full, about
+0.2 s for 12 MP), first in 8 photos spread over the set, stopping there if
+none has a marker. Each corner seen in two or more photos is triangulated
+(DLT, then again without views that reproject it more than 2 px off); the
+printed size over each marker edge's length is an estimate, and the
+median of them all is the scale, their median deviation the check (over
+2 % gives a warning). It is stored as a Scale with `source: "markers"`:
+the edge closest to the median, stretched to it. A scale picked by hand
+on the same camera placement is kept (the markers are compared with it in
+a notice). The sheet is drawn from the library's own code table and bit
+layout (its `apriltag_to_image` draws a shifted border in this version).
+
 Splat path (Phase 3) branches after `undistort`:
 
 ```

@@ -15,6 +15,11 @@ photos.
   textured cloth. It gives COLMAP points to lock onto around the object,
   which helps most with plain objects. It gets reconstructed too; the
   object is still the part in focus.
+- **For real size: the marker sheet** (3D view → Scale → Marker sheet…, or
+  `ez2d markers sheet.svg`). Print it at 100 % and check the 100 mm line;
+  if a black square isn't 30 mm, measure one and enter that as the marker
+  size. Put the object in the middle. It doubles as a patterned mat, and
+  the model comes out at its real size by itself.
 - **A plain or blurred background beyond the mat** is fine. Don't let
   people or things move in the background between photos.
 - **Fill the frame** with the object (and a bit of mat): two-thirds of the

@@ -53,6 +53,17 @@ segno
   Source:   https://github.com/heuer/segno
   Notes:    QR codes for phone upload (pure Python, no dependencies).
 
+pupil-apriltags (with the AprilTag 3 library)
+  License:  MIT (the Python binding); BSD-2-Clause (AprilTag, (C) 2013-2015
+            The Regents of The University of Michigan)
+  Source:   https://github.com/pupil-labs/apriltags
+            (AprilTag: https://github.com/AprilRobotics/apriltag)
+  Notes:    Finds the printed scale markers (tag36h11) in the photos and
+            draws them for the printable sheet (ez2digitize.markers). Chosen
+            over OpenCV's ArUco detector: OpenCV's Linux wheels bundle
+            OpenSSL 1.1.1, whose license isn't GPL-compatible. License text
+            in its dist-info.
+
 ONNX Runtime
   License:  MIT
   Source:   https://github.com/microsoft/onnxruntime

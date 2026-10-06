@@ -69,12 +69,15 @@ logs and settings, never your photos. The logs do contain file paths.
   **Turn** sets which way it faces, **Automatic** goes back to the estimate.
   Export again afterwards. (The "Stand the model upright" setting turns all
   of this off.)
-- **Wrong size.** Photos alone don't give the size: set the scale in the 3D
-  view (camera placement or dense cloud, the Scale tool: Pick two points,
+- **Wrong size.** Photos alone don't give the size: photograph the object on
+  the printed marker sheet (see the capture guide), or set the scale in the
+  3D view (camera placement or dense cloud, the Scale tool: Pick two points,
   then their real distance) and export again. STL and 3MF are then in
   millimetres, OBJ and GLB in metres (some programs assume other units on
   import: a model 1000 times too small or large is that). Measure a long
-  distance: an error of half a millimetre over 10 mm is 5 % of the size.
+  distance: an error of half a millimetre over 10 mm is 5 % of the size. If
+  the scale came from the markers, check the printed size: measure a black
+  square and give that as the marker size (Scale tool), then From markers.
 - **"The scale was set on an earlier camera placement".** As with the crop
   box: the cameras were placed again, so pick the two points again.
 

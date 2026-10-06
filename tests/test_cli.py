@@ -134,8 +134,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale", "orient",
-        "run", "export", "check", "diagnostics", "licenses", "status",
+        "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale",
+        "markers", "orient", "run", "export", "check", "diagnostics", "licenses", "status",
     }  # fmt: skip
 
 

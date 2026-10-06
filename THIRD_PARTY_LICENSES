@@ -24,7 +24,10 @@ PySide6 / Shiboken6 (Qt for Python)
   Source:   https://code.qt.io/cgit/pyside/pyside-setup.git/
   Notes:    Bundles Qt 6 libraries, which are LGPL-3.0 except for some add-on
             modules that are GPL-3.0 only. Both are compatible with this
-            project's license.
+            project's license. The 3D viewer uses Qt WebEngine (LGPL-3.0),
+            which contains Chromium and its third-party components (mostly
+            BSD-style, MIT, Apache-2.0, LGPL; listed in Qt's documentation,
+            "Qt WebEngine Licensing", and chrome://credits).
 
 Pillow
   License:  MIT-CMU (HPND)
@@ -66,6 +69,21 @@ NumPy
   Notes:    Arrays for the masking worker. Its Linux wheels bundle OpenBLAS
             (BSD-3-Clause) and libgfortran/libquadmath (GPL-3.0 with the GCC
             Runtime Library Exception); license texts in its dist-info.
+
+three.js 0.186.1 (JavaScript, vendored in ez2digitize/ui/viewer_web/vendor)
+  License:  MIT
+  Source:   https://github.com/mrdoob/three.js (npm package "three")
+  Notes:    The 3D viewer's renderer, with its OrbitControls, PLYLoader,
+            GLTFLoader, BufferGeometryUtils, SkeletonUtils and Pass add-ons.
+            License text in vendor/three/LICENSE; pinned by npm integrity hash
+            (tools/viewer/fetch_vendor.py, vendor/VENDOR.json).
+
+Spark 2.3.1 (JavaScript, vendored in ez2digitize/ui/viewer_web/vendor)
+  License:  MIT
+  Source:   https://github.com/sparkjsdev/spark (npm "@sparkjsdev/spark")
+  Notes:    Gaussian splat rendering in the viewer. Its bundle includes
+            fflate (MIT) and a WebAssembly module built from Spark's own
+            code. License text in vendor/spark/LICENSE.
 
 The masking model is not bundled: it is downloaded on first use into the
 user's cache and checked against a pinned sha256 (ez2digitize.masks):
@@ -127,11 +145,8 @@ pytest-qt       MIT
 ruff            MIT
 uv              MIT or Apache-2.0
 
-Viewer spike (tools/spikes/viewer; fetched by fetch_vendor.py, not committed).
-Would become bundled components if the web viewer is adopted:
-
-three.js        MIT                 https://github.com/mrdoob/three.js (0.186.1)
-Spark           MIT                 https://github.com/sparkjsdev/spark (2.3.1)
+Viewer spike (tools/spikes/viewer; fetched by its fetch_vendor.py, not
+committed): the same three.js and Spark versions the app bundles (section 1).
 
 Packaging spike (tools/spikes/packaging, "packaging" dependency group):
 

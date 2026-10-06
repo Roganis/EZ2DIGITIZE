@@ -80,7 +80,7 @@ one 1024x1024 image through each model:
 | (a) OpenMVS on CPU fast enough for small objects? Default resolution level? | | |
 | (b) Masking model and runtime | ISNet (`isnet-general-use`, Apache-2.0) on ONNX Runtime, CPU, in a worker process; downloaded on first use (179 MB, pinned sha256). GPU execution providers (ROCm/MIGraphX, CoreML) not needed at 1-1.5 s per photo | Masking section above; the skull turntable set |
 | (c) Python packaging acceptable? | Likely yes: AppImage 144 MB without viewer, 285 MB with, 0.3-0.4 s to a window ([spike](../../tools/spikes/packaging/README.md)); size is dominated by Brush and QtWebEngine, not Python. Still to check: the macOS `.app` on the M1 | |
-| (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); on the GRE a 2M-face textured mesh and a 3.5M-splat scene both run at 60 fps on the GPU from the AppImage (still camera). Still to measure: orbiting, the M1, memory | |
+| (d) Viewer approach | three.js + Spark in QWebEngineView, adopted (ui/viewer.py). On the GRE a 2M-face textured mesh and a 3.5M-splat scene both run at 60 fps on the GPU from the AppImage (still camera). Still to measure: orbiting, the M1, memory | [spike](../../tools/spikes/viewer/README.md); QtWebEngine adds about 140 MB to the AppImage |
 
 ## Pinned backend builds (CI)
 

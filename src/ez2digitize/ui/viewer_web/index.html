@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EZ2DIGITIZE viewer</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #26282b; }
+    canvas { display: block; }
+    .overlay {
+      position: fixed; padding: 4px 8px; border-radius: 4px;
+      font: 12px/1.4 system-ui, sans-serif; color: #e8eaed;
+      background: rgba(0, 0, 0, 0.45); white-space: pre; pointer-events: none;
+    }
+    #hud { left: 8px; top: 8px; }
+    #help { left: 8px; bottom: 8px; color: #bdc1c6; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/",
+        "@sparkjsdev/spark": "./vendor/spark/spark.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud" class="overlay">Nothing to show yet</div>
+  <div id="help" class="overlay">Drag: turn · Right-drag: move · Wheel: zoom · Double-click: reset</div>
+  <script type="module" src="./viewer.js"></script>
+</body>
+</html>

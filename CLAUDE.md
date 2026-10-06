@@ -32,6 +32,10 @@ four before committing.
 The AppImage is built by `tools/packaging/build_appimage.py`, the macOS app by
 `build_macos.py` (see their README).
 
+The 3D viewer's JavaScript libraries (three.js, Spark) are vendored in
+`src/ez2digitize/ui/viewer_web/vendor/` by `tools/viewer/fetch_vendor.py`,
+pinned by npm integrity hash; don't edit them by hand.
+
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.
 

@@ -348,6 +348,27 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   masks and says so. On the synthetic scene, masked densify takes 61 s
   instead of 236 s.
 
+## 3D viewer (`views.py`, `ui/viewer.py`)
+
+A web page (`ui/viewer_web/`: three.js and Spark, vendored and pinned by
+`tools/viewer/fetch_vendor.py`) in a `QWebEngineView`, created only when
+the 3D view tab is first shown.
+
+- `views.available(project)` lists what can be shown from the stage
+  manifests (camera placement, dense cloud, textured mesh, splats), each
+  with the rotation that stands it upright; `views.files` produces what the
+  page loads: stage outputs as they are, the sparse model as a PLY plus a
+  JSON of cameras, the mesh as the export's GLB (or OpenMVS's PLY converted
+  into a cached GLB).
+- The page and files are served through an `ez2d://` scheme registered
+  before the QApplication exists (`viewer.prepare()`); every other request
+  is blocked. Python calls `ez2d.show(spec)`; the page answers with console
+  lines (`EZ2D {json}`).
+- Chromium's sandbox stays on except where it can't start (root; an
+  AppImage where unprivileged user namespaces are restricted).
+- Without WebGL the page still loads and says so; the packaged apps'
+  self-test checks that the page loads (QtWebEngine works in the bundle).
+
 Splat path (Phase 3) branches after `undistort`:
 
 ```

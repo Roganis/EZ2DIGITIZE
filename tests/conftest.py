@@ -14,6 +14,15 @@ from ez2digitize.pipeline import Tools
 
 # Run Qt without a display (CI, SSH sessions). Must be set before Qt loads.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Chromium refuses WebGL on software renderers (CI has no GPU); only for tests.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # The viewer's scheme must be registered before pytest-qt makes the QApplication.
+    from ez2digitize.ui import viewer
+
+    viewer.prepare()
 
 
 # Behaviour is steered through environment variables the fakes read:

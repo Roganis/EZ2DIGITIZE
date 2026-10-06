@@ -60,6 +60,17 @@ logs and settings, never your photos. The logs do contain file paths.
 - **Wrong size.** Models have no real-world scale yet; scale them in your
   slicer or 3D program by a known measurement.
 
+## The 3D view
+
+- **"The 3D view needs WebGL".** The graphics driver isn't one Chromium
+  (inside the app) accepts for WebGL. Update the driver (Mesa on Linux);
+  in virtual machines and remote desktops, enable 3D acceleration. The
+  results are still saved in exports/ and open in any 3D program.
+- **The 3D view stays empty on Linux.** Run the app from a terminal and look
+  for "sandbox" errors; `QTWEBENGINE_DISABLE_SANDBOX=1` works around a
+  system that blocks Chromium's sandbox (the AppImage does this itself on
+  Ubuntu 24.04 and later).
+
 ## Video, phone and splats
 
 - **"Importing a video needs FFmpeg".** Install FFmpeg 5 or newer, or set

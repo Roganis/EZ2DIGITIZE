@@ -3,7 +3,7 @@
 """Place the cameras with VGGT, for EZ2DIGITIZE (run by bin/run, in the plugin's .venv).
 
 All photos go through VGGT at once: it predicts every camera and a depth
-map per photo in one pass, with no feature matching. vggt_colmap turns that
+map per photo in one pass, with no feature matching. feedforward_colmap turns that
 into the COLMAP model the camera placement slot asks for.
 
 The photos are padded to a square and scaled to 518 px, as VGGT's own
@@ -17,9 +17,9 @@ import argparse
 import sys
 from pathlib import Path
 
+import feedforward_colmap
 import numpy as np
 import torch
-import vggt_colmap
 from vggt.models.vggt import VGGT
 from vggt.utils.load_fn import load_and_preprocess_images_square
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
@@ -63,7 +63,9 @@ def main() -> int:
     step(2, f"reading {len(paths)} photos")
     images, coords = load_and_preprocess_images_square(paths, RESOLUTION)
     images = images.to(where)
-    sizes = [(int(c[4]), int(c[5])) for c in coords.tolist()]
+    placements = [
+        feedforward_colmap.Placement.of((int(c[4]), int(c[5])), RESOLUTION) for c in coords.tolist()
+    ]
     dtype = torch.float32
     if where == "cuda":
         dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
@@ -74,10 +76,9 @@ def main() -> int:
         pose = model.camera_head(tokens)[-1]
         extrinsic, intrinsic = pose_encoding_to_extri_intri(pose, images.shape[-2:])
         depth, confidence = model.depth_head(tokens, images[None], start)
-    prediction = vggt_colmap.Prediction(
+    prediction = feedforward_colmap.Prediction(
         names=names,
-        sizes=sizes,
-        resolution=RESOLUTION,
+        placements=placements,
         extrinsic=extrinsic[0].float().cpu().numpy().astype(np.float64),
         intrinsic=intrinsic[0].float().cpu().numpy().astype(np.float64),
         depth=depth[0, ..., 0].float().cpu().numpy().astype(np.float64),
@@ -85,8 +86,8 @@ def main() -> int:
         colors=(images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8),
     )
     step(4, "writing the COLMAP model")
-    points = vggt_colmap.sparse_points(prediction)
-    vggt_colmap.write_model(args.output / "sparse" / "0", prediction, points)
+    points = feedforward_colmap.sparse_points(prediction)
+    feedforward_colmap.write_model(args.output / "sparse" / "0", prediction, points)
     print(f"{len(names)} cameras, {len(points.xyz)} points", flush=True)
     return 0
 

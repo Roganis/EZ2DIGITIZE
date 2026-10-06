@@ -71,6 +71,9 @@ The first release.
   first (Settings → Plugins, `ez2d plugins`). See docs/PLUGINS.md.
 - A VGGT plugin (tools/plugins/vggt-poses): cameras placed by Meta's VGGT
   network in one pass, on a GPU, under VGGT's own licenses.
+- A MapAnything plugin (tools/plugins/mapanything-poses): cameras placed by
+  Meta's MapAnything in one pass, on a GPU, helped by the photos' EXIF focal
+  length, with Apache-2.0 weights (or non-commercial ones).
 
 ### Packages
 

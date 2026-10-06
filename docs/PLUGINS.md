@@ -65,6 +65,9 @@ working plugin to start from.
 [`tools/plugins/vggt-poses`](../tools/plugins/vggt-poses) is a real one: it
 places the cameras with VGGT, a neural network under its own licenses,
 in a Python environment of its own (see its README).
+[`tools/plugins/mapanything-poses`](../tools/plugins/mapanything-poses)
+does the same with MapAnything, which also takes the focal length from the
+photos' EXIF and has Apache-2.0 weights.
 
 ```toml
 api = 1                          # this format; required

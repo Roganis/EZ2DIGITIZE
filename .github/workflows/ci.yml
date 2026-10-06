@@ -49,7 +49,7 @@ jobs:
       # The Phase 1 benchmark harness is POSIX only (fork, wait4, process groups).
       - name: Type check (Windows)
         if: runner.os == 'Windows'
-        run: uv run mypy src tests tools/spikes tools/packaging tools/viewer tools/plugins --exclude feasibility
+        run: uv run mypy src tests tools/spikes tools/packaging tools/viewer tools/plugins --exclude feasibility --exclude 'mapanything-poses/feedforward_colmap\.py$'
 
       # In two parts, so a hang in a Qt test (the faulthandler_timeout in
       # pyproject.toml prints where it is) doesn't hide the other results.

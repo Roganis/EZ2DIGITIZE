@@ -55,7 +55,7 @@ before you can use the plugin. This folder holds only the glue
 
 `vggt_poses.py` pads each photo to a square and scales it to 518 px, as
 VGGT's own COLMAP export does, then runs VGGT's aggregator, camera head and
-depth head. `vggt_colmap.py` (numpy only, tested in
+depth head. `feedforward_colmap.py` (numpy only, tested in
 `tests/test_vggt_plugin.py`) writes the COLMAP model:
 
 - one PINHOLE camera per photo, with its intrinsics mapped back to the

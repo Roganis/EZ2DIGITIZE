@@ -417,6 +417,15 @@ fails, they can see which stage failed and why.
   undistorter); a run of VGGT itself on a GPU, and how it compares on the
   Phase 1 datasets, wait for the reference machines. MASt3R-SfM (CC-BY-NC)
   could follow the same way.
+  MapAnything done as a plugin too (`tools/plugins/mapanything-poses`):
+  Apache-2.0 code and weights (or the CC-BY-NC ones), and it takes the EXIF
+  focal length as input, which VGGT can't. The COLMAP writing is shared
+  with the VGGT plugin (`feedforward_colmap.py`). Run against MapAnything's
+  real code on the CPU with random weights; a GPU run with the real weights
+  waits for the reference machines. Next: a "refine with COLMAP" option
+  for any such plugin (match only the pairs the predicted poses suggest,
+  triangulate and bundle-adjust at full resolution), and passing ARCore
+  poses from the Android app as MapAnything inputs.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
   Licenses checked: 2DGS and Gaussian Opacity Fields are under Inria's

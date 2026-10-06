@@ -1,23 +1,28 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""VGGT's predictions as a COLMAP model, for EZ2DIGITIZE's camera placement slot.
+"""A feed-forward network's predictions as a COLMAP model, for EZ2DIGITIZE's camera placement slot.
 
-VGGT predicts, for every photo at once, its camera (extrinsics in OpenCV's
-camera-from-world convention, intrinsics) and a depth map with a
-confidence, all at the square resolution it ran at (each photo padded to a
-square, centred, then scaled). This module turns that into the binary
-COLMAP model the slot asks for (docs/PLUGINS.md):
+Shared by the VGGT and MapAnything plugins: each folder holds an identical
+copy, since a plugin is installed on its own (tests/test_mapanything_plugin.py
+checks they match).
+
+The networks predict, for every photo at once, its camera (extrinsics in
+OpenCV's camera-from-world convention, intrinsics) and a depth map with a
+confidence, all at the size they ran at: each photo scaled, then padded
+(VGGT: to a square) or cropped (MapAnything: to a fixed aspect ratio). This
+module turns that into the binary COLMAP model the slot asks for
+(docs/PLUGINS.md):
 
 - one PINHOLE camera per photo, its intrinsics mapped back to the photo's
-  own pixels (undo the scale, then the padding);
+  own pixels (undo the scale, then the padding or crop);
 - the photo's pose, as COLMAP's world-to-camera quaternion and translation;
 - sparse points: confident depth pixels lifted to 3D, each kept only where
   it is also seen by other photos, whose depth there agrees. OpenMVS picks
   each photo's neighbours by the points they share, so points need tracks
   across photos, not only the photo they came from.
 
-Numpy and the standard library only, so it is tested without a GPU or VGGT
-(tests/test_vggt_plugin.py).
+Numpy and the standard library only, so it is tested without a GPU or the
+networks (tests/test_vggt_plugin.py).
 """
 
 from __future__ import annotations
@@ -35,24 +40,11 @@ NO_POINT = 2**64 - 1  # a 2D point without a 3D point
 Float = NDArray[np.float64]
 
 
-@dataclass
-class Prediction:
-    """VGGT's output for S photos at resolution R (the padded square)."""
-
-    names: list[str]  # COLMAP image names, as in the image list
-    sizes: list[tuple[int, int]]  # each photo's (width, height)
-    resolution: int  # R
-    extrinsic: Float  # (S, 3, 4) camera from world
-    intrinsic: Float  # (S, 3, 3) at R x R
-    depth: Float  # (S, R, R)
-    confidence: Float  # (S, R, R)
-    colors: NDArray[np.uint8] | None = None  # (S, R, R, 3)
-
-
 @dataclass(frozen=True)
 class Placement:
-    """Where a photo sits inside the R x R square: its pixels scaled by `scale`
-    and shifted by (`left`, `top`) original pixels of padding."""
+    """Where a photo sits in the network's input: its pixels scaled by `scale`
+    and shifted by (`left`, `top`) original pixels, positive for padding and
+    negative for a crop. Pixel coordinates have 0 at a pixel's edge."""
 
     scale: float
     left: float
@@ -62,22 +54,66 @@ class Placement:
 
     @classmethod
     def of(cls, size: tuple[int, int], resolution: int) -> Placement:
+        """Padded to a square, centred, then scaled to `resolution` (VGGT)."""
         width, height = size
         side = max(width, height)
         return cls(resolution / side, (side - width) // 2, (side - height) // 2, width, height)
 
+    @classmethod
+    def cover(cls, size: tuple[int, int], target: tuple[int, int]) -> Placement:
+        """Scaled to cover `target` (width, height), then cropped to it, centred."""
+        width, height = size
+        scale = max(target[0] / width, target[1] / height)
+        return cls(
+            scale,
+            -(width - target[0] / scale) / 2,
+            -(height - target[1] / scale) / 2,
+            width,
+            height,
+        )
+
+    def source_box(self, target: tuple[int, int]) -> tuple[float, float, float, float]:
+        """The part of the photo that becomes the `target`-sized input, in its
+        own pixels (left, top, right, bottom): what PIL's resize(box=) takes."""
+        return (
+            -self.left,
+            -self.top,
+            target[0] / self.scale - self.left,
+            target[1] / self.scale - self.top,
+        )
+
     def to_photo(self, u: Float, v: Float) -> tuple[Float, Float]:
-        """Square pixel coordinates to the photo's own."""
+        """Input pixel coordinates to the photo's own."""
         return u / self.scale - self.left, v / self.scale - self.top
 
     def inside(self, u: Float, v: Float) -> NDArray[np.bool_]:
-        """Which square pixel coordinates fall on the photo, not the padding."""
+        """Which input pixel coordinates fall on the photo, not the padding."""
         x, y = self.to_photo(u, v)
         return (x >= 0) & (y >= 0) & (x < self.width) & (y < self.height)
 
+    def input_intrinsics(self, fx: float, fy: float, cx: float, cy: float) -> Float:
+        """K at the network's input, from the photo's own intrinsics."""
+        s = self.scale
+        return np.array(
+            [[fx * s, 0, (cx + self.left) * s], [0, fy * s, (cy + self.top) * s], [0, 0, 1]]
+        )
+
+
+@dataclass
+class Prediction:
+    """A network's output for S photos at its input size H x W."""
+
+    names: list[str]  # COLMAP image names, as in the image list
+    placements: list[Placement]  # each photo in the input
+    extrinsic: Float  # (S, 3, 4) camera from world
+    intrinsic: Float  # (S, 3, 3) at the input size
+    depth: Float  # (S, H, W), 0 where unknown
+    confidence: Float  # (S, H, W)
+    colors: NDArray[np.uint8] | None = None  # (S, H, W, 3)
+
 
 def photo_intrinsics(k: Float, placement: Placement) -> tuple[float, float, float, float]:
-    """fx, fy, cx, cy in the photo's own pixels, from K at the square resolution."""
+    """fx, fy, cx, cy in the photo's own pixels, from K at the input size."""
     s = placement.scale
     return (
         float(k[0, 0] / s),
@@ -133,9 +169,10 @@ def sparse_points(
     by fewer than `min_views` photos are dropped.
     """
     rng = np.random.default_rng(seed)
-    count, res = len(prediction.names), prediction.resolution
-    placements = [Placement.of(size, res) for size in prediction.sizes]
-    grid_v, grid_u = np.mgrid[0:res, 0:res].astype(np.float64) + 0.5
+    count = len(prediction.names)
+    rows_in, cols_in = prediction.depth.shape[1:]
+    placements = prediction.placements
+    grid_v, grid_u = np.mgrid[0:rows_in, 0:cols_in].astype(np.float64) + 0.5
     xyz_all, rgb_all, origin = [], [], []
     for i in range(count):
         on_photo = placements[i].inside(grid_u, grid_v)
@@ -175,8 +212,9 @@ def sparse_points(
             u = np.where(front, proj[:, 0] / z, -1.0)
             v = np.where(front, proj[:, 1] / z, -1.0)
         seen = front & placements[j].inside(u, v)
-        cols = np.clip(np.floor(u).astype(int), 0, res - 1)
-        rows = np.clip(np.floor(v).astype(int), 0, res - 1)
+        seen &= (u >= 0) & (v >= 0) & (u < cols_in) & (v < rows_in)  # cropped away
+        cols = np.clip(np.floor(u).astype(int), 0, cols_in - 1)
+        rows = np.clip(np.floor(v).astype(int), 0, rows_in - 1)
         there = prediction.depth[j][rows, cols]
         seen &= np.abs(there - z) <= agreement * z
         x, y = placements[j].to_photo(u, v)
@@ -190,13 +228,13 @@ def write_model(folder: Path, prediction: Prediction, points: Points) -> None:
     """cameras.bin, images.bin and points3D.bin (COLMAP's binary format)."""
     folder.mkdir(parents=True, exist_ok=True)
     count = len(prediction.names)
-    placements = [Placement.of(size, prediction.resolution) for size in prediction.sizes]
+    placements = prediction.placements
     with (folder / "cameras.bin").open("wb") as f:
         f.write(struct.pack("<Q", count))
         for i in range(count):
-            width, height = prediction.sizes[i]
             params = photo_intrinsics(prediction.intrinsic[i], placements[i])
-            f.write(struct.pack("<IiQQ4d", i + 1, PINHOLE, width, height, *params))
+            size = (placements[i].width, placements[i].height)
+            f.write(struct.pack("<IiQQ4d", i + 1, PINHOLE, *size, *params))
     # The 2D points of each photo: its observations, in track order.
     per_photo: list[list[tuple[float, float, int]]] = [[] for _ in range(count)]
     point_tracks: list[list[tuple[int, int]]] = []

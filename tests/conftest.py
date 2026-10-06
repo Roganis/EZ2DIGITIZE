@@ -24,6 +24,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist")
 
 def pytest_configure(config: pytest.Config) -> None:
     # The viewer's scheme must be registered before pytest-qt makes the QApplication.
+    # Without pytest-qt (`-p no:pytest-qt`: the Backends workflow, on runners
+    # without Qt's system libraries) nothing makes one, and Qt mustn't load.
+    if not config.pluginmanager.has_plugin("pytest-qt"):
+        return
     from ez2digitize.ui import viewer
 
     viewer.prepare()

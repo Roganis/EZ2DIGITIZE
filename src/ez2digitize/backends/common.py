@@ -78,14 +78,21 @@ WINDOWS_SUFFIXES = (".exe", ".cmd", ".bat")
 
 
 def executable(path: Path) -> Path | None:
-    """`path` if it is an executable file; on Windows also `path` + .exe etc."""
-    if path.is_file() and os.access(path, os.X_OK):
-        return path
-    if sys.platform == "win32" and not path.suffix:
+    """`path` if it is an executable file; on Windows also `path` + .exe etc.
+
+    Windows has no executable bit (every file passes X_OK): there the
+    suffix decides.
+    """
+    if sys.platform == "win32":
+        if path.suffix.lower() in WINDOWS_SUFFIXES and path.is_file():
+            return path
         for suffix in WINDOWS_SUFFIXES:
             candidate = path.with_name(path.name + suffix)
             if candidate.is_file():
                 return candidate
+        return None
+    if path.is_file() and os.access(path, os.X_OK):
+        return path
     return None
 
 

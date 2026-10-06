@@ -41,7 +41,7 @@ def test_formats_are_checked(built: Project) -> None:
 def test_export_all_formats(built: Project) -> None:
     files = export_mesh(built, ["obj", "glb", "ply"], now=NOW)
     folder = built.exports_dir / "20261005-180000"
-    assert sorted(str(f.relative_to(folder)) for f in files) == [
+    assert sorted(f.relative_to(folder).as_posix() for f in files) == [
         "My_Skull.glb",
         "obj/My_Skull.mtl",
         "obj/My_Skull.obj",

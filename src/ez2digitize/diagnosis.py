@@ -81,6 +81,8 @@ SIGBUS: int | None = getattr(signal, "SIGBUS", None)
 # Windows: access violation, stack overflow, heap corruption; illegal instruction.
 WINDOWS_CRASHES = frozenset({0xC0000005, 0xC00000FD, 0xC0000374, 0xC0000409})
 WINDOWS_ILLEGAL = frozenset({0xC000001D})
+# Windows: no memory, and the commit limit (RAM plus page file) reached.
+WINDOWS_NO_MEMORY = frozenset({0xC0000017, 0xC000012D})
 
 
 def _windows_status(exit_code: int, codes: frozenset[int]) -> bool:
@@ -114,7 +116,7 @@ def _rules() -> list[Rule]:
     def memory(stage: str, code: int, log: str) -> Explanation | None:
         # The kernel's OOM killer sends SIGKILL, which also is how cancel ends: the
         # pipeline reports cancellation separately, so a SIGKILL here is not ours.
-        if _oom(log) or _killed(code, SIGKILL):
+        if _oom(log) or _killed(code, SIGKILL) or _windows_status(code, WINDOWS_NO_MEMORY):
             return _OUT_OF_MEMORY
         return None
 

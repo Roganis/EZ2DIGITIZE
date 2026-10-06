@@ -189,8 +189,9 @@ def test_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert masks.model_file() == tmp_path / "isnet-general-use.onnx"
     assert masks.find_model() is None
     monkeypatch.delenv("EZ2D_MODELS_DIR")
-    if sys.platform != "darwin":
-        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    variable = {"darwin": None, "win32": "LOCALAPPDATA"}.get(sys.platform, "XDG_CACHE_HOME")
+    if variable:
+        monkeypatch.setenv(variable, str(tmp_path / "cache"))
         assert masks.models_dir() == tmp_path / "cache" / "ez2digitize" / "models"
 
 

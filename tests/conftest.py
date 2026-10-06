@@ -76,7 +76,7 @@ elif cmd == "image_undistorter_standalone":
 FAKE_OPENMVS = """
 import os, sys
 from pathlib import Path
-tool = Path(sys.argv[0]).stem  # Windows runs the .py next to a .cmd
+tool = Path(sys.argv[0]).stem  # "DensifyPointCloud.cmd" on Windows
 args = sys.argv[1:]
 print(f"fake {tool}", flush=True)
 if os.environ.get("FAKE_FAIL") == tool:
@@ -222,8 +222,9 @@ def fake_mask_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     import ez2digitize.masks
 
-    script = _script(tmp_path / "fake" / "mask_worker.py", FAKE_MASK_WORKER)
-    monkeypatch.setattr(ez2digitize.masks, "worker_argv", lambda: [sys.executable, str(script)])
+    # What to run (on Windows a .cmd file, not one Python can run).
+    script = _script(tmp_path / "fake" / "mask_worker", FAKE_MASK_WORKER)
+    monkeypatch.setattr(ez2digitize.masks, "worker_argv", lambda: [str(script)])
     model = ez2digitize.masks.model_file()
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as f:

@@ -44,13 +44,12 @@ def test_parse_version() -> None:
 
 
 def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch) -> None:
-    for tool in TOOLS:
-        fake_tool(tmp_path / "bin" / tool, BANNER)
+    made = {tool: fake_tool(tmp_path / "bin" / tool, BANNER) for tool in TOOLS}
     found = openmvs.locate(tmp_path / "bin")
     assert found == OpenMVS(tmp_path / "bin", "2.4.0") and found.supported
     monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "bin"))
     assert openmvs.locate() == found
-    (tmp_path / "bin" / "TextureMesh").unlink()
+    made["TextureMesh"].unlink()
     with pytest.raises(BackendMissing, match="incomplete: no TextureMesh"):
         openmvs.locate()
     monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "nowhere"))

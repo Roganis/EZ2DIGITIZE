@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,11 +9,16 @@ from ez2digitize.core.stage import Backend, StageManifest
 from ez2digitize.diagnosis import explain
 from ez2digitize.pipeline import StageFailed
 
+# How a process ends when it runs out of memory: SIGKILL from the kernel's
+# OOM killer, or Windows' STATUS_NO_MEMORY.
+OUT_OF_MEMORY = 0xC0000017 if sys.platform == "win32" else -9
+
 
 @pytest.mark.parametrize(
     ("stage", "code", "log", "title"),
     [
-        ("features", -9, [], "The step ran out of memory"),
+        ("features", OUT_OF_MEMORY, [], "The step ran out of memory"),
+        ("features", 0xC000012D, [], "out of memory"),
         ("densify", 1, ["terminate called after throwing 'std::bad_alloc'"], "out of memory"),
         ("densify", 1, ["error: writing: No space left on device"], "The disk is full"),
         ("mapping", 1, ["E1005 12:00:00.1 1 m.cc:9] Failed to create any sparse model"], "placed"),
@@ -51,7 +57,7 @@ def _manifest(stage: str, code: int) -> StageManifest:
 
 
 def test_stage_failed_message() -> None:
-    explained = StageFailed(_manifest("features", -9), Path("log.txt"), [])
+    explained = StageFailed(_manifest("features", OUT_OF_MEMORY), Path("log.txt"), [])
     assert str(explained).startswith("The step ran out of memory (stage features failed")
     assert "lower detail level" in str(explained)
     plain = StageFailed(_manifest("features", 3), Path("log.txt"), ["?"])

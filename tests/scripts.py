@@ -3,8 +3,10 @@
 """Stand-in executables for the tests, on every platform.
 
 POSIX runs a script with a `#!` line directly. Windows doesn't: there the
-script goes next to a `.cmd` launcher that runs it with this Python, and
-the launcher is what tests run (the app finds `name.cmd` for `name`).
+script is a `name.cmd` (the app finds it for `name`) whose first line runs
+the file itself with this Python, `-x` skipping that line. Like a POSIX
+script, the file holds the whole program, so its hash changes with the
+body and not with its folder (the stage tests rely on both).
 """
 
 import sys
@@ -15,10 +17,9 @@ def python_script(path: Path, body: str) -> Path:
     """An executable at `path` running `body` with this Python; returns what to run."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
-        source = path.with_name(path.name + ".py")
-        source.write_text(body)
-        launcher = path.with_name(path.name + ".cmd")
-        launcher.write_text(f'@"{sys.executable}" "{source}" %*\r\n')
+        launcher = path if path.suffix == ".cmd" else path.with_name(path.name + ".cmd")
+        # "exit /b" without a number keeps Python's exit code.
+        launcher.write_text(f'@"{sys.executable}" -x "%~f0" %* & exit /b\n{body}')
         return launcher
     path.write_text(f"#!{sys.executable}\n{body}")
     path.chmod(0o755)

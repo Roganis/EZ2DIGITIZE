@@ -1,7 +1,12 @@
 # Packaging
 
-`build_appimage.py` builds the Linux AppImage: the app (PyInstaller onedir, without
-QtWebEngine until the viewer lands) with the pinned COLMAP and OpenMVS from
+Releases are built by the Release workflow from a version tag
+([docs/RELEASING.md](../../docs/RELEASING.md)), which calls the three
+package workflows below with backends it builds itself. `release.py` sets
+the version and prints the release notes.
+
+`build_appimage.py` builds the Linux AppImage: the app (PyInstaller onedir) with the
+pinned COLMAP and OpenMVS from
 [`tools/backends`](../backends/README.md) inside.
 
 ```sh

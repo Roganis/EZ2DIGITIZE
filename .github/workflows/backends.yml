@@ -6,6 +6,7 @@ name: Backends
 
 on:
   workflow_dispatch:
+  workflow_call:  # from the Release workflow: binaries built from the tagged commit
   pull_request:
     paths:
       - "tools/backends/**"

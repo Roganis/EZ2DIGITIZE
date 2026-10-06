@@ -347,10 +347,17 @@ fails, they can see which stage failed and why.
   CI (Windows app workflow); the installer comes later.
 - Backend binaries bundled or auto-downloaded with SHA-256 checksums and
   pinned versions; source tarballs for every GPL/AGPL binary published with
-  each release. Bundled (AppImage, macOS app); the source archive is built
-  by `tools/backends/collect_sources.sh` (Backend sources workflow).
-  Attaching both to a release waits for the release process (versioning,
-  where releases live).
+  each release. Bundled (AppImage, macOS app, Windows zip); the source
+  archive is built by `tools/backends/collect_sources.sh`, and each release
+  attaches it.
+- Release process. Done (docs/RELEASING.md): the version in
+  `ez2digitize.__version__`, CHANGELOG.md, and a tag `vX.Y.Z` on main
+  that the Release workflow turns into a draft GitHub release: CI, the
+  backends built from the tagged commit, the three packages built and
+  tested with them, the backends' source packed from the same pins, the
+  app's source and SHA256SUMS. `tools/packaging/release.py` sets the
+  version and dates the changelog. Before the first release: Brush's Rust
+  dependencies' notices (cargo-about).
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,

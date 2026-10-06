@@ -88,7 +88,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools/feasibility"]
+pythonpath = ["tools/feasibility", "tools/packaging"]
 qt_api = "pyside6"
 # A test stuck this long prints every thread's stack, so a hang in CI shows
 # where it is.

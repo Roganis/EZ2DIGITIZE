@@ -14,7 +14,10 @@ uv run ruff format       # format
 uv run mypy              # strict type check
 ```
 
-CI runs those four on Linux and macOS; run them before sending a change.
+CI runs those four on Linux, macOS and Windows; run them before sending a
+change. A change people will notice also gets a line in
+[CHANGELOG.md](CHANGELOG.md) under Unreleased; releases are made from tags
+([docs/RELEASING.md](docs/RELEASING.md)).
 The backends (COLMAP, OpenMVS) are built by `tools/backends/build.sh`, or
 take the `backends-Linux` / `backends-macOS` artifact of the Backends
 workflow and point `EZ2D_COLMAP` / `EZ2D_OPENMVS_DIR` at it. Tests that need

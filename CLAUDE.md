@@ -102,3 +102,7 @@ when the tool is missing.
   CI.
 - Don't add dependencies for small things the standard library covers.
 - Commit messages: imperative summary line, body explaining why.
+- A user-visible change adds a line under `## [Unreleased]` in
+  `CHANGELOG.md` in the same commit. The version is `__version__` in
+  `src/ez2digitize/__init__.py`; releases are tags made as in
+  `docs/RELEASING.md` (`tools/packaging/release.py`), never by hand.

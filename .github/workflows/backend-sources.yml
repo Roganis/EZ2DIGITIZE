@@ -8,6 +8,7 @@ name: Backend sources
 
 on:
   workflow_dispatch:
+  workflow_call:  # from the Release workflow: the source of the binaries it builds
   push:
     branches: [main]
     paths:

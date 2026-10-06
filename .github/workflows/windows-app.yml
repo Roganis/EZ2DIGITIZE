@@ -4,13 +4,19 @@
 # exports a GLB.
 #
 # The backends come from the newest Backends workflow run (this branch first,
-# then main) that uploaded a Windows archive; Brush from its pinned release
+# then main), or for a release from the Release run itself, that uploaded a Windows archive; Brush from its pinned release
 # (keep in step with ez2digitize.backends.brush.PINNED_VERSION). The app is
 # not code-signed yet: see tools/packaging/README.md.
 name: Windows app
 
 on:
   workflow_dispatch:
+  # From the Release workflow, which builds the backends in the same run.
+  workflow_call:
+    inputs:
+      backends-in-this-run:
+        type: boolean
+        default: false
   pull_request:
     paths:
       - "src/**"
@@ -44,7 +50,15 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      - name: Get the backend archive (built in this run)
+        if: inputs.backends-in-this-run
+        uses: actions/download-artifact@v4
+        with:
+          name: backends-Windows
+          path: artifact
+
       - name: Get the backend archive
+        if: ${{ !inputs.backends-in-this-run }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.head_ref || github.ref_name }}

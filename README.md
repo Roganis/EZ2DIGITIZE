@@ -7,7 +7,10 @@ open-source reconstruction tools (COLMAP, OpenMVS, Brush) for you.
 **Status:** early development ([roadmap](docs/ROADMAP.md)). Photos, a
 video or a phone upload in; a textured mesh (OBJ, GLB, STL, 3MF) or
 Gaussian splats out; from the GUI or the command line. CI builds a Linux
-AppImage and a macOS app with the tools inside.
+AppImage, a macOS app and a portable Windows zip with the tools inside;
+tagged versions are published on the
+[releases page](https://github.com/Roganis/EZ2DIGITIZE/releases)
+([changelog](CHANGELOG.md)).
 
 Primary platform: Linux with an AMD GPU. Secondary: macOS on Apple Silicon.
 

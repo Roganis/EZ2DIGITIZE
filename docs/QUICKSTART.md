@@ -12,6 +12,13 @@ runs on your computer; nothing is uploaded anywhere.
 - **macOS (Apple Silicon):** unzip `EZ2DIGITIZE-<version>-macos-arm64.zip`.
   The app isn't notarized yet, so remove the quarantine once:
   `xattr -dr com.apple.quarantine EZ2DIGITIZE.app`.
+- **Windows (x64, community-tested):** unzip
+  `EZ2DIGITIZE-<version>-windows-x86_64.zip` and run `EZ2DIGITIZE.exe`
+  (`ez2d.exe` is the command line). The app isn't signed yet, so Windows
+  SmartScreen warns once: More info → Run anyway.
+
+Releases are on the project's
+[GitHub releases page](https://github.com/Roganis/EZ2DIGITIZE/releases).
 
 COLMAP, OpenMVS and Brush come inside the app. Video import uses the FFmpeg
 installed on your computer (`pacman -S ffmpeg`, `apt install ffmpeg`,

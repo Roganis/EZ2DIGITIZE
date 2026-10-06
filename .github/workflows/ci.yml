@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:  # from the Release workflow
 
 permissions:
   contents: read

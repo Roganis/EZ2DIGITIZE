@@ -410,13 +410,14 @@ def test_two_sided_scan_notices(
 
 
 def test_crop_box_reaches_densify(project: Project, tools: Tools) -> None:
-    from ez2digitize import crop
+    from ez2digitize import crop, scale
 
     pipeline.run_sparse(project, tools)
     run = crop.camera_run(project)
     assert run is not None
     upright_box = crop.UprightBox((0.0, 0.0, 0.0), (1.0, 2.0, 3.0))
     crop.save(project, crop.from_upright(upright_box, None, run))
+    scale.save(project, scale.make(((0, 0, 0), (1, 0, 0)), 10.0, run))
     events, handler = _collect()
     pipeline.run_dense(project, tools, on_event=handler)
     densify = project.stage_dir("densify")
@@ -433,3 +434,4 @@ def test_crop_box_reaches_densify(project: Project, tools: Tools) -> None:
     assert "--import-roi-file" not in (densify / "log.txt").read_text()
     notices = [e.message for e in events if isinstance(e, Notice)]
     assert any("drawn on an earlier camera placement" in n for n in notices)
+    assert any("scale was set on an earlier camera placement" in n for n in notices)

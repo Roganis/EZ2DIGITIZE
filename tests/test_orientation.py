@@ -96,6 +96,9 @@ def test_quaternion_matrix() -> None:
 
 def test_placement_dict() -> None:
     assert Placement(IDENTITY, (1, 2, 3)).to_dict()["offset"] == [1, 2, 3]
+    # Scale last: units of the export (see ez2digitize.scale).
+    scaled = Placement(IDENTITY, (1.0, 0.0, 0.0), scale=2.0)
+    assert list(scaled.apply(array("f", [1, 1, 1]))) == [4, 2, 2]
 
 
 def test_estimate_up_from_the_first_side_only(tmp_path: Path) -> None:

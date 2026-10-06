@@ -94,8 +94,42 @@ def test_print_and_point_cloud_exports(built: Project) -> None:
     info = json.loads((folder / "export.json").read_text())
     # One triangle: three open edges.
     assert (info["watertight"], info["open_edges"]) == (False, 3)
-    (note,) = export_notes(files)
-    assert "not closed (3 open" in note
+    closed, unscaled = export_notes(files)
+    assert "not closed (3 open" in closed
+    assert "no scale is set" in unscaled and info["scale_mm_per_unit"] is None
+
+
+def _stl_vertices(path: Path) -> list[float]:
+    import struct
+
+    data = path.read_bytes()
+    (count,) = struct.unpack("<I", data[80:84])
+    values: list[float] = []
+    for i in range(count):
+        values += struct.unpack("<9f", data[84 + 50 * i + 12 : 84 + 50 * i + 48])
+    return values
+
+
+def test_scale_gives_real_units(built: Project) -> None:
+    from ez2digitize import crop, scale
+    from ez2digitize.export import export_notes
+
+    plain = export_mesh(built, ["stl", "glb"], align=False, now=NOW)
+    run = crop.camera_run(built)
+    assert run is not None
+    # 2 reconstruction units are 10 mm: 5 mm per unit.
+    scale.save(built, scale.make(((0, 0, 0), (0, 2, 0)), 10.0, run))
+    scaled = export_mesh(built, ["stl", "glb"], align=False, now=NOW)
+    assert scaled[0].parent != plain[0].parent  # not the unscaled export again
+    stl = _stl_vertices(scaled[1])
+    assert stl == pytest.approx([v * 5 for v in _stl_vertices(plain[1])])  # millimetres
+    info = json.loads((scaled[0].parent / "export.json").read_text())
+    assert info["scale_mm_per_unit"] == 5.0 and info["units"]["stl"] == "mm"
+    assert export_notes(scaled) == [
+        "the mesh is not closed (3 open and 0 non-manifold edges): "
+        "a slicer may need to repair it before printing"
+    ]
+    assert export_mesh(built, ["stl", "glb"], align=False) == scaled  # reused
 
 
 def test_watertight_check() -> None:

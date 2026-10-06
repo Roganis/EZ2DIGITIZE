@@ -13,6 +13,7 @@
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d crop ~/scans/skull --auto          # crop box around the sparse points
+    ez2d scale ~/scans/skull --distance 42  # the picked points are 42 mm apart
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
     ez2d check                              # which COLMAP and OpenMVS are used
@@ -34,7 +35,7 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import crop, diagnostics, licenses, masks, presets, sides, video, views
+from ez2digitize import crop, diagnostics, licenses, masks, presets, scale, sides, video, views
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -200,6 +201,28 @@ def _parser() -> argparse.ArgumentParser:
     change.add_argument("--clear", action="store_true", help="no box: OpenMVS's own estimate")
     box.add_argument("--yaw", type=float, default=0.0, help="degrees about the vertical axis")
     box.set_defaults(func=_cmd_crop)
+
+    size = sub.add_parser(
+        "scale",
+        help="real-world size: the real distance between two points",
+        description="Without options: show the scale. The two points are usually picked in "
+        "the GUI's 3D view; here they are given in the upright frame it shows (Y up), "
+        "after camera placement. With the scale set, exports are in millimetres (STL, "
+        "3MF) and metres (OBJ, GLB, point cloud).",
+    )
+    size.add_argument("project", type=Path)
+    size.add_argument(
+        "--points",
+        nargs=6,
+        type=float,
+        metavar=("AX", "AY", "AZ", "BX", "BY", "BZ"),
+        help="the two points (needs --distance)",
+    )
+    size.add_argument(
+        "--distance", type=float, metavar="MM", help="their real distance, in millimetres"
+    )
+    size.add_argument("--clear", action="store_true", help="no scale: arbitrary units")
+    size.set_defaults(func=_cmd_scale)
 
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
@@ -597,6 +620,44 @@ def _cmd_crop(args: argparse.Namespace) -> int:
     print(f"crop box: centre ({centre}), size ({size}), turned {shown.yaw:.1f}°")
     if crop.current(project) is None:
         print("  drawn on an earlier camera placement: not used until set again")
+    return 0
+
+
+def _cmd_scale(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.clear:
+        scale.save(project, None)
+        print("scale removed: exports are in the reconstruction's own units")
+        return 0
+    upright = views.upright_rotation(project)
+    if args.points is not None or args.distance is not None:
+        if args.distance is None:
+            raise PipelineError("give the real distance between the points (--distance MM)")
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        if args.points is not None:
+            a, b = args.points[:3], args.points[3:]
+            points = scale.from_upright(((a[0], a[1], a[2]), (b[0], b[1], b[2])), upright)
+        else:
+            picked = scale.current(project)
+            if picked is None:
+                raise PipelineError("pick two points first (3D view, or --points)")
+            points = picked.points
+        try:
+            scale.save(project, scale.make(points, args.distance, placement))
+        except scale.ScaleError as exc:
+            raise PipelineError(str(exc)) from exc
+    stored = scale.stored(project)
+    if stored is None:
+        print("no scale: exports are in the reconstruction's own (arbitrary) units")
+        return 0
+    a, b = scale.to_upright(stored.points, upright)
+    shown = " and ".join("(" + ", ".join(f"{v:.4g}" for v in p) + ")" for p in (a, b))
+    print(f"scale: {scale.describe(stored)}")
+    print(f"  points {shown}")
+    if scale.current(project) is None:
+        print("  picked on an earlier camera placement: not used until set again")
     return 0
 
 

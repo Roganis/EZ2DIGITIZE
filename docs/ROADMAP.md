@@ -221,12 +221,12 @@ fails, they can see which stage failed and why.
   missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
   notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
-  viewable in the embedded viewer. Done except the viewer
-  (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
-  run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
+  viewable in the embedded viewer. Done (`backends/brush.py`,
+  `pipeline.run_splat`, Build splats in the GUI, `ez2d run --splat`; Brush
+  0.3.0 bundled in the AppImage). It refuses software
   renderers. With masks, Brush gets the masks warped for OpenMVS where it
   looks for them (`images/masks/<stem>.png`) and leaves the background out
-  of its loss. Viewing waits for the viewer decision. Rotating splats
+  of its loss. The 3D view shows them, stood upright. Rotating splats
   upright on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in). Done
@@ -261,6 +261,11 @@ fails, they can see which stage failed and why.
 
 - **Scale:** set real-world size from a known distance between two picked
   points; then automatic scale from printed ArUco markers on the capture mat.
+  Picked points done (`ez2digitize.scale`; in the 3D view on the camera
+  placement or dense cloud: Pick two points, the real distance, Set scale;
+  `ez2d scale`): STL and 3MF export in millimetres, OBJ, GLB and the point
+  cloud in metres. Checking against a caliper-measured object (see Testing)
+  waits for a capture; ArUco markers are next.
 - **Orientation:** up-axis alignment (`colmap model_orientation_aligner` or
   fit to the mat plane) with manual adjust. Automatic part done
   (`ez2digitize.orientation`): up from the photos' down directions,
@@ -287,8 +292,8 @@ fails, they can see which stage failed and why.
   texturing (`--faces`); the export checks watertightness (edges not shared
   by exactly two faces). The skull's meshes come out closed.
 - Export STL and 3MF for printing (untextured; warn if not watertight),
-  PLY point cloud. Done (`stl`, `3mf`, `points` export formats). Units are
-  the reconstruction's until the scale step exists.
+  PLY point cloud. Done (`stl`, `3mf`, `points` export formats), in real
+  units once the scale is set.
 - License notice for OpenMVS (AGPL-3.0) and its dependencies (some CGAL
   components are GPL) in `THIRD_PARTY_LICENSES`, with a source offer for the
   exact bundled versions. Done: `THIRD_PARTY_LICENSES` lists what the apps
@@ -304,8 +309,8 @@ fails, they can see which stage failed and why.
   `ui/viewer.py`, the 3D view tab): camera placement (sparse points and a
   frustum per photo), dense cloud, textured mesh (the upright GLB export,
   or OpenMVS's PLY converted) and splats, all stood upright; a finished
-  build opens in it. The crop box is edited in it (Phase 2). Next on top of
-  it: manual orientation, scale from picked points, coverage on the camera
+  build opens in it. The crop box and the scale are set in it (Phases 2
+  and 4). Next on top of it: manual orientation, coverage on the camera
   rings.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and

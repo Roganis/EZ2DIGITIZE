@@ -10,6 +10,10 @@ With the camera placement or the dense cloud on screen, the crop box can
 be set (see ez2digitize.crop): ticking "Crop box" starts from a box around
 most of the sparse points; dragging its handles in the view, or turning
 it, saves it to the project, and the next build keeps only what is inside.
+
+On the same views the scale is set (see ez2digitize.scale): "Pick two
+points", click them, type their real distance, "Set scale"; exports then
+come out in millimetres and metres.
 """
 
 from __future__ import annotations
@@ -31,14 +35,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import crop, views
+from ez2digitize import crop, scale, views
 from ez2digitize.core.project import Project
+from ez2digitize.orientation import Vector
 from ez2digitize.ui.viewer import ViewerWidget
 
 # The views drawn in the reconstruction's frame, where the box belongs (the
 # exported mesh has been moved onto the ground).
 CROP_VIEWS = ("cameras", "dense")
 CROP_HINT = "Drag the yellow handles to move the box's faces. The next build keeps what is inside."
+PICK_HINT = "Click two points whose real distance you know (the ends of the object, say)."
 
 
 class ViewPanel(QWidget):
@@ -90,12 +96,43 @@ class ViewPanel(QWidget):
         crop_layout.addWidget(self.crop_hint, 1)
         self.crop_row.hide()
 
+        self._picked: tuple[Vector, Vector] | None = None  # upright frame, not saved yet
+        self.pick = QPushButton("Pick two points")
+        self.pick.setCheckable(True)
+        self.pick.setToolTip("Then type their real distance: exports come out in real units")
+        self.pick.toggled.connect(self._on_pick_toggled)
+        self.distance = QDoubleSpinBox()
+        self.distance.setRange(0.1, 100_000.0)
+        self.distance.setDecimals(1)
+        self.distance.setSuffix(" mm")
+        self.distance.setValue(100.0)
+        self.distance.setToolTip("The real distance between the two points, measured on the object")
+        self.set_scale = QPushButton("Set scale")
+        self.set_scale.clicked.connect(self._on_set_scale)
+        self.clear_scale = QPushButton("Clear")
+        self.clear_scale.setToolTip("No scale: exports in the reconstruction's arbitrary units")
+        self.clear_scale.clicked.connect(self._on_clear_scale)
+        self.scale_hint = QLabel()
+        self.scale_hint.setWordWrap(True)
+        self.scale_row = QWidget()
+        scale_layout = QHBoxLayout(self.scale_row)
+        scale_layout.setContentsMargins(0, 0, 0, 0)
+        scale_layout.addWidget(QLabel("Scale:"))
+        scale_layout.addWidget(self.pick)
+        scale_layout.addWidget(QLabel("Real distance:"))
+        scale_layout.addWidget(self.distance)
+        scale_layout.addWidget(self.set_scale)
+        scale_layout.addWidget(self.clear_scale)
+        scale_layout.addWidget(self.scale_hint, 1)
+        self.scale_row.hide()
+
         self.body = QVBoxLayout()
         self.body.addWidget(self.placeholder, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(row)
         layout.addWidget(self.crop_row)
+        layout.addWidget(self.scale_row)
         layout.addLayout(self.body, 1)
 
     def refresh(self, prefer: views.ViewKey | None = None) -> None:
@@ -111,6 +148,8 @@ class ViewPanel(QWidget):
         self.choice.setCurrentIndex(keys.index(wanted) if wanted else 0 if keys else -1)
         self.choice.blockSignals(False)
         self.choice.setEnabled(bool(keys))
+        if (current := scale.current(self.project)) is not None:
+            self.distance.setValue(current.distance_mm)
         self.placeholder.setVisible(not keys and self.viewer is None)
         if self.isVisible():
             self._show_chosen()
@@ -152,6 +191,7 @@ class ViewPanel(QWidget):
             self.viewer.loaded.connect(self._on_loaded)
             self.viewer.failed.connect(lambda message: self.status.setText(message))
             self.viewer.crop_changed.connect(self._on_crop_dragged)
+            self.viewer.measured.connect(self._on_measured)
             self.body.addWidget(self.viewer, 1)
             self._sync_crop()
         return self.viewer
@@ -191,6 +231,7 @@ class ViewPanel(QWidget):
         if self.viewer is not None:
             shown = upright_box.to_dict() if (here and upright_box) else None
             self.viewer.set_crop_box(shown, editable=editable)
+        self._sync_scale()
 
     def _save(self, upright_box: crop.UprightBox | None) -> None:
         run = crop.camera_run(self.project)
@@ -236,3 +277,89 @@ class ViewPanel(QWidget):
         if upright_box is not None:
             self._save(upright_box)
             self.status.setText("Crop box saved: the next build keeps what is inside")
+
+    # --- the scale --------------------------------------------------------------
+
+    def _sync_scale(self) -> None:
+        """Show the scale controls, and the scale's points, for the view on screen."""
+        view = self._chosen()
+        here = view is not None and view.key in CROP_VIEWS
+        self.scale_row.setVisible(here)
+        editable = here and not self._locked and crop.camera_run(self.project) is not None
+        current = scale.current(self.project)
+        self.pick.setEnabled(editable)
+        self.distance.setEnabled(editable)
+        self.set_scale.setEnabled(editable and (self._picked is not None or current is not None))
+        self.clear_scale.setEnabled(editable and scale.stored(self.project) is not None)
+        if not editable and self.pick.isChecked():
+            self.pick.setChecked(False)
+        upright = views.upright_rotation(self.project)
+        points: tuple[Vector, Vector] | None = None
+        label = ""
+        if self._picked is not None:
+            points = self._picked
+            label = "? mm"
+            self.scale_hint.setText("Type their real distance, then Set scale.")
+        elif current is not None:
+            points = scale.to_upright(current.points, upright)
+            label = f"{current.distance_mm:g} mm"
+            self.scale_hint.setText(f"Set: {scale.describe(current)}. Exports are in real units.")
+        elif scale.stored(self.project) is not None:
+            self.scale_hint.setText(
+                "The scale was set on an earlier camera placement; pick the points again."
+            )
+        elif not self.pick.isChecked():
+            self.scale_hint.setText("Not set: exports are in arbitrary units.")
+        if self.viewer is not None:
+            shown = [list(p) for p in points] if (here and points) else None
+            self.viewer.set_measure(shown, label)
+
+    def _on_pick_toggled(self, on: bool) -> None:
+        if self.viewer is None:
+            return
+        self.viewer.set_measuring(on)
+        if on:
+            self._picked = None
+            self.scale_hint.setText(PICK_HINT)
+            self.viewer.set_measure(None)
+        else:
+            self._sync_scale()
+
+    def _on_measured(self, event: dict[str, Any]) -> None:
+        try:
+            a, b = (tuple(float(v) for v in p) for p in event["points"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if len(a) != 3 or len(b) != 3:
+            return
+        self._picked = (a, b)
+        self.pick.blockSignals(True)
+        self.pick.setChecked(False)
+        self.pick.blockSignals(False)
+        self._sync_scale()
+        self.distance.setFocus()
+        self.distance.selectAll()
+
+    def _on_set_scale(self) -> None:
+        run = crop.camera_run(self.project)
+        if run is None:
+            return
+        if self._picked is not None:
+            points = scale.from_upright(self._picked, views.upright_rotation(self.project))
+        elif (current := scale.current(self.project)) is not None:
+            points = current.points  # a corrected distance for the same points
+        else:
+            return
+        try:
+            scale.save(self.project, scale.make(points, self.distance.value(), run))
+        except scale.ScaleError as exc:
+            self.scale_hint.setText(f"Not set: {exc}.")
+            return
+        self._picked = None
+        self._sync_scale()
+        self.status.setText("Scale saved: exports are in millimetres (STL, 3MF) and metres")
+
+    def _on_clear_scale(self) -> None:
+        self._picked = None
+        scale.save(self.project, None)
+        self._sync_scale()

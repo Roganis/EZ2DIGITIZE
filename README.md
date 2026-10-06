@@ -44,6 +44,7 @@ uv run ez2d masks ~/scans/skull                     # automatic masks (model: 17
 uv run ez2d import ~/scans/skull ~/Pictures/under --flipped  # the other side
 uv run ez2d run ~/scans/skull --sparse-only         # place the cameras only, then:
 uv run ez2d crop ~/scans/skull --auto               # a crop box (or --set, in the 3D view)
+uv run ez2d scale ~/scans/skull --distance 42       # the points picked in the 3D view: 42 mm
 uv run ez2d run ~/scans/skull --quality fast        # fast, balanced (default), high
 uv run ez2d status ~/scans/skull
 uv run ez2d export ~/scans/skull --formats glb      # OBJ and GLB are exported after run

@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage, crop, sides
+from ez2digitize import coverage, crop, scale, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -491,6 +491,13 @@ def _dense(
     )
     if box is not None:
         run.emit(Notice("the dense cloud keeps what is inside the crop box"))
+    if scale.current(project) is None and scale.stored(project) is not None:
+        run.emit(
+            Notice(
+                "the scale was set on an earlier camera placement, so exports are in "
+                "arbitrary units; set it again in the 3D view"
+            )
+        )
     mesh = run(openmvs.reconstruct_mesh(mvs, project, dense, options=settings.mesh))
     if settings.refine is not None:
         mesh = run(openmvs.refine_mesh(mvs, project, dense, mesh, options=settings.refine))

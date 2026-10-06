@@ -119,3 +119,47 @@ def test_dragging_a_crop_box_face(qtbot: QtBot, tmp_path: Path) -> None:
     assert moved["half_size"][0] > 0.55
     assert moved["centre"][0] - moved["half_size"][0] == pytest.approx(-0.5, abs=1e-3)
     assert moved["half_size"][1:] == [0.5, 0.5] and moved["centre"][1:] == [0.0, 4.5]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_picking_two_points(qtbot: QtBot, tmp_path: Path) -> None:
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    errors: list[str] = []
+    widget.failed.connect(errors.append)
+    widget.show_view(_camera_view(tmp_path))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    def click(point: list[float]) -> str:
+        x, y = json.loads(str(call(f"JSON.stringify(ez2d.pointOnScreen({point}))")))
+        return (
+            "(() => { const c = document.querySelector('canvas');"
+            "for (const type of ['pointerdown', 'pointerup']) c.dispatchEvent(new PointerEvent("
+            f"type, {{clientX: {x}, clientY: {y}, button: 0, pointerId: 1, bubbles: true}}));"
+            "return 1; })()"
+        )
+
+    widget.set_measuring(True)
+    qtbot.wait(300)
+    call(click([0.0, 0.0, 4.0]))  # the two sparse points
+    with qtbot.waitSignal(widget.measured, timeout=TIMEOUT_MS) as measured:
+        call(click([0.0, 0.0, 5.0]))
+    assert measured.args is not None
+    first, second = measured.args[0]["points"]
+    assert first == pytest.approx([0.0, 0.0, 4.0], abs=1e-4)
+    assert second == pytest.approx([0.0, 0.0, 5.0], abs=1e-4)
+    # Measuring ends after two: a further click picks nothing.
+    widget.set_measure([first, second], "25 mm")
+    label = call("document.getElementById('measure').textContent")
+    assert label == "25 mm"
+    assert errors == []

@@ -190,6 +190,8 @@ class ViewerWidget(QWidget):
     failed = Signal(str)
     # The user dragged the crop box: {"centre", "half_size", "yaw"} (upright frame).
     crop_changed = Signal(dict)
+    # Two points picked for the scale: {"points": [[x, y, z], [x, y, z]]} (upright frame).
+    measured = Signal(dict)
 
     def __init__(self, cache: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -198,6 +200,7 @@ class ViewerWidget(QWidget):
         self.shown: views.View | None = None
         self._pending: views.View | None = None
         self._crop: tuple[dict[str, Any] | None, bool] = (None, False)
+        self._measure: tuple[list[list[float]] | None, str] = (None, "")
         self.message = QLabel()
         self.message.setWordWrap(True)
         layout = QStackedLayout(self)
@@ -259,6 +262,17 @@ class ViewerWidget(QWidget):
         if AVAILABLE and self.is_ready:
             self.page.runJavaScript(f"ez2d.setCropBox({json.dumps(box)}, {json.dumps(editable)})")
 
+    def set_measuring(self, on: bool) -> None:
+        """Let the user pick two points (reported by `measured`), or stop."""
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript(f"ez2d.setMeasuring({json.dumps(on)})")
+
+    def set_measure(self, points: list[list[float]] | None, label: str = "") -> None:
+        """Show two points (upright frame) joined by a line, with `label`; None hides them."""
+        self._measure = (points, label)
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript(f"ez2d.setMeasure({json.dumps(points)}, {json.dumps(label)})")
+
     def frame_crop_box(self) -> None:
         if AVAILABLE and self.is_ready:
             self.page.runJavaScript("ez2d.frameCropBox()")
@@ -276,6 +290,8 @@ class ViewerWidget(QWidget):
             self.ready.emit(event)
             if self._crop[0] is not None:
                 self.set_crop_box(self._crop[0], editable=self._crop[1])
+            if self._measure[0] is not None:
+                self.set_measure(*self._measure)
             if event.get("webgl") is False:
                 self.failed.emit(
                     "The 3D view needs WebGL, which this graphics driver doesn't offer "
@@ -290,6 +306,8 @@ class ViewerWidget(QWidget):
         elif kind == "cropbox":
             self._crop = (event, self._crop[1])
             self.crop_changed.emit(event)
+        elif kind == "measure":
+            self.measured.emit(event)
         elif kind in ("error", "console-error"):
             self.failed.emit(str(event.get("message", "unknown error")))
 

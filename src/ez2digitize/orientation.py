@@ -83,20 +83,25 @@ def up_from_downs(downs: Iterable[Vector]) -> UpEstimate | None:
 
 @dataclass(frozen=True)
 class Placement:
-    """Export coordinates = rotation · model + offset (then Z-up if asked)."""
+    """Export coordinates = scale · (rotation · model + offset) (then Z-up if asked).
+
+    `scale` converts reconstruction units to the export's (see ez2digitize.scale).
+    """
 
     rotation: Matrix
     offset: Vector
+    scale: float = 1.0
 
     def apply(self, positions: array[float], *, z_up: bool = False) -> array[float]:
         (a, b, c), (d, e, f), (g, h, i) = self.rotation
         ox, oy, oz = self.offset
+        s = self.scale
         out = array("f", positions)
         for k in range(0, len(out), 3):
             x, y, z = positions[k], positions[k + 1], positions[k + 2]
-            nx = a * x + b * y + c * z + ox
-            ny = d * x + e * y + f * z + oy
-            nz = g * x + h * y + i * z + oz
+            nx = (a * x + b * y + c * z + ox) * s
+            ny = (d * x + e * y + f * z + oy) * s
+            nz = (g * x + h * y + i * z + oz) * s
             if z_up:  # rotate +90° about X: Y-up becomes Z-up
                 ny, nz = -nz, ny
             out[k], out[k + 1], out[k + 2] = nx, ny, nz
@@ -109,7 +114,11 @@ class Placement:
         return (nx, -nz, ny) if z_up else (nx, ny, nz)
 
     def to_dict(self) -> dict[str, object]:
-        return {"rotation": [list(row) for row in self.rotation], "offset": list(self.offset)}
+        return {
+            "rotation": [list(row) for row in self.rotation],
+            "offset": list(self.offset),
+            "scale": self.scale,
+        }
 
 
 def place(positions: array[float], up: Vector | None) -> Placement:

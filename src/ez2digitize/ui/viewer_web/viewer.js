@@ -27,7 +27,11 @@ try {
   renderer = new THREE.WebGLRenderer({ antialias: true });
 } catch (err) {
   hud.textContent = "The 3D view needs WebGL, which this graphics driver doesn't offer.";
-  window.ez2d = { show() {}, clear() {} };
+  const nothing = () => {};
+  window.ez2d = {
+    show: nothing, clear: nothing, setCropBox: nothing, frameCropBox: nothing,
+    setMeasuring: nothing, setMeasure: nothing,
+  };
   report("ready", { webgl: false, gpu: null, error: String(err && err.message ? err.message : err) });
   throw err;
 }
@@ -378,7 +382,128 @@ function endDrag(event) {
 renderer.domElement.addEventListener("pointerup", endDrag);
 renderer.domElement.addEventListener("pointercancel", endDrag);
 
+// --- Measuring: two points for the real-world scale ---------------------------
+//
+// While measuring, a click (not a drag, which turns the view) picks the
+// point of the cloud nearest the mouse ray; the second pick reports both
+// ("measure" event, upright frame) and ends measuring. The app answers with
+// setMeasure(points, label) to keep showing them with the distance.
+
+const measureGroup = new THREE.Group();
+measureGroup.visible = false;
+scene.add(measureGroup);
+const measureColor = 0x81c995;
+const markers = [0, 1].map(() => {
+  const marker = new THREE.Mesh(handleGeometry, new THREE.MeshBasicMaterial({ color: measureColor, depthTest: false }));
+  marker.renderOrder = 2;
+  marker.visible = false;
+  measureGroup.add(marker);
+  return marker;
+});
+const measureLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+  new THREE.LineBasicMaterial({ color: measureColor, depthTest: false }),
+);
+measureLine.renderOrder = 2;
+measureGroup.add(measureLine);
+const measureLabel = document.getElementById("measure");
+const help = document.getElementById("help");
+const HELP = help.textContent;
+let measuring = false;
+let picks = [];
+let pressedAt = null;
+
+function layoutMeasure(label = "") {
+  measureGroup.visible = picks.length > 0;
+  markers.forEach((marker, i) => {
+    marker.visible = i < picks.length;
+    if (marker.visible) marker.position.copy(picks[i]);
+  });
+  measureLine.visible = picks.length === 2;
+  if (picks.length === 2) measureLine.geometry.setFromPoints(picks);
+  measureLabel.textContent = label;
+  measureLabel.style.display = picks.length === 2 && label ? "block" : "none";
+}
+
+function placeMeasureLabel() {
+  if (picks.length < 2 || measureLabel.style.display !== "block") return;
+  const middle = picks[0].clone().add(picks[1]).multiplyScalar(0.5).project(camera);
+  const rect = renderer.domElement.getBoundingClientRect();
+  measureLabel.style.left = `${rect.left + ((middle.x + 1) / 2) * rect.width}px`;
+  measureLabel.style.top = `${rect.top + ((1 - middle.y) / 2) * rect.height}px`;
+}
+
+// Markers keep the same size on screen (about 5 px), like the crop handles.
+function scaleMarkers() {
+  if (!measureGroup.visible) return;
+  const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / renderer.domElement.clientHeight;
+  for (const marker of markers) {
+    marker.scale.setScalar(marker.position.distanceTo(camera.position) * perPixel * 5);
+  }
+}
+
+// The cloud's point nearest the mouse ray, in the upright (world) frame.
+function pickPoint(event) {
+  if (!content) return null;
+  setPointer(event);
+  const size = framedBox ? framedBox.getSize(new THREE.Vector3()).length() : 1;
+  raycaster.params.Points.threshold = size * 0.004;
+  const hits = raycaster
+    .intersectObject(content, true)
+    .filter((hit) => hit.object.isPoints || hit.object.isMesh);
+  if (!hits.length) return null;
+  // Of the points near the front-most hit, the one closest to the ray: the
+  // click lands on the visible surface, not on points behind it.
+  const front = hits[0].distance;
+  const near = hits.filter((hit) => hit.distance <= front + size * 0.01);
+  near.sort((a, b) => (a.distanceToRay ?? 0) - (b.distanceToRay ?? 0));
+  return near[0].point.clone();
+}
+
+renderer.domElement.addEventListener("pointerdown", (event) => {
+  if (measuring && event.button === 0) pressedAt = [event.clientX, event.clientY];
+});
+
+renderer.domElement.addEventListener("pointerup", (event) => {
+  if (!measuring || !pressedAt || event.button !== 0) return;
+  const moved = Math.hypot(event.clientX - pressedAt[0], event.clientY - pressedAt[1]);
+  pressedAt = null;
+  if (moved > 4) return; // a drag turned the view
+  const point = pickPoint(event);
+  if (!point) return;
+  picks = [...picks, point];
+  layoutMeasure();
+  if (picks.length === 2) {
+    setMeasuring(false);
+    report("measure", { points: picks.map((p) => p.toArray()) });
+  }
+});
+
+function setMeasuring(on) {
+  measuring = Boolean(on);
+  renderer.domElement.style.cursor = measuring ? "crosshair" : "";
+  help.textContent = measuring ? "Click two points of the model whose real distance you know" : HELP;
+  if (measuring) {
+    picks = [];
+    layoutMeasure();
+  }
+}
+
 window.ez2d = {
+  // Pick two points (see above); setMeasuring(false) stops without them.
+  setMeasuring,
+  // points: two [x, y, z] in the upright frame, or null to hide them.
+  setMeasure(points, label = "") {
+    picks = points ? points.map((p) => new THREE.Vector3(...p)) : [];
+    layoutMeasure(label);
+  },
+  // Where a point of the upright frame is on screen (client pixels), for tests.
+  pointOnScreen(point) {
+    scene.updateMatrixWorld(true);
+    const p = new THREE.Vector3(...point).project(camera);
+    const rect = renderer.domElement.getBoundingClientRect();
+    return [rect.left + ((p.x + 1) / 2) * rect.width, rect.top + ((1 - p.y) / 2) * rect.height];
+  },
   // box: {centre, half_size, yaw} in the upright frame, or null to hide it.
   setCropBox(box, editable = true) {
     cropGroup.visible = Boolean(box);
@@ -413,6 +538,9 @@ window.ez2d = {
   clear() {
     showing++;
     clear();
+    setMeasuring(false);
+    picks = [];
+    layoutMeasure();
     if (grid) scene.remove(grid);
     grid = null;
     hud.textContent = "Nothing to show yet";
@@ -422,7 +550,9 @@ window.ez2d = {
 renderer.setAnimationLoop(() => {
   controls.update();
   scaleHandles();
+  scaleMarkers();
   renderer.render(scene, camera);
+  placeMeasureLabel();
 });
 
 const gl = renderer.getContext();

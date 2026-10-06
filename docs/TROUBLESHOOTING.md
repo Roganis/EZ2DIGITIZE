@@ -61,8 +61,14 @@ logs and settings, never your photos. The logs do contain file paths.
   photos were held; if the photos were taken at all angles it can't tell
   and keeps the reconstruction's own frame (the "Stand the model upright"
   setting turns this off entirely). Turn it in your 3D program.
-- **Wrong size.** Models have no real-world scale yet; scale them in your
-  slicer or 3D program by a known measurement.
+- **Wrong size.** Photos alone don't give the size: set the scale in the 3D
+  view (camera placement or dense cloud: Pick two points, then their real
+  distance) and export again. STL and 3MF are then in millimetres, OBJ and
+  GLB in metres (some programs assume other units on import: a model 1000
+  times too small or large is that). Measure a long distance: an error of
+  half a millimetre over 10 mm is 5 % of the size.
+- **"The scale was set on an earlier camera placement".** As with the crop
+  box: the cameras were placed again, so pick the two points again.
 
 ## The 3D view
 

@@ -262,8 +262,11 @@ and 3MF); export.json records the transform. If the directions disagree
 - GLB materials are unlit (`KHR_materials_unlit`): photogrammetry
   textures already contain the lighting. GLBs pass the Khronos glTF
   validator without errors or warnings.
-- *(planned, Phase 4)* Scale, orientation and cleanup before export; STL
-  and 3MF for printing.
+- Scale (`scale.py`): with a scale set, the export's `Placement` gets a
+  factor after its rotation and offset: millimetres for STL and 3MF,
+  metres for OBJ, GLB and the point cloud (glTF's unit). `export.json`
+  records `scale_mm_per_unit` and the units, and the factor is part of
+  what decides whether an earlier export can be reused.
 
 ## GUI (`ui/`)
 
@@ -380,6 +383,16 @@ replacing OpenMVS's own estimate; its text is part of the stage's
 parameters, so a changed box re-runs densification and what follows.
 The viewer edits it in the upright frame, level and turned about the
 vertical (`UprightBox`); `from_upright`/`to_upright` convert.
+
+## Scale (`scale.py`)
+
+Two points in the reconstruction's coordinates and the real distance
+between them (millimetres), stored in project.json `settings["scale"]`
+with the mapping run id, stale after a new camera placement like the crop
+box. The 3D view picks the points in the upright frame (a click casts a
+ray into the cloud: of the points near the front-most hit, the one closest
+to the ray) and converts them back; `ez2d scale` sets the points and the
+distance, or just a corrected distance for the same points.
 
 Splat path (Phase 3) branches after `undistort`:
 

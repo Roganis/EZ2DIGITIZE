@@ -134,7 +134,7 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "photos", "masks", "crop", "run", "export",
+        "new", "import", "flip", "upload", "photos", "masks", "crop", "scale", "run", "export",
         "check", "diagnostics", "licenses", "status",
     }  # fmt: skip
 
@@ -278,3 +278,41 @@ def test_crop(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["crop", str(project), "--clear"]) == 0
     assert main(["crop", str(project)]) == 0
     assert "no crop box" in capsys.readouterr().out
+
+
+def test_scale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["scale", str(project)]) == 0
+    assert "no scale" in capsys.readouterr().out
+    points = ["--points", "0", "0", "0", "0", "2", "0"]
+    assert main(["scale", str(project), *points, "--distance", "50"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    assert main(["scale", str(project), *points]) == 1
+    assert "--distance" in capsys.readouterr().err
+    assert main(["scale", str(project), *points, "--distance", "50"]) == 0
+    out = capsys.readouterr().out
+    assert "scale: 50 mm between the two points (25 mm per unit)" in out
+    assert "points (0, 0, 0) and (0, 2, 0)" in out
+    # The real distance again, measured more carefully: same points.
+    assert main(["scale", str(project), "--distance", "48"]) == 0
+    assert "(24 mm per unit)" in capsys.readouterr().out
+    same = ["--points", "1", "1", "1", "1", "1", "1", "--distance", "5"]
+    assert main(["scale", str(project), *same]) == 1
+    assert "two different points" in capsys.readouterr().err
+    assert main(["scale", str(project), "--clear"]) == 0
+    assert main(["scale", str(project)]) == 0
+    assert "no scale" in capsys.readouterr().out

@@ -40,12 +40,15 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    at Balanced. To keep the table out of the model, press **Place cameras**
    first: the 3D view opens on the camera placement, where **Crop box**
    puts a box around the object; drag its yellow handles to fit, then
-   Build mesh.
+   Build mesh. For a model at its real size, measure two points on the
+   object (its height, say) and, in the same view, press **Pick two
+   points**, click them, type the distance and press **Set scale**.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),
    GLB, and STL/3MF for printing if you chose them. The model stands
-   upright, centred, on the ground.
+   upright, centred, on the ground; with the scale set, STL and 3MF are in
+   millimetres and OBJ and GLB in metres.
 
 **Build splats** trains Gaussian splats from the same camera positions
 (PLY, for splat viewers).

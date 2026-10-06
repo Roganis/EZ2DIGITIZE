@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The 3D view panel's crop box controls (the viewer itself: test_viewer.py)."""
+"""The 3D view panel's crop box and scale controls (the viewer itself: test_viewer.py)."""
 
 import struct
 from pathlib import Path
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 
-from ez2digitize import crop, views
+from ez2digitize import crop, scale, views
 from ez2digitize.backends.colmap import Colmap
 from ez2digitize.core.files import write_json_atomic
 from ez2digitize.core.project import Project
@@ -85,3 +85,37 @@ def test_no_crop_controls_for_the_mesh(qtbot: QtBot, project: Project) -> None:
     panel.choice.clear()
     panel._sync_crop()
     assert panel.crop_row.isHidden()
+    assert panel.scale_row.isHidden()
+
+
+def test_scale_controls(qtbot: QtBot, project: Project) -> None:
+    panel = ViewPanel(project)
+    qtbot.addWidget(panel)
+    panel.refresh(prefer="cameras")
+    assert not panel.scale_row.isHidden() and panel.pick.isEnabled()
+    assert not panel.set_scale.isEnabled() and "Not set" in panel.scale_hint.text()
+
+    # The viewer reports two picked points (upright frame), 1 unit apart.
+    panel._on_measured({"points": [[0.0, 0.0, 4.0], [0.0, 1.0, 4.0]]})
+    assert panel.set_scale.isEnabled() and "Type their real distance" in panel.scale_hint.text()
+    assert scale.stored(project) is None  # not saved before Set scale
+    panel.distance.setValue(50.0)
+    panel.set_scale.click()
+    saved = scale.current(project)
+    assert saved is not None and saved.camera_run == "m1"
+    assert saved.mm_per_unit == pytest.approx(50.0)
+    upright = views.upright_rotation(project)
+    assert scale.to_upright(saved.points, upright)[1] == pytest.approx((0.0, 1.0, 4.0))
+    assert "Set: 50 mm" in panel.scale_hint.text()
+
+    # Measured again more carefully: the same points, a new distance.
+    panel.distance.setValue(40.0)
+    panel.set_scale.click()
+    again = scale.current(project)
+    assert again is not None and again.points == saved.points and again.distance_mm == 40.0
+
+    panel.set_locked(True)  # a build is running
+    assert not panel.pick.isEnabled() and not panel.set_scale.isEnabled()
+    panel.set_locked(False)
+    panel.clear_scale.click()
+    assert scale.stored(project) is None and "Not set" in panel.scale_hint.text()

@@ -73,7 +73,10 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
 
 **Build splats** trains Gaussian splats from the same camera positions.
 They are exported twice: as Brush's PLY, and as a ten times smaller SPZ
-stood upright like the mesh (most splat viewers open either).
+stood upright like the mesh (most splat viewers open either). With **and a mesh
+from them** ticked, it also makes a surface through the splats (on the
+CPU, with vertex colours instead of a texture): a second mesh to compare
+with the textured one, sometimes better on thin or shiny parts.
 
 ## From the command line
 
@@ -87,6 +90,7 @@ ez2d photos ~/scans/skull                           # photo checks
 ez2d masks ~/scans/skull                            # automatic masks
 ez2d run ~/scans/skull --quality balanced --export obj,glb,stl
 ez2d run ~/scans/skull --splat                      # Gaussian splats
+ez2d run ~/scans/skull --splat --splat-mesh         # and a mesh made from them
 ez2d status ~/scans/skull
 ```
 

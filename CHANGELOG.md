@@ -17,7 +17,9 @@ The first release.
   CPU or any GPU: no CUDA needed.
 - Quality presets (fast, balanced, high) and a mesh size setting; each step
   is cached and resumes where it stopped.
-- Gaussian splats with Brush, from the same camera placement.
+- Gaussian splats with Brush, from the same camera placement, and
+  optionally a mesh made from them (vertex colours, on the CPU), to
+  compare with the textured mesh.
 - Automatic masks with a review grid, or imported masks, used by every step
   that can.
 - Two-sided scans: turn the object over, mark the second side, and the app

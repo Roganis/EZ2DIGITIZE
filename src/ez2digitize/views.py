@@ -12,7 +12,9 @@ tells it which `View` to draw. A view is one result of the pipeline:
 - `dense`: OpenMVS's dense point cloud,
 - `mesh`: the textured mesh, as the GLB the export wrote for the current
   texture run, else converted from OpenMVS's PLY into a cached GLB,
-- `splat`: Brush's Gaussian splats.
+- `splat`: Brush's Gaussian splats,
+- `splat-mesh`: the mesh made from the splats (see splat_mesh), as its
+  exported GLB, else converted into a cached GLB with vertex colours.
 
 `available` only looks at which stages succeeded, so it is cheap; `files`
 does the work (reading the sparse model, converting the mesh) when a view
@@ -33,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize import coverage, subject, upright
+from ez2digitize import coverage, splat_mesh, subject, upright
 from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
@@ -43,7 +45,7 @@ from ez2digitize.core.project import Project
 from ez2digitize.core.stage import StageManifest, load_manifest
 from ez2digitize.orientation import Matrix, quaternion_matrix
 
-ViewKey = Literal["cameras", "dense", "mesh", "splat"]
+ViewKey = Literal["cameras", "dense", "mesh", "splat", "splat-mesh"]
 # How the page draws a view (viewer.js): GLB mesh, PLY points, splats, or
 # sparse points with camera frustums.
 Kind = Literal["glb", "points", "splat", "cameras"]
@@ -53,8 +55,9 @@ LABELS: dict[ViewKey, str] = {
     "dense": "Dense point cloud",
     "mesh": "Textured mesh",
     "splat": "Gaussian splats",
+    "splat-mesh": "Mesh from splats",
 }
-ORDER: tuple[ViewKey, ...] = ("mesh", "splat", "dense", "cameras")
+ORDER: tuple[ViewKey, ...] = ("mesh", "splat-mesh", "splat", "dense", "cameras")
 
 
 class ViewError(Exception):
@@ -94,6 +97,13 @@ def available(project: Project) -> list[View]:
         else:
             stage = project.stage_dir("texture")
             views["mesh"] = View("mesh", "glb", texture.run_id, stage, up, texture.finished)
+    meshed = _succeeded(project, splat_mesh.STAGE)
+    if meshed is not None and (project.stage_dir(splat_mesh.STAGE) / splat_mesh.MESH).is_file():
+        glb = _exported_glb(project, meshed.run_id, up)
+        source = glb or project.stage_dir(splat_mesh.STAGE)
+        views["splat-mesh"] = View(
+            "splat-mesh", "glb", meshed.run_id, source, None if glb else up, meshed.finished
+        )
     splat = _succeeded(project, "splat")
     if splat is not None and (project.stage_dir("splat") / brush.SPLAT_FILE).is_file():
         views["splat"] = View(
@@ -132,6 +142,10 @@ def files(view: View, cache: Path) -> dict[str, Path | bytes]:
             if view.source.suffix == ".glb":
                 return {"model": view.source}
             return {"model": _cached_glb(view, cache)}
+        if view.key == "splat-mesh":
+            if view.source.suffix == ".glb":
+                return {"model": view.source}
+            return {"model": _cached_splat_mesh(view, cache)}
         if view.key == "splat":
             return {"model": view.source / brush.SPLAT_FILE}
         if view.key == "dense":
@@ -285,6 +299,16 @@ def _exported_glb(project: Project, run_id: str, up: Matrix | None) -> Path | No
                 if str(name).endswith(".glb") and (folder / str(name)).is_file():
                     return folder / str(name)
     return None
+
+
+def _cached_splat_mesh(view: View, cache: Path) -> Path:
+    target = cache / f"splat-mesh-{view.run_id}.glb"
+    if not target.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        partial = target.with_suffix(".part")
+        splat_mesh.write_glb(splat_mesh.read_mesh(view.source / splat_mesh.MESH), partial)
+        partial.replace(target)
+    return target
 
 
 def _cached_glb(view: View, cache: Path) -> Path:

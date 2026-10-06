@@ -83,6 +83,7 @@ STAGE_LABELS = {
     "refine": "Refine mesh",
     "texture": "Texture mesh",
     "splat": "Train splats",
+    "splat-mesh": "Mesh from splats",
 }
 
 # Detail -> OpenMVS resolution level (each level halves the image size).
@@ -200,6 +201,12 @@ class ProjectPage(QWidget):
             "file for viewers and the web"
         )
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
+        self.splat_mesh = QCheckBox("and a mesh from them")
+        self.splat_mesh.setToolTip(
+            "After training, also a surface through the splats (Poisson, on the CPU), with "
+            "vertex colours. A second opinion next to the textured mesh: it can do better "
+            "on thin or shiny parts, with softer colour."
+        )
         self.features = QComboBox()
         for kind, label in presets.FEATURE_LABELS.items():
             self.features.addItem(label, kind)
@@ -258,6 +265,7 @@ class ProjectPage(QWidget):
         self.detail.currentIndexChanged.connect(self._show_values)
         self.refine.toggled.connect(self._show_values)
         self.features.currentIndexChanged.connect(self._show_values)
+        self.splat_mesh.toggled.connect(self._show_values)
         self.mesh_size.currentIndexChanged.connect(self._show_values)
         self._show_values()
 
@@ -288,6 +296,7 @@ class ProjectPage(QWidget):
         buttons.addWidget(self.place_button)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.splat_button)
+        buttons.addWidget(self.splat_mesh)
         buttons.addWidget(self.cancel_button)
         buttons.addStretch(1)
 
@@ -432,6 +441,7 @@ class ProjectPage(QWidget):
         self.run_button.setEnabled(not busy and has_photos)
         self.place_button.setEnabled(not busy and has_photos)
         self.splat_button.setEnabled(not busy and has_photos)
+        self.splat_mesh.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
@@ -490,10 +500,14 @@ class ProjectPage(QWidget):
                 faces=faces,
                 subject=self.chosen_subject,
                 features=self.features.currentData(),
+                splat_mesh=self.splat_mesh.isChecked(),
             )
         else:
             settings = presets.mesh_settings(
-                self.chosen_quality, faces=faces, subject=self.chosen_subject
+                self.chosen_quality,
+                faces=faces,
+                subject=self.chosen_subject,
+                splat_mesh=self.splat_mesh.isChecked(),
             )
         return replace(
             settings,
@@ -811,6 +825,8 @@ class ProjectPage(QWidget):
         self.status.setText("Finished")
         folder = self._result_folder()
         what = "Splats" if isinstance(result, SplatResult) else "Textured mesh"
+        if isinstance(result, SplatResult) and result.mesh is not None:
+            what = "Splats and their mesh"
         self.result_label.setText(f"{what} saved in {folder}" if folder else "Finished.")
         self._update_buttons()
         # Show the result.

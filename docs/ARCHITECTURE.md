@@ -260,6 +260,20 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
+## Mesh from splats (`splat_mesh.py`)
+
+A second mesh path after splat training (`MeshSettings.splat_mesh`, the
+`splat-mesh` stage). The prepare step turns the splats into oriented
+points (in-process, numpy): opacity at least 0.5, the largest 1% left out,
+the crop box applied, each normal along the splat's shortest axis, turned
+towards the nearest camera. The stage runs COLMAP's `poisson_mesher`
+(screened Poisson, with colours; depth by quality, trim 5, gentler than
+COLMAP's 10, since splats are sparser than dense MVS points). The result
+is a vertex-coloured PLY, exported as `<name>_splat_mesh.glb` (placed like
+the other exports) and `.ply`, and shown in the 3D view as "Mesh from
+splats". The 2DGS-style methods that train surface-aligned splats are
+non-commercial (Inria) or CUDA-only, so they are left to plugins.
+
 ## Plugins (`plugins.py`, `ui/plugins_dialog.py`, `ez2d plugins`)
 
 Backends the user installs: tools that can't be bundled (non-commercial

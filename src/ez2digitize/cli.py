@@ -330,6 +330,11 @@ def _parser() -> argparse.ArgumentParser:
     part.add_argument(
         "--splat", action="store_true", help="Gaussian splats with Brush instead of a mesh"
     )
+    run.add_argument(
+        "--splat-mesh",
+        action="store_true",
+        help="with --splat: also a mesh from the splats (Poisson, vertex colours)",
+    )
     run.add_argument("--brush", type=Path, help="Brush executable (brush_app)")
     run.add_argument("--steps", type=int, help="splat training steps (default from --quality)")
     run.add_argument(
@@ -1239,6 +1244,7 @@ def _settings(
         max_image_size=args.max_image_size,
         faces=args.faces,
         steps=args.steps,
+        splat_mesh=args.splat and args.splat_mesh,
     )
     threads = args.threads
     return replace(

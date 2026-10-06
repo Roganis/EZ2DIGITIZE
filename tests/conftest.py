@@ -74,6 +74,19 @@ elif cmd == "image_undistorter":
     out = Path(opt("--output_path"))
     (out / "images").mkdir()
     (out / "sparse").mkdir()
+    for model_file in Path(opt("--input_path")).glob("*.bin"):  # the model, as is
+        (out / "sparse" / model_file.name).write_bytes(model_file.read_bytes())
+elif cmd == "poisson_mesher":
+    # A coloured tetrahedron, as PoissonRecon writes it (with its density value).
+    header = ("ply\\nformat binary_little_endian 1.0\\nelement vertex 4\\n"
+              + "".join(f"property float {n}\\n" for n in ("x", "y", "z", "value"))
+              + "".join(f"property uchar {n}\\n" for n in ("red", "green", "blue"))
+              + "element face 4\\nproperty list uchar int vertex_indices\\nend_header\\n")
+    body = b"".join(struct.pack("<4f3B", *v, 1.0, 200, 100, 50)
+                    for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    faces = ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
+    body += b"".join(struct.pack("<B3i", 3, *f) for f in faces)
+    Path(opt("--output_path")).write_bytes(header.encode() + body)
 elif cmd == "image_undistorter_standalone":
     src, out = Path(opt("--image_path")), Path(opt("--output_path"))
     for line in Path(opt("--input_file")).read_text().splitlines():

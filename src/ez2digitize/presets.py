@@ -26,6 +26,7 @@ from typing import Literal, get_args
 from ez2digitize import subject as subjects
 from ez2digitize.backends import brush, colmap, openmvs
 from ez2digitize.pipeline import MeshSettings
+from ez2digitize.splat_mesh import SplatMeshOptions
 from ez2digitize.subject import Subject
 
 Quality = Literal["fast", "balanced", "high"]
@@ -50,6 +51,10 @@ FEATURE_HINTS: dict[colmap.FeatureKind, str] = {
     "texture and large changes of viewpoint, but are slower on the CPU. The models "
     "(49 MB) are downloaded on first use.",
 }
+
+# Poisson octree depth of the mesh from the splats: finest detail is the
+# model's size / 2^depth.
+SPLAT_MESH_DEPTH: dict[Quality, int] = {"fast": 9, "balanced": 10, "high": 11}
 
 _PRESETS: dict[Quality, MeshSettings] = {
     "fast": MeshSettings(
@@ -82,6 +87,7 @@ def mesh_settings(
     steps: int | None = None,
     subject: Subject = subjects.DEFAULT,
     features: colmap.FeatureKind | None = None,
+    splat_mesh: bool = False,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
@@ -100,6 +106,9 @@ def mesh_settings(
         )
     if features is not None:
         settings = replace(settings, features=replace(settings.features, kind=features))
+    if splat_mesh:
+        options = SplatMeshOptions(depth=SPLAT_MESH_DEPTH[quality])
+        settings = replace(settings, splat_mesh=options)
     if faces is not None:
         settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
     if steps is not None:
@@ -155,6 +164,12 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
             "Splats",
             f"{settings.splat.total_steps:,} steps, photos up to "
             f"{settings.splat.max_resolution} px",
+        ),
+        (
+            "Mesh from the splats",
+            "no"
+            if settings.splat_mesh is None
+            else f"yes, detail down to 1/{2**settings.splat_mesh.depth:,} of its size",
         ),
     ]
 

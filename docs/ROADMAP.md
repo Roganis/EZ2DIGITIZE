@@ -419,6 +419,16 @@ fails, they can see which stage failed and why.
   could follow the same way.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
+  Licenses checked: 2DGS and Gaussian Opacity Fields are under Inria's
+  Gaussian-Splatting License (non-commercial), PGSR under its own; gsplat
+  (Apache-2.0) has a 2DGS rasteriser but only for CUDA. So the bundled
+  path is permissive and on the CPU: done (`ez2digitize.splat_mesh`), the
+  solid splats as oriented points (shortest axis as the normal, turned to
+  the nearest camera) into COLMAP's screened Poisson mesher (PoissonRecon,
+  MIT, already in COLMAP), vertex colours from the splats, exported as GLB
+  and PLY and shown in the 3D view. Checked on a synthetic sphere with the
+  real mesher (within 3-4% of the radius). The surface-trained methods can
+  come as plugins (a "mesh from splats" slot) once one is wanted.
 - Android capture companion, sending capture bundles through the Phase 3
   upload endpoint. Its value over the upload page is control of the camera,
   which a browser can't do:

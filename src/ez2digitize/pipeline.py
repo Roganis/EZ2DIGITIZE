@@ -30,12 +30,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage, crop, markers, plugins, scale, sides
+from ez2digitize import coverage, crop, markers, plugins, scale, sides, splat_mesh
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import download, photos
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.hardware import detect_gpus
+from ez2digitize.core.meshio import MeshFormatError
 from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.resources import GIB, available_memory, cpu_threads
@@ -51,8 +52,9 @@ SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
 STAGES = SPARSE_STAGES + DENSE_STAGES
 SPLAT_STAGE = "splat"
+SPLAT_MESH_STAGE = splat_mesh.STAGE  # a mesh from the splats (optional)
 # Every stage a project can have: the mesh path and the splat branch.
-ALL_STAGES = (*STAGES, SPLAT_STAGE)
+ALL_STAGES = (*STAGES, SPLAT_STAGE, SPLAT_MESH_STAGE)
 
 # Below this share of registered images the result is suspect: tell the user.
 MIN_REGISTERED_SHARE = 0.5
@@ -110,6 +112,8 @@ class MeshSettings:
     align: bool = True
     # Splat training (run_splat only).
     splat: brush.SplatOptions = field(default_factory=brush.SplatOptions)
+    # A mesh from the splats too (run_splat), with these options; None: no.
+    splat_mesh: splat_mesh.SplatMeshOptions | None = None
     # A scene skips the advice that assumes photos all round an object.
     subject: Subject = "object"
 
@@ -207,6 +211,9 @@ class SplatResult:
     splat: StageManifest
     file: Path
     exports: list[Path] = field(default_factory=list)
+    # The mesh from the splats (splat_mesh's mesh.ply), if asked for.
+    mesh: Path | None = None
+    mesh_exports: list[Path] = field(default_factory=list)
 
 
 # --- running -------------------------------------------------------------------
@@ -346,6 +353,8 @@ def run_splat(
     with _exclusive():
         masked = settings.use_masks and has_masks(project)
         stages = (*_sparse_stages(tools, masked=masked), SPLAT_STAGE)
+        if settings.splat_mesh is not None:
+            stages = (*stages, SPLAT_MESH_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
         run = _Run(project, stages, on_event, cancel, force_from)
         masks = sparse.masks
@@ -382,7 +391,45 @@ def run_splat(
             except ExportError as exc:
                 raise PipelineError(str(exc)) from exc
             run.emit(Notice(f"exported to {exports[0].parent}"))
-        return SplatResult(sparse=sparse, splat=manifest, file=file, exports=exports)
+        result = SplatResult(sparse=sparse, splat=manifest, file=file, exports=exports)
+        if settings.splat_mesh is not None:
+            _splat_mesh(project, tools, settings, sparse, manifest, run, result)
+        return result
+
+
+def _splat_mesh(
+    project: Project,
+    tools: Tools,
+    settings: MeshSettings,
+    sparse: SparseResult,
+    splats: StageManifest,
+    run: _Run,
+    result: SplatResult,
+) -> None:
+    """The mesh from the splats (see splat_mesh), exported like the splats."""
+    options = settings.splat_mesh or splat_mesh.SplatMeshOptions()
+    spec = splat_mesh.mesh_stage(tools.colmap, project, splats, sparse.undistorted, options=options)
+    try:
+        run(spec)
+    except splat_mesh.SplatMeshError as exc:
+        raise PipelineError(f"no mesh from the splats: {exc}") from exc
+    mesh = project.stage_dir(SPLAT_MESH_STAGE) / splat_mesh.MESH
+    try:
+        faces = splat_mesh.read_mesh(mesh).faces
+    except (OSError, MeshFormatError):
+        faces = None
+    if faces is None or not len(faces):
+        raise PipelineError(
+            "the mesh from the splats came out empty: the splats are too sparse for the "
+            "trimming (try a lower trim value, or more training steps)"
+        )
+    result.mesh = mesh
+    if settings.export_formats:
+        try:
+            result.mesh_exports = splat_mesh.export(project)
+        except ExportError as exc:
+            raise PipelineError(str(exc)) from exc
+        run.emit(Notice(f"mesh from the splats exported to {result.mesh_exports[0].parent}"))
 
 
 def _sparse(

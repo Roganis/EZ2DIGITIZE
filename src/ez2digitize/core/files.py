@@ -11,6 +11,7 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,10 +56,29 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        tmp.replace(path)
+        replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+# Windows refuses to rename over a file another thread or program has open
+# ("Access is denied"): a reader, or another writer's rename in progress. The
+# photo checks and the pipeline both save capture.json, so retry for a while.
+REPLACE_TRIES = 50
+REPLACE_WAIT_S = 0.05
+
+
+def replace(source: Path, target: Path) -> None:
+    """`source.replace(target)`, retried on Windows while the target is busy."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT_S)
 
 
 def sha256_file(path: Path) -> str:

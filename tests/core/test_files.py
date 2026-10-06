@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -40,3 +41,34 @@ def test_write_uniform_png(tmp_path: Path) -> None:
 def test_write_uniform_png_rejects(tmp_path: Path, w: int, h: int, v: int) -> None:
     with pytest.raises(ValueError, match="invalid PNG"):
         write_uniform_png(tmp_path / "x.png", w, h, v)
+
+
+def test_replace_retries_while_windows_has_the_file_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ez2digitize.core import files
+
+    target = tmp_path / "capture.json"
+    files.write_json_atomic(target, {"v": 1})
+    real = Path.replace
+    busy = [2]  # the first two renames find the file open
+
+    def flaky(self: Path, other: Path) -> Path:
+        if busy[0]:
+            busy[0] -= 1
+            raise PermissionError(13, "Access is denied")
+        return real(self, other)
+
+    monkeypatch.setattr(Path, "replace", flaky)
+    monkeypatch.setattr(files, "REPLACE_WAIT_S", 0.0)
+    monkeypatch.setattr(sys, "platform", "win32")
+    files.write_json_atomic(target, {"v": 2})
+    assert files.read_json_object(target) == {"v": 2}
+
+    # Elsewhere a permission error is real: no retries.
+    monkeypatch.setattr(sys, "platform", "linux")
+    busy[0] = 1
+    with pytest.raises(PermissionError):
+        files.write_json_atomic(target, {"v": 3})
+    assert files.read_json_object(target) == {"v": 2}
+    assert not list(tmp_path.glob(".capture.json.*"))  # no temporary file left

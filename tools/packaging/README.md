@@ -58,6 +58,10 @@ smoke test runs `masks` with the frozen app, which downloads the model
 over HTTPS and runs the `mask-worker` command: 50 s for the 32 synthetic
 photos on the Linux runner (download included), 226 s on the macOS one.
 
+3D viewer (October 2026): QtWebEngine makes the AppImage 392.5 MB (from
+252.5) and the macOS zip 334 MB (from 192), as the packaging spike
+predicted. The self-test checks that the viewer's page loads in the bundle.
+
 ## macOS app
 
 ```sh

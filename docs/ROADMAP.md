@@ -263,6 +263,14 @@ fails, they can see which stage failed and why.
   adjust needs the viewer.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
+  Done (`ez2digitize.sides`): a capture can be marked as turned over
+  (`flipped` in capture.json; Other side… and the Both sides tab, `ez2d
+  import --flipped`, `ez2d flip`); the tab explains the capture and keeps a
+  checklist (photos of both sides, a mask for every photo), and Build asks
+  before running with masks missing. The pipeline warns about the same,
+  then says after camera placement whether the sides joined (photos of each
+  side placed together); the upright estimate uses the first side's photos
+  only. Still to test on a real two-sided capture (Phase 1 dataset 3).
 - Mesh cleanup: keep largest component, remove floaters, decimate to a
   target face count, hole filling and watertightness check for printing
   (Open3D is MIT; PyMeshLab is GPL-3.0, both fine). Done without a new

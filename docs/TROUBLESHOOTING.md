@@ -33,6 +33,12 @@ logs and settings, never your photos. The logs do contain file paths.
 
 ## The result looks wrong
 
+- **"The two sides did not join".** Only one side made it into the model.
+  In the Masks tab, look for masks that kept the table, the stand or
+  something next to the object, and drop or fix them; check that every
+  photo has a mask (Both sides tab). If they are clean, the sets overlap
+  too little: take a low ring of photos for each side, so the object's
+  sides show in both.
 - **Only part of the object, or a lump of background.** Look at the notes
   in the log after camera placement: "only N of M images were placed", "the
   photos split into separate groups", "no photos from about 120° of the way

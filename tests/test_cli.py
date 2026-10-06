@@ -138,7 +138,7 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "upload", "photos", "masks", "run", "export", "check",
+        "new", "import", "flip", "upload", "photos", "masks", "run", "export", "check",
         "diagnostics", "licenses", "status",
     }  # fmt: skip
 
@@ -223,3 +223,33 @@ def test_masks(
     out = capsys.readouterr().out
     assert "1 automatic masks removed" in out and "masks: 1 imported, 1 none" in out
     assert main(["masks", str(project), "--status"]) == 0
+
+
+def test_two_sided_import_and_flip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from PIL import Image
+
+    from ez2digitize.core.capture import list_bundles
+    from ez2digitize.core.project import Project
+
+    project = tmp_path / "p"
+    for side in ("top", "under"):
+        (tmp_path / side).mkdir()
+        Image.new("RGB", (40, 30), (90, 0, 0)).save(tmp_path / side / f"{side}.jpg")
+    assert main(["new", str(project)]) == 0
+    assert main(["import", str(project), str(tmp_path / "top")]) == 0
+    assert "two-sided" not in capsys.readouterr().out
+    assert main(["import", str(project), str(tmp_path / "under"), "--flipped"]) == 0
+    out = capsys.readouterr().out
+    assert "(turned over)" in out
+    assert "two-sided scan: 1 photos of the first side, 1 turned over" in out
+    assert "to do: 2 of 2 photos have no mask" in out
+
+    bundles = list_bundles(Project.open(project))
+    assert [b.flipped for b in bundles] == [False, True]
+    assert main(["flip", str(project), bundles[1].id, "--undo"]) == 0
+    assert "the first side" in capsys.readouterr().out
+    assert not any(b.flipped for b in list_bundles(Project.open(project)))
+    assert main(["flip", str(project), bundles[0].id]) == 0
+    assert main(["status", str(project)]) == 0
+    assert "(turned over)" in capsys.readouterr().out
+    assert main(["flip", str(project), "nope"]) == 1

@@ -12,6 +12,7 @@ byte for byte, plus a `capture.json`:
       "created": "2026-10-05T20:32:00+00:00",
       "device": {"make": "Google", "model": "Pixel 8"} or null,
       "source_info": {...},          # free-form, e.g. the imported folder
+      "flipped": false,              # the object was turned over (optional)
       "files": [
         {"name": "IMG_0001.jpg", "original_name": "IMG_0001.jpg",
          "kind": "image", "size": 4123456, "sha256": "...", "metadata": {},
@@ -23,7 +24,8 @@ byte for byte, plus a `capture.json`:
 their inspection under `metadata["photo"]` (see core.photos). `excluded`
 marks a file the user left out of the reconstruction; the file itself stays
 in the bundle, untouched, so it can be brought back. Readers older than
-this field ignore it (and use every file).
+this field ignore it (and use every file). `flipped` marks the second side
+of a two-sided scan (see ez2digitize.sides); absent means false.
 
 Folder import, video, phone upload and the Android app all produce this
 format; the pipeline only reads bundles. A bundle is assembled in a hidden
@@ -132,6 +134,8 @@ class CaptureBundle:
     files: list[CaptureFile]
     device: dict[str, str] | None = None
     source_info: dict[str, Any] = field(default_factory=dict)
+    # The object was turned over for these photos (two-sided scans, see sides.py).
+    flipped: bool = False
 
     @classmethod
     def load(cls, root: Path) -> CaptureBundle:
@@ -149,6 +153,9 @@ class CaptureBundle:
         if not isinstance(raw_files, list):
             raise CaptureError(f"{root / CAPTURE_FILE}: 'files' must be a list")
         device, source_info = data.get("device"), data.get("source_info", {})
+        flipped = data.get("flipped", False)  # optional: absent in older bundles
+        if not isinstance(flipped, bool):
+            raise CaptureError(f"{root / CAPTURE_FILE}: 'flipped' must be true or false")
         assert isinstance(bundle_id, str) and isinstance(source, str) and isinstance(created, str)
         return cls(
             root=root,
@@ -158,6 +165,7 @@ class CaptureBundle:
             files=[CaptureFile.from_dict(entry) for entry in raw_files],
             device=device if isinstance(device, dict) else None,
             source_info=source_info if isinstance(source_info, dict) else {},
+            flipped=flipped,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +176,7 @@ class CaptureBundle:
             "created": self.created,
             "device": self.device,
             "source_info": self.source_info,
+            "flipped": self.flipped,
             "files": [f.to_dict() for f in self.files],
         }
 
@@ -205,6 +214,11 @@ class CaptureBundle:
                 entry.excluded = excluded
         self.save()
 
+    def set_flipped(self, flipped: bool) -> None:
+        """Mark the capture as taken with the object turned over (or not) and save."""
+        self.flipped = flipped
+        self.save()
+
     def verify(self) -> list[str]:
         """Re-hash every file; return a description of each problem found."""
         problems = []
@@ -237,6 +251,7 @@ def import_files(
     device: dict[str, str] | None = None,
     source_info: dict[str, Any] | None = None,
     now: datetime | None = None,
+    flipped: bool = False,
 ) -> CaptureBundle:
     """Copy `files` into a new capture bundle of `project`, untouched.
 
@@ -263,7 +278,13 @@ def import_files(
         return add_jpeg_copies(staging, entries, used)
 
     return assemble_bundle(
-        project, fill, source=source, device=device, source_info=source_info, now=now
+        project,
+        fill,
+        source=source,
+        device=device,
+        source_info=source_info,
+        now=now,
+        flipped=flipped,
     )
 
 
@@ -275,6 +296,7 @@ def assemble_bundle(
     device: dict[str, str] | None = None,
     source_info: dict[str, Any] | None = None,
     now: datetime | None = None,
+    flipped: bool = False,
 ) -> CaptureBundle:
     """Create a bundle from the files `fill` puts into the (staging) folder it gets.
 
@@ -298,6 +320,7 @@ def assemble_bundle(
             files=entries,
             device=device,
             source_info=info,
+            flipped=flipped,
         )
         bundle.save()
         staging.rename(final)
@@ -357,7 +380,7 @@ def add_file(folder: Path, name: str, *, original_name: str, kind: FileKind) -> 
 
 
 def import_folder(
-    project: Project, folder: Path, *, now: datetime | None = None
+    project: Project, folder: Path, *, now: datetime | None = None, flipped: bool = False
 ) -> tuple[CaptureBundle, list[Path]]:
     """Import the photos directly inside `folder` (not subfolders).
 
@@ -380,6 +403,7 @@ def import_folder(
         source="folder",
         source_info={"folder": str(folder.absolute())},
         now=now,
+        flipped=flipped,
     )
     return bundle, skipped
 

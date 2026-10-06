@@ -47,6 +47,7 @@ from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.orientation import Placement, estimate_up, place
+from ez2digitize.sides import upright_names
 
 ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat"]
 FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
@@ -211,7 +212,8 @@ def _placement(project: Project, mesh: TexturedMesh) -> Placement | None:
     if not (model / "images.bin").is_file():
         return None
     try:
-        estimate = estimate_up(model, exif_orientations(list_bundles(project)))
+        bundles = list_bundles(project)
+        estimate = estimate_up(model, exif_orientations(bundles), upright_names(bundles))
     except (OSError, ValueError, FormatError, BackendError):
         return None
     return place(mesh.positions, estimate.up) if estimate is not None else None

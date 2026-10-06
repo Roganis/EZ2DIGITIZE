@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage
+from ez2digitize import coverage, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -364,6 +364,8 @@ def _sparse(
     masks = project.masks_dir if settings.use_masks and has_masks(project) else None
     stages = stages or _stages(settings, masked=masks is not None)
     run = _Run(project, stages, on_event, cancel, force_from)
+    for problem in sides.check(project, bundles, use_masks=settings.use_masks):
+        run.emit(Notice(f"two-sided scan: {problem}"))
     sfm = tools.colmap
 
     feature_options = settings.features
@@ -410,6 +412,13 @@ def _sparse(
         )
     registered = colmap.registered_images(model)
     run.emit(Notice(f"{registered} of {total} images registered (model {model.name})"))
+    if (two_sided := sides.sides(bundles)) is not None and two_sided.complete:
+        try:
+            placed = colmap_model.read_images(model)
+        except BackendError as exc:
+            run.emit(Notice(f"could not check how the two sides joined: {exc}"))
+        else:
+            run.emit(Notice(sides.join_notice(sides.joined(two_sided, placed))))
     if len(colmap.models(sparse_dir)) > 1:
         run.emit(
             Notice(
@@ -509,7 +518,7 @@ def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle])
                 f"few matches with the others: {coverage.name_list(weak)}. More photos "
                 "between them and their neighbours would make the result more reliable."
             )
-        analysis = coverage.analyse(model, exif_orientations(bundles))
+        analysis = coverage.analyse(model, exif_orientations(bundles), sides.upright_names(bundles))
         notes += analysis.findings if analysis else ()
     except (OSError, ValueError, BackendError, sqlite3.Error):
         pass  # advice only: never stop the run for it

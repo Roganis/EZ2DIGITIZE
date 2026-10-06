@@ -228,3 +228,21 @@ def test_import_masks(project: Project, tmp_path: Path) -> None:
         "IMG_1.jpg.png",
         "IMG_3.jpg.png",
     ]
+
+
+def test_flipped(project: Project, tmp_path: Path) -> None:
+    a = _write(tmp_path / "in" / "a.jpg", b"a")
+    bundle = import_files(project, [a], source="folder", now=NOW, flipped=True)
+    assert CaptureBundle.load(bundle.root).flipped
+    bundle.set_flipped(False)
+    assert not CaptureBundle.load(bundle.root).flipped
+
+    # Bundles written before the field read as the first side.
+    data = json.loads((bundle.root / "capture.json").read_text())
+    del data["flipped"]
+    (bundle.root / "capture.json").write_text(json.dumps(data))
+    assert not CaptureBundle.load(bundle.root).flipped
+    data["flipped"] = "yes"
+    (bundle.root / "capture.json").write_text(json.dumps(data))
+    with pytest.raises(CaptureError, match="'flipped' must be"):
+        CaptureBundle.load(bundle.root)

@@ -380,3 +380,33 @@ def test_splats_need_brush_and_a_real_gpu(
     with pytest.raises(pipeline.PipelineError, match="software renderer"):
         pipeline.run_splat(project, with_brush)
     assert pipeline.run_splat(project, with_brush, allow_software_gpu=True).file.is_file()
+
+
+def test_two_sided_scan_notices(
+    project: Project, tools: Tools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    under = tmp_path / "under"
+    under.mkdir()
+    _jpeg(under / "d.jpg", 3)
+    _jpeg(under / "e.jpg", 4)
+    second = import_files(
+        project, [under / "d.jpg", under / "e.jpg"], source="folder", flipped=True
+    )
+    # The fake mapper places the first images in order: a, b, c only.
+    monkeypatch.setenv("FAKE_MODELS", "3")
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any(n.startswith("two-sided scan: 5 of 5 photos have no mask") for n in notices)
+    assert any("the two sides did not join (3 of 3 photos of the first side" in n for n in notices)
+
+    for bundle in list_bundles(project):
+        (project.masks_dir / bundle.id).mkdir(parents=True, exist_ok=True)
+        for name in ("a.jpg", "b.jpg", "c.jpg") if bundle.id != second.id else ("d.jpg", "e.jpg"):
+            (project.masks_dir / bundle.id / f"{name}.png").write_bytes(b"m")
+    monkeypatch.setenv("FAKE_MODELS", "5")
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert not any(n.startswith("two-sided scan") for n in notices)
+    assert any(n.startswith("both sides joined: 3 of 3 photos") for n in notices)

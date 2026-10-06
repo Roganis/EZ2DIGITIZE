@@ -96,3 +96,18 @@ def test_quaternion_matrix() -> None:
 
 def test_placement_dict() -> None:
     assert Placement(IDENTITY, (1, 2, 3)).to_dict()["offset"] == [1, 2, 3]
+
+
+def test_estimate_up_from_the_first_side_only(tmp_path: Path) -> None:
+    # Two photos as usual, two of the object turned over: seen from the
+    # object, those cameras are upside down (180° about the view axis).
+    poses = {
+        "top/a.jpg": (1.0, 0.0, 0.0, 0.0),
+        "top/b.jpg": (1.0, 0.0, 0.0, 0.0),
+        "under/c.jpg": (0.0, 0.0, 0.0, 1.0),
+        "under/d.jpg": (0.0, 0.0, 0.0, 1.0),
+    }
+    _images_bin(tmp_path / "images.bin", poses)
+    assert estimate_up(tmp_path) is None  # they cancel out
+    first = estimate_up(tmp_path, only={"top/a.jpg", "top/b.jpg"})
+    assert first is not None and first.up == pytest.approx((0, -1, 0)) and first.images == 2

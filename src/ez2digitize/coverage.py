@@ -24,7 +24,7 @@ from __future__ import annotations
 import contextlib
 import math
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,8 +57,15 @@ class Coverage:
     findings: tuple[str, ...]
 
 
-def analyse(model_dir: Path, orientations: Mapping[str, int] | None = None) -> Coverage | None:
-    """Coverage of a COLMAP model's registered images; None if too few to judge."""
+def analyse(
+    model_dir: Path,
+    orientations: Mapping[str, int] | None = None,
+    upright: Collection[str] | None = None,
+) -> Coverage | None:
+    """Coverage of a COLMAP model's registered images; None if too few to judge.
+
+    `upright`: the images to take the up direction from (see estimate_up).
+    """
     images = read_images(model_dir)
     centres: list[Vector] = []
     axes: list[Vector] = []
@@ -71,7 +78,7 @@ def analyse(model_dir: Path, orientations: Mapping[str, int] | None = None) -> C
         axes.append(_mul_transposed(rotation, (0.0, 0.0, 1.0)))
     if len(centres) < MIN_CAMERAS:
         return None
-    up_estimate = estimate_up(model_dir, orientations)
+    up_estimate = estimate_up(model_dir, orientations, upright)
     return assess(centres, axes, up_estimate.up if up_estimate else None, names)
 
 

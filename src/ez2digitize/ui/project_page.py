@@ -62,6 +62,7 @@ from ez2digitize.ui.masks_panel import MasksPanel
 from ez2digitize.ui.phone_upload import PhoneUploadDialog
 from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
+from ez2digitize.ui.sides_panel import SidesPanel
 from ez2digitize.ui.video_import import VideoImporter
 
 STAGE_LABELS = {
@@ -145,6 +146,11 @@ class ProjectPage(QWidget):
         self.phone_button = QPushButton("From phone…")
         self.phone_button.setToolTip("Send photos from a phone over Wi-Fi (scan a QR code)")
         self.phone_button.clicked.connect(self.add_from_phone)
+        self.other_side_button = QPushButton("Other side…")
+        self.other_side_button.setToolTip(
+            "Scan the underside too: import photos taken with the object turned over"
+        )
+        self.other_side_button.clicked.connect(self.choose_other_side)
 
         header = QHBoxLayout()
         header_text = QVBoxLayout()
@@ -154,6 +160,7 @@ class ProjectPage(QWidget):
         header.addWidget(self.import_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.import_video_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.phone_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.other_side_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self.quality = QComboBox()
         for quality in presets.QUALITIES:
@@ -302,6 +309,11 @@ class ProjectPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.photo_checks, "Photo checks")
         self.tabs.addTab(self.masks_panel, "Masks")
+        self.sides_panel = SidesPanel(project)
+        self.sides_panel.sides_changed.connect(self._show_counts)
+        self.sides_panel.import_other_side.connect(self.choose_other_side)
+        self.sides_panel.show_masks.connect(lambda: self.tabs.setCurrentWidget(self.masks_panel))
+        self.tabs.addTab(self.sides_panel, "Both sides")
         self.tabs.addTab(self.log, "Log")
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -339,6 +351,7 @@ class ProjectPage(QWidget):
         self._show_counts()
         self.photo_checks.refresh()
         self.masks_panel.refresh()
+        self.sides_panel.refresh()
         if not self.runner.running:
             self._show_previous_stages()
 
@@ -391,6 +404,8 @@ class ProjectPage(QWidget):
             widget.setEnabled(not busy)
         self.photo_checks.set_locked(busy)
         self.masks_panel.set_locked(running or importing)
+        self.sides_panel.set_locked(busy)
+        self.other_side_button.setEnabled(not busy)
         self.use_masks.setEnabled(not busy and masks.has_masks(self.project))
         self.open_result_button.setVisible(self.last_result is not None)
         self.open_log_button.setVisible(
@@ -451,13 +466,22 @@ class ProjectPage(QWidget):
         if folder:
             self.import_folder(Path(folder))
 
-    def import_folder(self, folder: Path) -> None:
+    def choose_other_side(self) -> None:
+        self.tabs.setCurrentWidget(self.sides_panel)
+        folder = QFileDialog.getExistingDirectory(
+            self, "Import the photos taken with the object turned over"
+        )
+        if folder:
+            self.import_folder(Path(folder), flipped=True)
+
+    def import_folder(self, folder: Path, *, flipped: bool = False) -> None:
         try:
-            bundle, skipped = import_folder(self.project, folder)
+            bundle, skipped = import_folder(self.project, folder, flipped=flipped)
         except CaptureError as exc:
             QMessageBox.warning(self, "Import failed", str(exc))
             return
-        message = f"Imported {len(bundle.files)} photos from {folder.name}."
+        side = " of the turned-over side" if flipped else ""
+        message = f"Imported {len(bundle.files)} photos{side} from {folder.name}."
         videos = [p for p in skipped if p.suffix.lower() in VIDEO_SUFFIXES]
         if videos:
             message += f" Import its {len(videos)} video(s) with Import video."
@@ -465,7 +489,8 @@ class ProjectPage(QWidget):
             message += f" Skipped {len(skipped) - len(videos)} files that are not photos."
         self.status.setText(message)
         self.refresh()
-        self.tabs.setCurrentWidget(self.photo_checks)
+        # The second side: show what is left to do (usually: masks).
+        self.tabs.setCurrentWidget(self.sides_panel if flipped else self.photo_checks)
         self.project_changed.emit()
 
     def add_from_phone(self) -> None:
@@ -514,6 +539,18 @@ class ProjectPage(QWidget):
                 f"{exc}\n\nSet their location in Settings → Reconstruction tools.",
             )
             return
+        problems = self.sides_panel.problems(use_masks=self.use_masks.isChecked())
+        if problems:
+            answer = QMessageBox.question(
+                self,
+                "Two-sided scan",
+                "The two sides may not join:\n\n"
+                + "\n".join(f"• {p[:1].upper()}{p[1:]}." for p in problems)
+                + "\n\nBuild anyway?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.tabs.setCurrentWidget(self.sides_panel)
+                return
         self.last_result = None
         self.last_failure = None
         self.result_label.clear()

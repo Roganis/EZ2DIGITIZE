@@ -9,6 +9,7 @@
     ez2d photos ~/scans/skull --exclude Preview.jpg
     ez2d masks ~/scans/skull                # automatic masks, then a review
     ez2d masks ~/scans/skull --drop IMG_0012.JPG
+    ez2d import ~/scans/skull ~/Pictures/skull-under --flipped   # the other side
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d status ~/scans/skull
@@ -32,7 +33,7 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import diagnostics, licenses, masks, presets, video
+from ez2digitize import diagnostics, licenses, masks, presets, sides, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -117,7 +118,21 @@ def _parser() -> argparse.ArgumentParser:
         help=f"frames to keep from each video (default {video.DEFAULT_FRAMES})",
     )
     imp.add_argument("--ffmpeg", type=Path, help="FFmpeg executable")
+    imp.add_argument(
+        "--flipped",
+        action="store_true",
+        help="the object is turned over in these photos (the second side of a two-sided scan)",
+    )
     imp.set_defaults(func=_cmd_import)
+
+    flip = sub.add_parser(
+        "flip",
+        help="mark a capture as the turned-over side of a two-sided scan (or undo it)",
+    )
+    flip.add_argument("project", type=Path)
+    flip.add_argument("capture", help="capture id (see `ez2d status`)")
+    flip.add_argument("--undo", action="store_true", help="mark it as the first side again")
+    flip.set_defaults(func=_cmd_flip)
 
     phone = sub.add_parser(
         "upload", help="receive photos from a phone over Wi-Fi (prints a QR code to scan)"
@@ -266,8 +281,9 @@ def _cmd_import(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
     for source in args.sources:
         if source.is_dir():
-            bundle, skipped = import_folder(project, source)
-            print(f"{source}: {len(bundle.files)} photos -> capture {bundle.id}")
+            bundle, skipped = import_folder(project, source, flipped=args.flipped)
+            side = " (turned over)" if args.flipped else ""
+            print(f"{source}: {len(bundle.files)} photos -> capture {bundle.id}{side}")
             for path in skipped:
                 why = "a video: import it on its own" if classify(path) else "not a photo"
                 print(f"  skipped ({why}): {path.name}")
@@ -276,13 +292,41 @@ def _cmd_import(args: argparse.Namespace) -> int:
                 print(f"  {len(copied)} of {len(bundle.images)} masks imported")
         else:
             bundle = _import_video(project, source, args)
+            if args.flipped:
+                bundle.set_flipped(True)
             info = bundle.source_info
             print(
                 f"{source}: {info['frames']} frames, the sharpest of {info['candidates']} "
                 f"extracted -> capture {bundle.id}"
             )
     _check_photos(project)
+    _print_sides(project)
     return 0
+
+
+def _cmd_flip(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    bundles = list_bundles(project)
+    bundle = _one_capture(bundles, args.capture)
+    bundle.set_flipped(not args.undo)
+    side = "the first side" if args.undo else "turned over"
+    print(f"capture {bundle.id}: {side}")
+    _print_sides(project)
+    return 0
+
+
+def _print_sides(project: Project) -> None:
+    """The state of a two-sided scan, if this is one."""
+    bundles = list_bundles(project)
+    found = sides.sides(bundles)
+    if found is None:
+        return
+    print(
+        f"two-sided scan: {len(found.first)} photos of the first side, "
+        f"{len(found.turned)} turned over"
+    )
+    for problem in sides.check(project, bundles, use_masks=True):
+        print(f"  to do: {problem}")
 
 
 def _import_video(project: Project, path: Path, args: argparse.Namespace) -> CaptureBundle:
@@ -410,6 +454,7 @@ def _cmd_masks(args: argparse.Namespace) -> int:
     elif not args.status:
         _make_masks(project, bundles, force=args.force)
     _print_masks(project, bundles)
+    _print_sides(project)
     return 0
 
 
@@ -577,7 +622,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
         kinds = f"{len(bundle.images)} images, {len(bundle.videos)} videos"
         if bundle.excluded:
             kinds += f" ({len(bundle.excluded)} left out)"
-        print(f"  {bundle.id}  {bundle.source:<8} {kinds}")
+        side = "  (turned over)" if bundle.flipped else ""
+        print(f"  {bundle.id}  {bundle.source:<8} {kinds}{side}")
     print("stages:")
     for stage in ALL_STAGES:
         manifest = load_manifest(project.stage_dir(stage))

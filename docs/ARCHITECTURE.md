@@ -32,7 +32,8 @@ my-scan/
     20261005-203200/  one capture bundle per import
       capture.json    source, device, and name/size/SHA-256 of every file,
                       what the photo checks learned about it, whether it is
-                      left out
+                      left out; `flipped` for the turned-over side of a
+                      two-sided scan
       IMG_0001.jpg    original files, copied byte for byte
   masks/              optional; masks/<capture id>/<file>.png in use,
                       .../dropped/ the ones dropped in review, auto.json
@@ -54,6 +55,12 @@ my-scan/
   complete, so an interrupted import never appears as a bundle. Files with
   the same name get a numeric suffix; `original_name` keeps the name they
   arrived with. `CaptureBundle.verify()` re-hashes the files.
+- Two-sided scans (`sides.py`): captures marked `flipped` are the
+  object turned over. They join the others through masks only (the object
+  moved, the table didn't), so the pipeline warns when photos have no mask
+  and reports after mapping how many photos of each side the model holds.
+  The up direction for export and the coverage check comes from the first
+  side's photos only (`estimate_up(only=...)`).
 - A file can be left out of the reconstruction (`excluded` in capture.json,
   `CaptureBundle.set_excluded`) without touching it, and brought back.
   `bundle.images` and `bundle.videos` are the files in use, and a bundle's

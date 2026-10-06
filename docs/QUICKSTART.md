@@ -30,7 +30,8 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    photo to leave it out.
 4. Optional, needed for turntables: in the **Masks** tab, **Make masks**
    keeps only the object in every photo (cleaner, faster). Uncheck any mask
-   that cuts off part of the object.
+   that cuts off part of the object. To scan the underside too, see
+   **Other side…** and the Both sides tab ([capture guide](CAPTURE.md)).
 5. Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
    default), High for the finest surface (much slower). **Mesh size**
    simplifies the result for the web or a slicer.

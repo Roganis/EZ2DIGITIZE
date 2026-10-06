@@ -33,6 +33,15 @@ def test_describe_and_parse() -> None:
     assert presets.parse_quality(None) == presets.parse_quality("ultra") == "balanced"
 
 
+def test_learned_features() -> None:
+    settings = presets.mesh_settings("fast", features="aliked")
+    assert settings.features.kind == "aliked"
+    rows = dict(presets.describe(settings))
+    assert rows["Features"] == "ALIKED + LightGlue (learned)"
+    assert rows["Features per photo"] == "up to 1024"  # a quarter of SIFT's
+    assert presets.mesh_settings().features.kind == "sift"
+
+
 def test_scene_subject(tmp_path: Path) -> None:
     obj, scene = presets.mesh_settings(), presets.mesh_settings("high", subject="scene")
     assert obj.subject == "object" and obj.use_masks and not obj.mesh.free_space_support

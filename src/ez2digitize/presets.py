@@ -40,6 +40,17 @@ HINTS: dict[Quality, str] = {
     "Several times slower and needs much more memory.",
 }
 
+FEATURE_LABELS: dict[colmap.FeatureKind, str] = {
+    "sift": "SIFT",
+    "aliked": "ALIKED + LightGlue (learned)",
+}
+FEATURE_HINTS: dict[colmap.FeatureKind, str] = {
+    "sift": "COLMAP's classic features: fast on the CPU, reliable on textured objects.",
+    "aliked": "Learned features matched with LightGlue: they hold up better on weak "
+    "texture and large changes of viewpoint, but are slower on the CPU. The models "
+    "(49 MB) are downloaded on first use.",
+}
+
 _PRESETS: dict[Quality, MeshSettings] = {
     "fast": MeshSettings(
         features=colmap.FeatureOptions(max_image_size=1600, max_num_features=4096),
@@ -70,6 +81,7 @@ def mesh_settings(
     faces: int | None = None,
     steps: int | None = None,
     subject: Subject = subjects.DEFAULT,
+    features: colmap.FeatureKind | None = None,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
@@ -86,6 +98,8 @@ def mesh_settings(
             use_masks=False,
             mesh=replace(settings.mesh, free_space_support=True),
         )
+    if features is not None:
+        settings = replace(settings, features=replace(settings.features, kind=features))
     if faces is not None:
         settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
     if steps is not None:
@@ -115,8 +129,14 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
     refine = settings.refine
     return [
         ("Subject", subjects.LABELS[settings.subject]),
+        ("Features", FEATURE_LABELS[settings.features.kind]),
         ("Photo size for features", f"up to {settings.features.max_image_size} px"),
-        ("Features per photo", f"up to {settings.features.max_num_features}"),
+        (
+            "Features per photo",
+            f"up to {colmap.aliked_features(settings.features)}"
+            if settings.features.kind == "aliked"
+            else f"up to {settings.features.max_num_features}",
+        ),
         (
             "Dense point cloud",
             f"{size(settings.densify.resolution_level)} photos, "

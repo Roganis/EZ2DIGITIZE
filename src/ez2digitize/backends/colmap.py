@@ -68,6 +68,10 @@ READABLE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
 CameraGrouping = Literal["per_capture", "per_image", "single"]
 MatchMode = Literal["exhaustive", "sequential", "spatial", "vocab_tree"]
+# SIFT (COLMAP's classic, on the CPU), or learned: ALIKED features matched
+# with LightGlue, run with ONNX Runtime; better on weak texture and large
+# viewpoint changes, slower on the CPU, and the models are downloaded once.
+FeatureKind = Literal["sift", "aliked"]
 MapperKind = Literal["incremental", "global"]
 
 
@@ -106,47 +110,81 @@ def locate(explicit: Path | None = None) -> Colmap:
     return Colmap(path=path, version=version)
 
 
-# --- the vocabulary tree --------------------------------------------------------
+# --- files COLMAP would download -------------------------------------------------
 
 
 @dataclass(frozen=True)
-class VocabTree:
+class Pinned:
+    """A file COLMAP 4.2.1 itself downloads, as its source pins it (URL and sha256).
+
+    Our builds have downloads off, so the app fetches these into the user's
+    cache when a run needs them, like the masking model.
+    """
+
     name: str
     url: str
     sha256: str
+    size: int  # bytes, for progress and to say how much is fetched
+
+    @property
+    def path(self) -> Path:
+        return download.models_dir() / self.name
 
 
-# The tree for SIFT features that COLMAP 4.2.1 itself would download
-# (src/colmap/retrieval/resources.h, kDefaultSiftVocabTreeUri); our builds
-# have downloads off, so the app fetches it, like the masking model.
-VOCAB_TREE = VocabTree(
-    name="vocab_tree_faiss_flickr100K_words256K.bin",
-    url="https://github.com/colmap/colmap/releases/download/3.11.1/"
-    "vocab_tree_faiss_flickr100K_words256K.bin",
-    sha256="96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc",
+_RELEASES = "https://github.com/colmap/colmap/releases/download"
+# src/colmap/retrieval/resources.h (kDefault*VocabTreeUri): image retrieval,
+# one tree per kind of feature.
+VOCAB_TREES: dict[FeatureKind, Pinned] = {
+    "sift": Pinned(
+        "vocab_tree_faiss_flickr100K_words256K.bin",
+        f"{_RELEASES}/3.11.1/vocab_tree_faiss_flickr100K_words256K.bin",
+        "96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc",
+        72_412_636,
+    ),
+    "aliked": Pinned(
+        "vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin",
+        f"{_RELEASES}/3.13.0/vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin",
+        "8b2f9bdc44ca7204d8543bb3adab4c03ba9336c84ef41220b5007991036f075e",
+        18_764_565,
+    ),
+}
+# src/colmap/feature/resources.h: ALIKED (BSD-3-Clause, Zhao et al.) and the
+# LightGlue weights for it (Apache-2.0, Lindenberger et al.), as ONNX models.
+ALIKED_MODEL = Pinned(
+    "aliked-n16rot.onnx",
+    f"{_RELEASES}/3.13.0/aliked-n16rot.onnx",
+    "39c423d0a6f03d39ec89d3d1d61853765c2fb6a8b8381376c703e5758778a547",
+    2_997_054,
+)
+LIGHTGLUE_MODEL = Pinned(
+    "aliked-lightglue.onnx",
+    f"{_RELEASES}/3.13.0/aliked-lightglue.onnx",
+    "b9a5de7204648b18a8cf5dcac819f9d30de1a5961ef03756803c8b86c2dceb8d",
+    45_804_950,
 )
 
 
-def vocab_tree_file() -> Path:
-    return download.models_dir() / VOCAB_TREE.name
+def find_pinned(pinned: Pinned) -> Path | None:
+    """The downloaded file, or None (its hash was checked when it arrived)."""
+    path = pinned.path
+    try:
+        return path if path.stat().st_size == pinned.size else None
+    except OSError:
+        return None
 
 
-def find_vocab_tree() -> Path | None:
-    """The downloaded tree, or None (its hash was checked when it arrived)."""
-    path = vocab_tree_file()
-    return path if path.is_file() else None
-
-
-def download_vocab_tree(
+def fetch_pinned(
+    pinned: Pinned,
     *,
     on_progress: Callable[[int, int], None] | None = None,
     cancel: CancelToken | None = None,
 ) -> Path:
-    """Fetch the tree into the user's cache; raises core.download.DownloadError."""
+    """Download it into the user's cache; raises core.download.DownloadError."""
     return download.fetch(
-        VOCAB_TREE.url,
-        vocab_tree_file(),
-        VOCAB_TREE.sha256,
+        pinned.url,
+        pinned.path,
+        pinned.sha256,
+        size=pinned.size,
         on_progress=on_progress,
         cancel=cancel,
     )
@@ -163,6 +201,11 @@ class FeatureOptions:
     # One set of intrinsics per capture bundle by default: a bundle is one
     # session with one camera. Phones that switch lenses need "per_image".
     camera_grouping: CameraGrouping = "per_capture"
+    kind: FeatureKind = "sift"
+    # ALIKED: the model file (ALIKED_MODEL). It keeps a quarter of
+    # max_num_features (2048 at 8192, COLMAP's own default for ALIKED): its
+    # features are more distinctive, and LightGlue's time grows with them.
+    model: Path | None = None
     threads: int | None = None
 
 
@@ -190,6 +233,10 @@ class MatchOptions:
     spatial_max_distance_m: float = 100.0
     vocab_tree_images: int = 100
     vocab_tree: Path | None = None
+    # The features' kind; ALIKED features are matched with LightGlue
+    # (`lightglue`, the LIGHTGLUE_MODEL file).
+    features: FeatureKind = "sift"
+    lightglue: Path | None = None
     threads: int | None = None
 
 
@@ -272,8 +319,17 @@ def extract_features(
         "--ImageReader.single_camera_per_image", _flag(options.camera_grouping == "per_image"),
         "--FeatureExtraction.use_gpu", "0",
         "--FeatureExtraction.max_image_size", str(options.max_image_size),
-        "--SiftExtraction.max_num_features", str(options.max_num_features),
     ]  # fmt: skip
+    if options.kind == "aliked":
+        if options.model is None:
+            raise BackendError("ALIKED features need the ALIKED model file")
+        argv += [
+            "--FeatureExtraction.type", "ALIKED_N16ROT",
+            "--AlikedExtraction.n16rot_model_path", options.model,
+            "--AlikedExtraction.max_num_features", str(aliked_features(options)),
+        ]  # fmt: skip
+    else:
+        argv += ["--SiftExtraction.max_num_features", str(options.max_num_features)]
     if options.threads:
         argv += ["--FeatureExtraction.num_threads", str(options.threads)]
     inputs = {"captures": fingerprint([capture_input(b) for b in bundles])}
@@ -290,11 +346,20 @@ def extract_features(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters={**result_parameters(options), "masked": masks is not None},
+        parameters={
+            **result_parameters(options),
+            # The model by what it is, not where it is.
+            "model": ALIKED_MODEL.sha256 if options.kind == "aliked" else None,
+            "masked": masks is not None,
+        },
         inputs=inputs,
         parse_line=ColmapProgress(total_images=len(names)),
         prepare=prepare,
     )
+
+
+def aliked_features(options: FeatureOptions) -> int:
+    return max(options.max_num_features // 4, 256)
 
 
 def stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
@@ -381,6 +446,13 @@ def match_features(
         "--FeatureMatching.use_gpu", "0",
     ]  # fmt: skip
     tree = options.vocab_tree
+    if options.features == "aliked":
+        if options.lightglue is None:
+            raise BackendError("ALIKED features are matched with LightGlue, which needs its model")
+        argv += [
+            "--FeatureMatching.type", "ALIKED_LIGHTGLUE",
+            "--AlikedMatching.lightglue_model_path", options.lightglue,
+        ]  # fmt: skip
     if options.mode == "sequential":
         argv += [
             "--SequentialMatching.overlap", str(options.sequential_overlap),
@@ -411,8 +483,12 @@ def match_features(
         if camera_groups:
             merge_cameras(folder / DATABASE, camera_groups)
 
-    # The tree by what it is, not where it is.
-    parameters = {**result_parameters(options), "vocab_tree": VOCAB_TREE.sha256 if tree else None}
+    # The tree and the model by what they are, not where they are.
+    parameters = {
+        **result_parameters(options),
+        "vocab_tree": VOCAB_TREES[options.features].sha256 if tree else None,
+        "lightglue": LIGHTGLUE_MODEL.sha256 if options.features == "aliked" else None,
+    }
     if camera_groups:
         parameters["camera_groups"] = fingerprint(sorted(camera_groups.items()))
     return StageSpec(

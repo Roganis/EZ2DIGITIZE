@@ -403,6 +403,11 @@ fails, they can see which stage failed and why.
 - Better features/matching inside COLMAP: learned local features and
   matchers (e.g. ALIKED or DISK with LightGlue, permissively licensed;
   SuperPoint weights are not). A nearer-term gain than replacing SfM.
+  Done: COLMAP's own ALIKED + LightGlue (ONNX Runtime, now in the backend
+  builds), as an option next to SIFT; the models (BSD-3-Clause,
+  Apache-2.0) and the ALIKED vocabulary tree are downloaded once, pinned as
+  COLMAP pins them. Making it the default waits for a comparison on the
+  Phase 1 datasets (placed photos, time on the CPU, the M1).
 - Feed-forward pose estimation (VGGT, MASt3R-SfM and similar) as optional
   plugins. Most are PyTorch/CUDA-first (ROCm on Linux may work) and several
   carry non-commercial licenses, so they must not be bundled.

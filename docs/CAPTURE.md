@@ -95,6 +95,8 @@ To capture the underside too:
 - **No texture (plain white plastic):** the patterned mat helps the camera
   placement; for the surface itself, a light pattern (masking tape bits,
   washable marker, projected dots) gives the matcher something to find.
+  If too few photos are placed, try **Advanced → Features: ALIKED +
+  LightGlue**: learned features find more on weak texture (slower).
 - **Thin parts** (wires, hair, leaves): they will be thick or missing at
   any quality; High helps a little.
 

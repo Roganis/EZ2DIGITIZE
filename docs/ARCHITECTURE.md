@@ -403,6 +403,12 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   download itself; our builds have downloads off), fetched once into the
   user's cache by `core.download`, like the masking model. The matching
   stage records the tree by its hash, not its path.
+- Features: SIFT, or ALIKED matched with LightGlue (`FeatureOptions.kind`,
+  `MatchOptions.features`), which COLMAP runs with ONNX Runtime; the
+  backend builds now enable ONNX and ship its library. The models are
+  `colmap.Pinned` files like the vocabulary trees (COLMAP's own URLs and
+  hashes, fetched once by `pipeline._fetch`), recorded in the manifests by
+  hash. Each kind of feature has its own vocabulary tree.
 - The subject (`ez2digitize.subject`, in the project's settings): an
   object, or a room or outdoor scene. A scene's preset uses no masks and
   meshes with OpenMVS's free-space support (`--free-space-support`, for

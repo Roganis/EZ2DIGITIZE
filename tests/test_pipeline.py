@@ -205,12 +205,14 @@ def test_matching_many_photos(
     # No tree (the tests are offline): photos in the order they were taken.
     log, notices = matched()
     assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 0" in log
-    assert any(n.startswith("could not download the vocabulary tree") for n in notices)
+    assert "downloading COLMAP's vocabulary tree (72 MB, once)" in notices
+    assert any(n.startswith("could not download COLMAP's vocabulary tree") for n in notices)
     assert any("taken just before and after it" in n for n in notices)
 
-    tree = colmap.vocab_tree_file()
+    tree = colmap.VOCAB_TREES["sift"].path
     tree.parent.mkdir(parents=True, exist_ok=True)
-    tree.write_bytes(b"tree")
+    with tree.open("wb") as f:
+        f.truncate(colmap.VOCAB_TREES["sift"].size)  # as if downloaded
     log, notices = matched()
     assert "vocab_tree_matcher" in log and str(tree) in log
     assert "3 photos: each is matched with the most similar ones" in notices
@@ -226,6 +228,29 @@ def test_matching_many_photos(
         bundle.save()
     log, _notices = matched()
     assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 1" in log
+
+
+def test_learned_features(project: Project, tools: Tools) -> None:
+    """ALIKED + LightGlue: the models are fetched first (here: already there)."""
+    from ez2digitize import presets
+    from ez2digitize.backends import colmap
+
+    settings = presets.mesh_settings(features="aliked")
+    events, handler = _collect()
+    with pytest.raises(PipelineError, match="need the ALIKED and LightGlue models"):
+        pipeline.run_sparse(project, tools, settings, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert "downloading the ALIKED model (3 MB, once)" in notices
+
+    for pinned in (colmap.ALIKED_MODEL, colmap.LIGHTGLUE_MODEL):
+        pinned.path.parent.mkdir(parents=True, exist_ok=True)
+        with pinned.path.open("wb") as f:
+            f.truncate(pinned.size)  # as if downloaded
+    pipeline.run_sparse(project, tools, settings)
+    features = (project.stage_dir("features") / "log.txt").read_text()
+    matching = (project.stage_dir("matching") / "log.txt").read_text()
+    assert "ALIKED_N16ROT" in features and str(colmap.ALIKED_MODEL.path) in features
+    assert "ALIKED_LIGHTGLUE" in matching and str(colmap.LIGHTGLUE_MODEL.path) in matching
 
 
 def test_chosen_vocab_tree_matching_needs_the_tree(project: Project, tools: Tools) -> None:

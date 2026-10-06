@@ -254,14 +254,15 @@ def server(tmp_path: Path) -> Iterator[str]:
 
 @pytest.fixture(autouse=True)
 def _no_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never the network: the vocabulary tree can't be fetched unless a test says so."""
+    """Never the network: COLMAP's files (vocabulary trees, learned feature models)
+    can't be fetched unless a test says so."""
     from ez2digitize.backends import colmap
     from ez2digitize.core.download import DownloadError
 
-    def offline(**_kwargs: object) -> Path:
+    def offline(*_args: object, **_kwargs: object) -> Path:
         raise DownloadError("no network in the tests")
 
-    monkeypatch.setattr(colmap, "download_vocab_tree", offline)
+    monkeypatch.setattr(colmap, "fetch_pinned", offline)
 
 
 @pytest.fixture(autouse=True)

@@ -200,6 +200,12 @@ class ProjectPage(QWidget):
             "file for viewers and the web"
         )
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
+        self.features = QComboBox()
+        for kind, label in presets.FEATURE_LABELS.items():
+            self.features.addItem(label, kind)
+            self.features.setItemData(
+                self.features.count() - 1, presets.FEATURE_HINTS[kind], Qt.ItemDataRole.ToolTipRole
+            )
         self.mesh_size = QComboBox()
         for label, faces in MESH_SIZES:
             self.mesh_size.addItem(label, faces)
@@ -240,6 +246,7 @@ class ProjectPage(QWidget):
         advanced_form = QFormLayout(self.advanced)
         advanced_form.addRow("Detail:", self.detail)
         advanced_form.addRow(self.refine)
+        advanced_form.addRow("Features:", self.features)
         self.values = QLabel()
         self.values.setWordWrap(True)
         self.values.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -250,6 +257,7 @@ class ProjectPage(QWidget):
         self.advanced.toggled.connect(self._show_values)
         self.detail.currentIndexChanged.connect(self._show_values)
         self.refine.toggled.connect(self._show_values)
+        self.features.currentIndexChanged.connect(self._show_values)
         self.mesh_size.currentIndexChanged.connect(self._show_values)
         self._show_values()
 
@@ -481,6 +489,7 @@ class ProjectPage(QWidget):
                 refine=self.refine.isChecked(),
                 faces=faces,
                 subject=self.chosen_subject,
+                features=self.features.currentData(),
             )
         else:
             settings = presets.mesh_settings(

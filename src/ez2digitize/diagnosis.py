@@ -67,6 +67,12 @@ _EMPTY_MESH = Explanation(
     "that the masks don't hide the object.",
 )
 
+_NO_ONNX = Explanation(
+    "This COLMAP can't use learned features",
+    "It was built without ONNX Runtime, which ALIKED and LightGlue need. Use SIFT "
+    "features, or a COLMAP built with ONNX (the one bundled with the app is).",
+)
+
 Rule = Callable[[str, int, str], Explanation | None]
 
 
@@ -109,6 +115,7 @@ _dense_empty = _matches(
     r"no images see \d+ or more points|no valid depth|densifying point-cloud failed"
     r"|empty point-?cloud|point-cloud is not valid"
 )
+_no_onnx = _matches(r"requires ONNX support")
 _mesh_empty = _matches(r"empty initial mesh|empty mesh|cannot load mesh|no faces")
 
 
@@ -128,6 +135,9 @@ def _rules() -> list[Rule]:
         if illegal or "illegal instruction" in log.lower():
             return _ILLEGAL_INSTRUCTION
         return None
+
+    def onnx(stage: str, code: int, log: str) -> Explanation | None:
+        return _NO_ONNX if stage in ("features", "matching") and _no_onnx(log) else None
 
     def mapping(stage: str, code: int, log: str) -> Explanation | None:
         return _NO_OVERLAP if stage in ("matching", "mapping") and _no_model(log) else None
@@ -150,7 +160,7 @@ def _rules() -> list[Rule]:
         return _CRASH if crashed or "segmentation fault" in log.lower() else None
 
     # Most specific first: a crash after "out of memory" is an out-of-memory.
-    return [disk, memory, illegal, mapping, unreadable, dense, mesh, crash]
+    return [disk, memory, illegal, onnx, mapping, unreadable, dense, mesh, crash]
 
 
 _RULES = _rules()

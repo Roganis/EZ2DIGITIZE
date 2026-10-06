@@ -11,11 +11,16 @@
 # (C:/ez2d): vcpkg's build trees easily pass the 260-character path limit.
 #
 # All dependencies are built from source by vcpkg and linked statically, so
-# the binaries only need the system C/C++ runtime. Output:
+# the binaries only need the system C/C++ runtime, except ONNX Runtime:
+# COLMAP's learned features (ALIKED, LightGlue) run on it, and COLMAP's build
+# fetches Microsoft's release library (pinned by hash in COLMAP's CMake),
+# which is shipped next to it. Output:
 #   build/backends/ez2d-backends-<os>-<arch>.tar.gz
 #     bin/          colmap, InterfaceCOLMAP, DensifyPointCloud, ... (.exe on
 #                   Windows, with vcomp140.dll, MSVC's OpenMP runtime, and
 #                   any other DLL they need: see "runtime DLLs" below)
+#     lib/          ONNX Runtime (Linux, macOS; on Windows its DLLs are in
+#                   bin/), and libomp on macOS
 #     licenses/     copyright files of every library linked in
 #     BUILDINFO.json
 #
@@ -93,13 +98,26 @@ cmake -S colmap -B colmap-build -G Ninja \
   -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON \
   -DVCPKG_INSTALLED_DIR="$WORK/colmap-vcpkg_installed" \
   -DCUDA_ENABLED=OFF -DHIP_ENABLED=OFF -DGUI_ENABLED=OFF -DOPENGL_ENABLED=OFF \
-  -DONNX_ENABLED=OFF -DCGAL_ENABLED=OFF -DDOWNLOAD_ENABLED=OFF -DTESTS_ENABLED=OFF \
+  -DONNX_ENABLED=ON -DCGAL_ENABLED=OFF -DDOWNLOAD_ENABLED=OFF -DTESTS_ENABLED=OFF \
   -DCCACHE_ENABLED=OFF \
   ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/colmap-install"
 cmake --build colmap-build --parallel "$JOBS"
 cmake --install colmap-build
 cp "$WORK/colmap-install/bin/colmap$EXE" "$PREFIX/bin/"
+# ONNX Runtime, as COLMAP names it (its rpath is ../lib): the one file, not
+# the symlinks around it. On Windows the DLL loop below finds its DLLs.
+ONNX_VERSION=$(sed -n 's/.*set(ONNX_VERSION "\([0-9.]*\)").*/\1/p' colmap/cmake/FindDependencies.cmake)
+if [ "$OS" = linux ]; then
+  ONNX_LIB=$(objdump -p "$PREFIX/bin/colmap" | awk '$1 == "NEEDED" && $2 ~ /^libonnxruntime/ {print $2}')
+elif [ "$OS" = macos ]; then
+  ONNX_LIB=$(otool -L "$PREFIX/bin/colmap" | awk '$1 ~ /libonnxruntime/ {print $1}' | xargs basename)
+fi
+if [ "$OS" != windows ]; then
+  [ -n "$ONNX_LIB" ] || { echo "error: colmap isn't linked to ONNX Runtime" >&2; exit 1; }
+  mkdir -p "$PREFIX/lib"
+  cp -L "$(ls -d "$WORK"/colmap-install/lib*/"$ONNX_LIB" | head -1)" "$PREFIX/lib/$ONNX_LIB"
+fi
 
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
@@ -156,7 +174,7 @@ if [ "$OS" = windows ]; then
                    dumpbin //nologo //dependents "$(cygpath -w "$f")"
                  done | grep -io '[a-z0-9_.+-]*\.dll' | sort -fu); do
       [ -e "$PREFIX/bin/$dll" ] && continue
-      for dir in "$CRT" "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
+      for dir in "$CRT" "$WORK"/colmap-install/bin "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
         if [ -e "$dir/$dll" ]; then
           echo "shipping $dll (from $dir)"
           cp "$dir/$dll" "$PREFIX/bin/"
@@ -181,6 +199,9 @@ done
 for dep in poselib faiss; do
   cp colmap-build/_deps/$dep-src/LICENSE "$PREFIX/licenses/colmap-$dep.txt"
 done
+cp colmap-build/_deps/onnxruntime-src/LICENSE "$PREFIX/licenses/onnxruntime.txt"
+cp colmap-build/_deps/onnxruntime-src/ThirdPartyNotices.txt \
+  "$PREFIX/licenses/onnxruntime-ThirdPartyNotices.txt"
 for installed in colmap-vcpkg_installed openmvs-vcpkg_installed; do
   for copyright in "$WORK/$installed/$TRIPLET"/share/*/copyright; do
     port=$(basename "$(dirname "$copyright")")
@@ -193,8 +214,8 @@ log "smoke test"
 "$PREFIX/bin/InterfaceCOLMAP$EXE" --help | grep -m1 OpenMVS || true
 
 if [ "$OS" = linux ]; then
-  GLIBC=$(objdump -T "$PREFIX"/bin/* 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)
-  DYNAMIC=$(for f in "$PREFIX"/bin/*; do ldd "$f" | awk '{print $1}'; done | sort -u | tr '\n' ' ')
+  GLIBC=$(objdump -T "$PREFIX"/bin/* "$PREFIX"/lib/* 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)
+  DYNAMIC=$(for f in "$PREFIX"/bin/* "$PREFIX"/lib/*; do ldd "$f" | awk '{print $1}'; done | sort -u | tr '\n' ' ')
   if echo "$DYNAMIC" | grep -Eq 'libGL|libGLEW|libX11'; then
     echo "error: headless binaries link graphics libraries: $DYNAMIC" >&2
     exit 1
@@ -222,6 +243,7 @@ fi
 cat > "$PREFIX/BUILDINFO.json" <<EOF
 {
   "colmap": "$COLMAP_VERSION",
+  "onnxruntime": "$ONNX_VERSION",
   "openmvs": "$OPENMVS_VERSION",
   "openmvs_patches": "$(cd "$REPO/tools/backends/patches" && ls openmvs-*.patch | tr '\n' ' ' | sed 's/ $//')",
   "vcpkg_overlay_ports": "$(ls "${VCPKG_OVERLAY_PORTS:-/nonexistent}" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')",

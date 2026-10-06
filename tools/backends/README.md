@@ -9,7 +9,13 @@ the app drives, and packages them in one archive per platform:
 | OpenMVS | v2.4.0 | AGPL-3.0 |
 
 Dependencies are built from source by [vcpkg](https://vcpkg.io)
-and linked statically, so the binaries only need the system C/C++ runtime.
+and linked statically, so the binaries only need the system C/C++ runtime,
+except ONNX Runtime (MIT): COLMAP runs its learned features (ALIKED,
+LightGlue) with it, and its build fetches Microsoft's release library,
+pinned by hash in COLMAP's CMake. It ships in `lib/` (Linux, macOS) or
+`bin/` (Windows), with its license and third-party notices; on Windows that
+library is the release built with CUDA support, which only loads CUDA when
+asked to, and runs on the CPU here.
 COLMAP uses the vcpkg baseline and port patches pinned in its own
 repository; OpenMVS has none, so it uses vcpkg release 2026.07.29.
 
@@ -18,7 +24,7 @@ tools/backends/build.sh     # Linux x86_64, macOS arm64 or Windows x64
 ```
 
 Output: `build/backends/ez2d-backends-<os>-<arch>.tar.gz` with `bin/`,
-`licenses/` (the copyright file of every library linked in) and
+`lib/`, `licenses/` (the copyright file of every library linked in) and
 `BUILDINFO.json` (versions, triplet, compiler, required glibc, remaining
 dynamic libraries). To use it with the benchmark harness:
 

@@ -509,6 +509,16 @@ def _colmap_mapping(
     """COLMAP's camera placement: features, matching, mapping."""
     sfm = tools.colmap
     feature_options = settings.features
+    lightglue = None
+    if feature_options.kind == "aliked":
+        model = _fetch(colmap.ALIKED_MODEL, "the ALIKED model", run)
+        lightglue = _fetch(colmap.LIGHTGLUE_MODEL, "the LightGlue model", run)
+        if model is None or lightglue is None:
+            raise PipelineError(
+                "learned features need the ALIKED and LightGlue models, which could not be "
+                "downloaded (see the notes above); try again, or use SIFT features"
+            )
+        feature_options = replace(feature_options, model=model)
     for bundle in bundles:  # usually done at import; quick
         photos.inspect_bundle(bundle)
     groups = photos.camera_groups(bundles)
@@ -534,7 +544,8 @@ def _colmap_mapping(
     features = run(
         colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
     )
-    matching_options = _matching(settings.matching, bundles, run)
+    matching_options = _matching(settings.matching, bundles, run, feature_options.kind)
+    matching_options = replace(matching_options, features=feature_options.kind, lightglue=lightglue)
     matching = run(
         colmap.match_features(
             sfm, project, features, options=matching_options, camera_groups=groups or None
@@ -709,7 +720,10 @@ GPS_SHARE = 0.9
 
 
 def _matching(
-    chosen: colmap.MatchOptions | None, bundles: list[CaptureBundle], run: _Run
+    chosen: colmap.MatchOptions | None,
+    bundles: list[CaptureBundle],
+    run: _Run,
+    features: colmap.FeatureKind = "sift",
 ) -> colmap.MatchOptions:
     """The matching settings: chosen ones (with the vocabulary tree they need), or
     picked from the photos (see colmap.MatchOptions for the modes).
@@ -720,7 +734,7 @@ def _matching(
     """
     if chosen is not None:
         if chosen.mode == "vocab_tree" and chosen.vocab_tree is None:
-            tree = _vocab_tree(run)
+            tree = _vocab_tree(run, features)
             if tree is None:
                 raise PipelineError("vocabulary tree matching needs COLMAP's vocabulary tree")
             return replace(chosen, vocab_tree=tree)
@@ -729,11 +743,11 @@ def _matching(
     if images <= EXHAUSTIVE_MAX_IMAGES:
         return colmap.MatchOptions(mode="exhaustive")
     if all(b.source == "video" for b in bundles):
-        return colmap.MatchOptions(mode="sequential", vocab_tree=_vocab_tree(run))
+        return colmap.MatchOptions(mode="sequential", vocab_tree=_vocab_tree(run, features))
     if photos.gps_share(bundles) >= GPS_SHARE:
         run.emit(Notice(f"{images} photos with GPS positions: each is matched with its neighbours"))
         return colmap.MatchOptions(mode="spatial")
-    tree = _vocab_tree(run)
+    tree = _vocab_tree(run, features)
     if tree is not None:
         run.emit(Notice(f"{images} photos: each is matched with the most similar ones"))
         return colmap.MatchOptions(mode="vocab_tree", vocab_tree=tree)
@@ -746,18 +760,24 @@ def _matching(
     return colmap.MatchOptions(mode="sequential")
 
 
-def _vocab_tree(run: _Run) -> Path | None:
-    """COLMAP's vocabulary tree, downloaded the first time; None if that fails."""
-    tree = colmap.find_vocab_tree()
-    if tree is not None:
-        return tree
-    run.emit(Notice("downloading COLMAP's vocabulary tree, for matching many photos (once)"))
+def _vocab_tree(run: _Run, features: colmap.FeatureKind) -> Path | None:
+    """COLMAP's vocabulary tree for these features, downloaded the first time."""
+    return _fetch(colmap.VOCAB_TREES[features], "COLMAP's vocabulary tree", run)
+
+
+def _fetch(pinned: colmap.Pinned, what: str, run: _Run) -> Path | None:
+    """A file COLMAP would download (see colmap.Pinned), fetched the first time;
+    None, with a notice, if that fails."""
+    found = colmap.find_pinned(pinned)
+    if found is not None:
+        return found
+    run.emit(Notice(f"downloading {what} ({pinned.size / 1e6:.0f} MB, once)"))
     try:
-        return colmap.download_vocab_tree(cancel=run.cancel)
+        return colmap.fetch_pinned(pinned, cancel=run.cancel)
     except download.DownloadCancelled as exc:
         raise PipelineCancelled("cancelled") from exc
     except download.DownloadError as exc:
-        run.emit(Notice(f"could not download the vocabulary tree: {exc}"))
+        run.emit(Notice(f"could not download {what}: {exc}"))
         return None
 
 

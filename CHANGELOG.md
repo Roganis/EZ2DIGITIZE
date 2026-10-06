@@ -28,6 +28,10 @@ The first release.
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.
 - Each camera and zoom setting calibrated separately.
+- Learned features as an option (Advanced → Features, `ez2d run --features
+  aliked`): ALIKED matched with LightGlue, which hold up better than SIFT on
+  weak texture and large changes of viewpoint; slower on the CPU, models
+  downloaded once.
 - Rooms and outdoor scenes as well as small objects (**Subject**), and
   large photo sets: beyond 200 photos, they are paired by GPS position, by
   how alike they look (with COLMAP's vocabulary tree, downloaded once) or

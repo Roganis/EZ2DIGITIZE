@@ -30,6 +30,8 @@ OUT_OF_MEMORY = 0xC0000017 if sys.platform == "win32" else -9
         ("texture", -11, [], "crashed"),
         ("mesh", 139, [], "crashed"),
         ("features", -4, [], "newer processor"),
+        ("features", 1, ["ALIKED feature extraction requires ONNX support."], "learned"),
+        ("matching", 1, ["LightGlue feature matching requires ONNX support."], "learned"),
     ],
 )
 def test_known_failures(stage: str, code: int, log: list[str], title: str) -> None:

@@ -356,6 +356,12 @@ def _parser() -> argparse.ArgumentParser:
         help="how photos are paired: auto (every pair up to 200 photos, then by GPS, "
         "similarity or order), or one mode",
     )
+    run.add_argument(
+        "--features",
+        choices=get_args(colmap.FeatureKind),
+        help="sift (default) or aliked: learned features matched with LightGlue, better "
+        "on weak texture, slower on the CPU (models downloaded on first use)",
+    )
     run.add_argument("--max-image-size", type=int, help="COLMAP feature image size")
     run.add_argument("--mapper", choices=["global", "incremental"], default="global")
     run.add_argument("--level", type=int, help="OpenMVS resolution level (0 = full size)")
@@ -1018,6 +1024,16 @@ def _cmd_check(args: argparse.Namespace) -> int:
         bundled = " (bundled)" if _is_bundled(splats.path) else ""
         state = "ok" if splats.supported else f"not the tested version {brush.PINNED_VERSION}"
         print(f"Brush {splats.version} (for splats): {state}, {splats.path}{bundled}")
+    # Learned features need a COLMAP built with ONNX Runtime; only the bundled
+    # build says whether it is (in its BUILDINFO.json).
+    info = licenses.backend_build_info()
+    if info is not None:
+        onnx = info.get("onnxruntime")
+        print(
+            f"Learned features (ALIKED + LightGlue): ONNX Runtime {onnx}"
+            if onnx
+            else "Learned features (ALIKED + LightGlue): not in this COLMAP build"
+        )
     # Only video import needs FFmpeg: reported, but not required.
     try:
         video_tool = ffmpeg.locate(args.ffmpeg)
@@ -1217,6 +1233,7 @@ def _settings(
     settings = presets.mesh_settings(
         quality,
         subject=chosen,
+        features=args.features,
         level=args.level,
         refine=args.refine,
         max_image_size=args.max_image_size,

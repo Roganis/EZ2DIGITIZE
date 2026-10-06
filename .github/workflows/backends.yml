@@ -113,6 +113,7 @@ jobs:
       - name: App pipeline with the fresh builds
         env:
           EZ2D_REQUIRE_BACKENDS: "1"
+          EZ2D_TEST_DOWNLOADS: "1"  # the learned features' models (49 MB)
         # The backend tests don't use Qt; without pytest-qt they also run on
         # runners without the libraries Qt needs (libEGL on Ubuntu).
         run: |

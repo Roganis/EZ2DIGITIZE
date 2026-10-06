@@ -31,6 +31,10 @@ logs and settings, never your photos. The logs do contain file paths.
 | No dense points / No mesh could be built | Usually wrong camera positions: check how many photos were placed (log), try a lower detail level, check the masks don't hide the object. |
 | The tool crashed / needs a newer processor | A bug: please report it with Export Diagnostics. |
 
+- **"This COLMAP can't use learned features".** The COLMAP in use was built
+  without ONNX Runtime. Choose SIFT under Advanced → Features, or use the
+  COLMAP that comes with the app (`ez2d check` says whether it has it).
+
 ## The result looks wrong
 
 - **"The two sides did not join".** Only one side made it into the model.

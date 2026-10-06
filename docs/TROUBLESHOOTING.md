@@ -33,13 +33,22 @@ logs and settings, never your photos. The logs do contain file paths.
 
 ## The result looks wrong
 
+- **"The two sides did not join".** Only one side made it into the model.
+  In the Masks tab, look for masks that kept the table, the stand or
+  something next to the object, and drop or fix them; check that every
+  photo has a mask (Both sides tab). If they are clean, the sets overlap
+  too little: take a low ring of photos for each side, so the object's
+  sides show in both.
 - **Only part of the object, or a lump of background.** Look at the notes
   in the log after camera placement: "only N of M images were placed", "the
   photos split into separate groups", "no photos from about 120° of the way
   around", "the camera hardly moved". Each points to the capture.
 - **The table or mat is part of the model.** Expected without masks; the
-  export keeps everything the photos saw. Masks fix it; cropping in the app
-  comes with the viewer.
+  export keeps everything the photos saw. Make masks (Masks tab) and build
+  again; cropping in the app comes with the viewer.
+- **Part of the object is missing after using masks.** A mask cut it off.
+  In the Masks tab, look at "To look at" first, then the rest: uncheck the
+  photos whose red tint covers part of the object, and build again.
 - **Blotchy or striped texture.** Uneven light between photos, or blurry
   photos (see the photo checks). Development builds before the OpenMVS fix
   of October 2026 gave black blobs and coloured specks: update, and run the
@@ -63,6 +72,17 @@ logs and settings, never your photos. The logs do contain file paths.
   Mesa's RADV/ANV, or NVIDIA's) or Apple silicon; `ez2d check` lists the
   GPUs found. A software renderer (llvmpipe) is refused because it would
   take days.
+
+## Masks
+
+- **"Could not download the masking model".** The first Make masks
+  downloads it (179 MB) from GitHub. Without internet access, download
+  `isnet-general-use.onnx` from the address in the message on another
+  computer and save it where the message says (Linux:
+  `~/.cache/ez2digitize/models/`, macOS: `~/Library/Caches/ez2digitize/models/`).
+- **Masks keep the stand or turntable too.** The model keeps whatever looks
+  like part of the object. It is usually harmless; a plain cloth over the
+  turntable helps.
 
 ## Starting a step again
 

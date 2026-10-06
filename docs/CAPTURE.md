@@ -51,16 +51,35 @@ each stretch (100 frames by default). Photos still give finer detail.
 With the camera on a tripod and the object turning, the background stays
 still and wins: COLMAP places the cameras from the background, so they all
 end up in one spot (the coverage check says so after camera placement).
-Either put a plain cloth behind and under the object and light it evenly,
-or use masks (one PNG per photo, white for the object, black for the rest):
-`ez2d import P photos/ --masks masks/`.
+Use masks: in the **Masks** tab, **Make masks** separates the object from
+the background in every photo (about a second per photo; `ez2d masks P`
+on the command line). On the skull turntable set this is the difference
+between a smeared shell and a clean model. Look through the grid: a mask
+that cut off part of the object is worse than none, so uncheck it. A
+plain cloth behind and under the object, lit evenly, helps both the masks
+and the reconstruction. Masks made elsewhere (one PNG per photo, white for
+the object) can be added with **Add masks…** or `ez2d import P photos/
+--masks masks/`.
 
 ## Both sides of an object
 
-To capture the underside, take a full set, turn the object over, and take a
-second set. Import both; with masks for every photo (so only the object,
-not the table, is matched), both sets join into one model. A guided flip
-workflow is planned.
+To capture the underside too:
+
+1. Take a full set as usual, including a low ring that shows the object's
+   sides.
+2. Turn the object over (upside down, or onto a side) and take a second
+   set the same way, in the same light. The sides of the object must show
+   in both sets: that is where the two sets are joined.
+3. In the app, **Other side…** imports the second set as the turned-over
+   side (`ez2d import P photos-under/ --flipped`). The **Both sides** tab
+   shows which import is which side (change it there, or with `ez2d flip
+   P CAPTURE`) and what is left to do.
+4. Make masks for every photo (Masks tab) and look through them: no table
+   or stand may be left in. Between the sets the object moved and the
+   table didn't, so anything but the object pulls them apart.
+5. Build. The log says whether both sides joined, and how many photos of
+   each were placed. The model stands upright the way the first side was
+   photographed.
 
 ## Difficult objects
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from array import array
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,12 +49,20 @@ class UpEstimate:
 
 
 def estimate_up(
-    model_dir: Path, orientations: Mapping[str, int] | None = None
+    model_dir: Path,
+    orientations: Mapping[str, int] | None = None,
+    only: Collection[str] | None = None,
 ) -> UpEstimate | None:
-    """Up from the registered images of a COLMAP model; None if it can't tell."""
+    """Up from the registered images of a COLMAP model; None if it can't tell.
+
+    `only`: the images to go by (the first side of a two-sided scan, see
+    sides.upright_names); None for all.
+    """
     images = read_images(model_dir)
     downs = []
     for name, pose in images.items():
+        if only is not None and name not in only:
+            continue
         down_camera = EXIF_DOWN.get((orientations or {}).get(name, 1), EXIF_DOWN[1])
         rotation = quaternion_matrix(pose.qvec)  # world to camera
         downs.append(_mul_transposed(rotation, down_camera))

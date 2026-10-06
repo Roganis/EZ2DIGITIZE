@@ -50,6 +50,33 @@ segno
   Source:   https://github.com/heuer/segno
   Notes:    QR codes for phone upload (pure Python, no dependencies).
 
+ONNX Runtime
+  License:  MIT
+  Source:   https://github.com/microsoft/onnxruntime
+  Notes:    Runs the masking model, in a separate worker process
+            (ez2digitize.mask_worker). The licenses of the components it
+            contains are in its ThirdPartyNotices.txt (in the package). Its
+            telemetry exists only in Windows builds; it collects nothing on
+            Linux or macOS. Depends on flatbuffers (Apache-2.0), protobuf
+            (BSD-3-Clause) and packaging (Apache-2.0 or BSD-2-Clause).
+
+NumPy
+  License:  BSD-3-Clause
+  Source:   https://github.com/numpy/numpy
+  Notes:    Arrays for the masking worker. Its Linux wheels bundle OpenBLAS
+            (BSD-3-Clause) and libgfortran/libquadmath (GPL-3.0 with the GCC
+            Runtime Library Exception); license texts in its dist-info.
+
+The masking model is not bundled: it is downloaded on first use into the
+user's cache and checked against a pinned sha256 (ez2digitize.masks):
+
+isnet-general-use (ISNet, "Highly Accurate Dichotomous Image Segmentation",
+Qin et al.)
+  License:  Apache-2.0 (code and weights)
+  Source:   https://github.com/xuebinqin/DIS
+  Notes:    The ONNX export published by the rembg project (MIT),
+            https://github.com/danielgatis/rembg/releases/tag/v0.0.0
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
@@ -117,11 +144,11 @@ Phase 1 feasibility harness (tools/feasibility, "feasibility" dependency
 group). Never part of the app; listed because they run on contributors'
 machines:
 
-numpy           BSD-3-Clause
+numpy           (bundled with the app, see section 1)
 Pillow          (bundled with the app, see section 1)
 rembg           MIT
 scipy           BSD-3-Clause (k-d trees for the reconstruction evaluation)
-onnxruntime     MIT
+onnxruntime     (bundled with the app, see section 1)
 rembg models    downloaded at first use, licensed per model:
                 birefnet-general / -lite (BiRefNet)   MIT
                 isnet-general-use (DIS)               Apache-2.0

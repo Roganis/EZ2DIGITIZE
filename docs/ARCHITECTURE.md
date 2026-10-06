@@ -32,9 +32,12 @@ my-scan/
     20261005-203200/  one capture bundle per import
       capture.json    source, device, and name/size/SHA-256 of every file,
                       what the photo checks learned about it, whether it is
-                      left out
+                      left out; `flipped` for the turned-over side of a
+                      two-sided scan
       IMG_0001.jpg    original files, copied byte for byte
-  masks/              one mask per image (same file stem), optional
+  masks/              optional; masks/<capture id>/<file>.png in use,
+                      .../dropped/ the ones dropped in review, auto.json
+                      which are automatic (ez2digitize.masks)
   stages/
     features/
       stage.json      manifest (see below)
@@ -52,6 +55,12 @@ my-scan/
   complete, so an interrupted import never appears as a bundle. Files with
   the same name get a numeric suffix; `original_name` keeps the name they
   arrived with. `CaptureBundle.verify()` re-hashes the files.
+- Two-sided scans (`sides.py`): captures marked `flipped` are the
+  object turned over. They join the others through masks only (the object
+  moved, the table didn't), so the pipeline warns when photos have no mask
+  and reports after mapping how many photos of each side the model holds.
+  The up direction for export and the coverage check comes from the first
+  side's photos only (`estimate_up(only=...)`).
 - A file can be left out of the reconstruction (`excluded` in capture.json,
   `CaptureBundle.set_excluded`) without touching it, and brought back.
   `bundle.images` and `bundle.videos` are the files in use, and a bundle's
@@ -315,6 +324,17 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   SIGKILL; disk full; no initial pair or empty pose graph; unreadable
   images; no dense points; empty mesh; crashes and illegal instructions)
   and `StageFailed`'s message leads with the explanation and what to try.
+- Automatic masks (`masks.py`): a stage per capture, `masks-<capture id>`,
+  runs the masking worker (`mask_worker.py`, ISNet on ONNX Runtime) as a
+  separate process through the process runner, like a backend: the app
+  starts itself with `-m ez2digitize.mask_worker` (packaged: the `mask-worker`
+  command of the launcher), so ONNX Runtime's 1 GB never sits in the GUI
+  process and a crash in it doesn't take the app down. The stage's inputs
+  are the capture's photos (left-out ones included, so leaving one out
+  re-masks nothing) and the model's sha256; `apply_auto` copies its masks
+  into `masks/`, never over imported ones and keeping review decisions.
+- Feature extraction gets a mask for every image (a white one where there is
+  none): COLMAP skips an image whose mask file is missing.
 - Masks reach OpenMVS through the `mask-undistort` stage (after
   `undistort`, only when the project has masks). COLMAP's
   `image_undistorter_standalone` warps them with each image's camera and the
@@ -331,5 +351,11 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 Splat path (Phase 3) branches after `undistort`:
 
 ```
-undistort -> Brush training -> PLY export
+undistort -> [mask-undistort] -> Brush training -> PLY export
 ```
+
+With masks, Brush trains on the masks warped for OpenMVS: the splat stage
+links them as `dataset/images/masks/<stem>.png`, where Brush 0.3.0 looks
+for an image's mask, and Brush leaves black pixels out of the loss. Brush
+matches stems ignoring case across all captures, so if two photos' names
+differ only in case the splats are trained without masks (with a notice).

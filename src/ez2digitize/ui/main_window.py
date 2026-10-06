@@ -197,6 +197,14 @@ class MainWindow(QMainWindow):
         if self.page is not None:
             # Seconds at most; the inspection thread must not outlive its page.
             self.page.photo_checks.wait()
+            if self.page.masks_panel.maker.running:
+                answer = QMessageBox.question(
+                    self, "Making masks", f"Masks are being made. {question}"
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return False
+                self.page.masks_panel.maker.cancel()
+            self.page.masks_panel.wait()
             if self.page.video_importer.running:
                 answer = QMessageBox.question(
                     self, "Video import running", f"A video is being imported. {question}"

@@ -28,13 +28,17 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
 3. Read the **Photo checks** tab: it flags photos that are blurry, a
    different size, from another camera, or that can't be read. Uncheck a
    photo to leave it out.
-4. Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
+4. Optional, needed for turntables: in the **Masks** tab, **Make masks**
+   keeps only the object in every photo (cleaner, faster). Uncheck any mask
+   that cuts off part of the object. To scan the underside too, see
+   **Other side…** and the Both sides tab ([capture guide](CAPTURE.md)).
+5. Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
    default), High for the finest surface (much slower). **Mesh size**
    simplifies the result for the web or a slicer.
-5. Press **Build mesh**. The steps list shows progress; the Log tab shows
+6. Press **Build mesh**. The steps list shows progress; the Log tab shows
    the tools' output. On a recent desktop, 60 photos take about 15 minutes
    at Balanced.
-6. **Open folder** shows the result in `exports/`: OBJ (with its texture),
+7. **Open folder** shows the result in `exports/`: OBJ (with its texture),
    GLB, and STL/3MF for printing if you chose them. The model stands
    upright, centred, on the ground.
 
@@ -50,6 +54,7 @@ The same app runs headless (the AppImage or
 ez2d new ~/scans/skull
 ez2d import ~/scans/skull ~/Pictures/skull          # or a video, --frames 100
 ez2d photos ~/scans/skull                           # photo checks
+ez2d masks ~/scans/skull                            # automatic masks
 ez2d run ~/scans/skull --quality balanced --export obj,glb,stl
 ez2d run ~/scans/skull --splat                      # Gaussian splats
 ez2d status ~/scans/skull

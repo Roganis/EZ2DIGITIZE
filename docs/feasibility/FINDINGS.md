@@ -50,14 +50,35 @@ the outputs. The four exit decisions at the end are what Phase 1 delivers.
 
 ### Masking
 
-- Model used, time per image, images where masks were wrong: ...
+Measured in the cloud container (4 cores, CPU only, ONNX Runtime 1.30),
+one 1024x1024 image through each model:
+
+| Model (license) | Download | Time per image | Peak memory |
+|---|---|---|---|
+| ISNet `isnet-general-use` (Apache-2.0) | 179 MB | 1.0-1.5 s | 1.0 GB (1.5 GB with ONNX Runtime's arena) |
+| BiRefNet lite (MIT) | 224 MB | 16-20 s | 6.8 GB (12 GB with the arena) |
+| U²-Net `u2net` (Apache-2.0, 320 px input) | 176 MB | 0.4 s | 0.9 GB |
+
+- BiRefNet (full or lite) can't run on the 8 GB M1 next to anything else,
+  and is 15x slower; ISNet is the default. U²-Net's 320 px input loses
+  the outline detail.
+- Skull turntable set (62 photos, 4272x2848): ISNet in the app's worker
+  takes 100 s for the set (1.6 s per photo including decoding and
+  writing), peak 1.06 GB. Every mask holds the skull; the stand under it is
+  kept in some views and cut in others (where the model was unsure, about
+  4.7 % of the photo at most); no mask was wrong enough to drop.
+- With those masks the turntable set reconstructs: 62/62 cameras placed,
+  a clean dense cloud of the whole skull (359k points at Fast). Without
+  them COLMAP still places 62/62 cameras, but from the static background,
+  and the dense cloud is a smeared shell (78k points). Masks are what
+  makes turntable captures work.
 
 ## Exit decisions
 
 | Question | Decision | Evidence |
 |---|---|---|
 | (a) OpenMVS on CPU fast enough for small objects? Default resolution level? | | |
-| (b) Masking model and runtime | | |
+| (b) Masking model and runtime | ISNet (`isnet-general-use`, Apache-2.0) on ONNX Runtime, CPU, in a worker process; downloaded on first use (179 MB, pinned sha256). GPU execution providers (ROCm/MIGraphX, CoreML) not needed at 1-1.5 s per photo | Masking section above; the skull turntable set |
 | (c) Python packaging acceptable? | Likely yes: AppImage 144 MB without viewer, 285 MB with, 0.3-0.4 s to a window ([spike](../../tools/spikes/packaging/README.md)); size is dominated by Brush and QtWebEngine, not Python. Still to check: the macOS `.app` on the M1 | |
 | (d) Viewer approach | Candidate: three.js + Spark in QWebEngineView ([spike](../../tools/spikes/viewer/README.md)); on the GRE a 2M-face textured mesh and a 3.5M-splat scene both run at 60 fps on the GPU from the AppImage (still camera). Still to measure: orbiting, the M1, memory | |
 

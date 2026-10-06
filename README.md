@@ -40,6 +40,8 @@ uv run ez2d import ~/scans/skull ~/Pictures/skull   # --masks DIR to add masks
 uv run ez2d import ~/scans/skull ~/Videos/skull.mp4  # a video: --frames N (100)
 uv run ez2d upload ~/scans/skull                    # photos from a phone (QR code)
 uv run ez2d photos ~/scans/skull --exclude Preview.jpg  # photo checks, leave out
+uv run ez2d masks ~/scans/skull                     # automatic masks (model: 179 MB)
+uv run ez2d import ~/scans/skull ~/Pictures/under --flipped  # the other side
 uv run ez2d run ~/scans/skull --quality fast        # fast, balanced (default), high
 uv run ez2d status ~/scans/skull
 uv run ez2d export ~/scans/skull --formats glb      # OBJ and GLB are exported after run

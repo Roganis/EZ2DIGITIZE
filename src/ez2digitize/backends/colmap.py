@@ -11,7 +11,7 @@ image path is the project's `captures/` folder and every image is named by
 its path relative to it (`<capture id>/IMG_0001.jpg`), listed in an image
 list. Masks follow COLMAP's own naming, `<masks>/<capture id>/IMG_0001.jpg.png`.
 
-    features/   database.db, image_list.txt
+    features/   database.db, image_list.txt, masks/ (a mask for every image)
     matching/   database.db (a copy of the features one, then matched)
     mapping/    sparse/0, sparse/1, ... (one folder per model)
     undistort/  images/, sparse/ (pinhole model, input for OpenMVS and Brush)
@@ -33,6 +33,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
+
+from PIL import Image
 
 from ez2digitize.backends.colmap_model import read_cameras, read_image_cameras
 from ez2digitize.backends.common import (
@@ -209,11 +211,13 @@ def extract_features(
         argv += ["--FeatureExtraction.num_threads", str(options.threads)]
     inputs = {"captures": fingerprint([capture_input(b) for b in bundles])}
     if masks is not None:
-        argv += ["--ImageReader.mask_path", masks]
+        argv += ["--ImageReader.mask_path", stage_dir / MASKS_OUT]
         inputs["masks"] = tree_input(masks)
 
     def prepare(folder: Path) -> None:
         (folder / IMAGE_LIST).write_text("\n".join(names) + "\n", encoding="utf-8")
+        if masks is not None:
+            _stage_masks(project, masks, names, folder / MASKS_OUT)
 
     return StageSpec(
         name=stage,
@@ -224,6 +228,24 @@ def extract_features(
         parse_line=ColmapProgress(total_images=len(names)),
         prepare=prepare,
     )
+
+
+def _stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
+    """A mask for every image: the project's, or a white one (keep everything).
+
+    COLMAP skips an image whose mask is missing, so photos without a mask
+    (none imported, or dropped in review) get a white mask of their size.
+    """
+    for name in names:
+        target = folder / f"{name}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = masks / f"{name}.png"
+        if source.is_file():
+            _link_or_copy(source, target)
+        else:
+            with Image.open(project.captures_dir / name) as image:
+                width, height = image.size  # the raw layout, as COLMAP reads it
+            write_uniform_png(target, width, height, 255)
 
 
 def merge_cameras(database: Path, groups: Mapping[str, str]) -> int:
@@ -387,6 +409,7 @@ def undistort(
 
 MASK_INPUT = "mask_cameras.txt"
 MASKS_OUT = "masks"
+MASK_SUFFIX = ".mask.png"  # OpenMVS's naming: <image stem>.mask.png
 
 
 def undistort_masks(
@@ -423,7 +446,7 @@ def undistort_masks(
         lines = []
         for name, camera_id in sorted(image_cameras.items()):
             camera = cameras[camera_id]
-            target = staged / f"{PurePosixPath(name).stem}.mask.png"
+            target = staged / f"{PurePosixPath(name).stem}{MASK_SUFFIX}"
             source = masks / f"{name}.png"
             if source.is_file():
                 _link_or_copy(source, target)

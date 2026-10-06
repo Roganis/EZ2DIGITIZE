@@ -52,6 +52,12 @@ went through all nine steps with masks, to a GLB, in 69 s.
 Brush (the pinned release binary, for splats) is bundled next to the other
 backends with `--brush DIR`; the workflow does.
 
+Automatic masks (October 2026): ONNX Runtime and NumPy add about 24 MB to
+the macOS zip (168 to 192 MB); the AppImage with Brush is 252.5 MB. The
+smoke test runs `masks` with the frozen app, which downloads the model
+over HTTPS and runs the `mask-worker` command: 50 s for the 32 synthetic
+photos on the Linux runner (download included), 226 s on the macOS one.
+
 ## macOS app
 
 ```sh

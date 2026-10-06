@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from ez2digitize import pipeline
 from ez2digitize.backends.brush import Brush
@@ -36,11 +37,16 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executabl
 def project(tmp_path: Path) -> Project:
     project = Project.create(tmp_path / "project")
     files = []
-    for name in ("a.jpg", "b.jpg", "c.jpg"):
-        (tmp_path / name).write_bytes(name.encode())
+    for n, name in enumerate(("a.jpg", "b.jpg", "c.jpg")):
+        _jpeg(tmp_path / name, n)
         files.append(tmp_path / name)
     import_files(project, files, source="folder")
     return project
+
+
+def _jpeg(path: Path, shade: int) -> None:
+    # Real images: the features stage reads the size of those without a mask.
+    Image.new("RGB", (8, 6), (shade * 40, 0, 0)).save(path)
 
 
 @pytest.fixture
@@ -258,7 +264,7 @@ def test_same_file_name_in_two_captures_skips_openmvs_masks(
 ) -> None:
     other = tmp_path / "other"
     other.mkdir()
-    (other / "a.jpg").write_bytes(b"another a")
+    _jpeg(other / "a.jpg", 5)
     second = import_files(project, [other / "a.jpg"], source="folder")
     (project.masks_dir / second.id).mkdir(parents=True)
     (project.masks_dir / second.id / "a.jpg.png").write_bytes(b"m")
@@ -310,6 +316,56 @@ def test_splats(
     assert again.splat.run_id == result.splat.run_id
 
 
+def test_splats_use_the_masks(
+    project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir(parents=True)
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"mask of a")
+    with_brush = replace(tools, brush=fake_brush)
+    events, handler = _collect()
+    result = pipeline.run_splat(project, with_brush, on_event=handler)
+    started = [e.stage for e in events if isinstance(e, StageStarted)]
+    assert started[-2:] == ["mask-undistort", "splat"]
+    assert result.sparse.masks is not None
+    assert result.splat.inputs["masks"] == f"run:{result.sparse.masks.run_id}"
+    # Every registered photo has a mask (white where there was none).
+    assert "masks: 3" in (project.stage_dir("splat") / "log.txt").read_text()
+
+    unmasked = pipeline.run_splat(project, with_brush, MeshSettings(use_masks=False))
+    assert "masks" not in unmasked.splat.inputs
+    assert "masks: 0" in (project.stage_dir("splat") / "log.txt").read_text()
+
+
+def test_splats_skip_masks_brush_cannot_tell_apart(
+    project: Project, tools: Tools, fake_brush: Brush, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    other = tmp_path / "other"
+    other.mkdir()
+    _jpeg(other / "A.JPG", 5)  # a.jpg's stem apart from case
+    import_files(project, [other / "A.JPG"], source="folder")
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir(parents=True)
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"m")
+    monkeypatch.setenv("FAKE_MODELS", "4")
+    events, handler = _collect()
+    result = pipeline.run_splat(project, replace(tools, brush=fake_brush), on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any("training splats without masks" in n and "apart from case" in n for n in notices)
+    assert "masks" not in result.splat.inputs
+
+
 def test_splats_need_brush_and_a_real_gpu(
     project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -324,3 +380,33 @@ def test_splats_need_brush_and_a_real_gpu(
     with pytest.raises(pipeline.PipelineError, match="software renderer"):
         pipeline.run_splat(project, with_brush)
     assert pipeline.run_splat(project, with_brush, allow_software_gpu=True).file.is_file()
+
+
+def test_two_sided_scan_notices(
+    project: Project, tools: Tools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    under = tmp_path / "under"
+    under.mkdir()
+    _jpeg(under / "d.jpg", 3)
+    _jpeg(under / "e.jpg", 4)
+    second = import_files(
+        project, [under / "d.jpg", under / "e.jpg"], source="folder", flipped=True
+    )
+    # The fake mapper places the first images in order: a, b, c only.
+    monkeypatch.setenv("FAKE_MODELS", "3")
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any(n.startswith("two-sided scan: 5 of 5 photos have no mask") for n in notices)
+    assert any("the two sides did not join (3 of 3 photos of the first side" in n for n in notices)
+
+    for bundle in list_bundles(project):
+        (project.masks_dir / bundle.id).mkdir(parents=True, exist_ok=True)
+        for name in ("a.jpg", "b.jpg", "c.jpg") if bundle.id != second.id else ("d.jpg", "e.jpg"):
+            (project.masks_dir / bundle.id / f"{name}.png").write_bytes(b"m")
+    monkeypatch.setenv("FAKE_MODELS", "5")
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert not any(n.startswith("two-sided scan") for n in notices)
+    assert any(n.startswith("both sides joined: 3 of 3 photos") for n in notices)

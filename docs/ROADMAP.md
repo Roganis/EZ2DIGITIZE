@@ -152,7 +152,13 @@ installable on Linux as an AppImage.
   photos`), plus odd-sized files (a collage in the skull set), duplicates
   and too few photos; flagged photos can be left out and brought back.
 - Automatic masking with the model chosen in Phase 1, with a quick review
-  grid where the user can drop bad masks.
+  grid where the user can drop bad masks. Done (`ez2digitize.masks`,
+  `mask_worker`): ISNet on ONNX Runtime in a worker process, one cached
+  stage per capture; the Masks tab shows every photo with what its mask
+  removes tinted red, flags empty, near-total, unsure and odd masks, and
+  unchecking drops a mask (the photo is then used whole); imported masks
+  (Add masks…) win over automatic ones; `ez2d masks`. Photos without a
+  mask get a white one for COLMAP too, which otherwise skipped them.
 - Camera grouping: one intrinsics set per camera/lens. Done: one per
   capture as before, and when a capture mixes cameras, lenses, zoom
   settings (beyond 5 %) or sizes, features are extracted with a camera per
@@ -208,12 +214,13 @@ fails, they can see which stage failed and why.
   missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
   notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
-  viewable in the embedded viewer. Done except masks and the viewer
+  viewable in the embedded viewer. Done except the viewer
   (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
   run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
-  renderers. Masking splats (Brush reads alpha) waits for the masking
-  decision; viewing waits for the viewer decision. Rotating splats upright
-  on export is left out (needs the SH coefficients rotated too).
+  renderers. With masks, Brush gets the masks warped for OpenMVS where it
+  looks for them (`images/masks/<stem>.png`) and leaves the background out
+  of its loss. Viewing waits for the viewer decision. Rotating splats
+  upright on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in). Done
   (`ez2digitize.diagnostics`, Help → Export Diagnostics and a button after
@@ -256,6 +263,14 @@ fails, they can see which stage failed and why.
   adjust needs the viewer.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
+  Done (`ez2digitize.sides`): a capture can be marked as turned over
+  (`flipped` in capture.json; Other side… and the Both sides tab, `ez2d
+  import --flipped`, `ez2d flip`); the tab explains the capture and keeps a
+  checklist (photos of both sides, a mask for every photo), and Build asks
+  before running with masks missing. The pipeline warns about the same,
+  then says after camera placement whether the sides joined (photos of each
+  side placed together); the upright estimate uses the first side's photos
+  only. Still to test on a real two-sided capture (Phase 1 dataset 3).
 - Mesh cleanup: keep largest component, remove floaters, decimate to a
   target face count, hole filling and watertightness check for printing
   (Open3D is MIT; PyMeshLab is GPL-3.0, both fine). Done without a new
@@ -292,8 +307,10 @@ fails, they can see which stage failed and why.
   subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
   The coverage check spots a camera that didn't move (all views within
-  10°) and says to mask the background; a dedicated mode waits for real
-  turntable captures and the masking decision.
+  10°) and says to mask the background. With automatic masks the skull
+  turntable set reconstructs cleanly (see FINDINGS); a dedicated mode
+  (masks made automatically, the still-camera notice turned into a
+  suggestion to make them) waits for more real turntable captures.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
   Gaussian splatting extension.
 

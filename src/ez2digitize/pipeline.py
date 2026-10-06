@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage
+from ez2digitize import coverage, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -39,6 +39,7 @@ from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
+from ez2digitize.masks import has_masks
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
@@ -317,12 +318,18 @@ def run_splat(
             else "no GPU with a Vulkan driver was found"
         )
     with _exclusive():
-        masked = settings.use_masks and _has_masks(project.masks_dir)
+        masked = settings.use_masks and has_masks(project)
         stages = (*(s for s in SPARSE_STAGES if masked or s != "mask-undistort"), SPLAT_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
         run = _Run(project, stages, on_event, cancel, force_from)
+        masks = sparse.masks
+        if masks is not None and (clash := _stem_clash(project)):
+            run.emit(Notice(f"training splats without masks: {clash}"))
+            masks = None
         manifest = run(
-            brush.train(tools.brush, project, sparse.undistorted, options=settings.splat)
+            brush.train(
+                tools.brush, project, sparse.undistorted, options=settings.splat, masks=masks
+            )
         )
         file = project.stage_dir(SPLAT_STAGE) / brush.SPLAT_FILE
         if not file.is_file():
@@ -354,9 +361,11 @@ def _sparse(
         total = len(colmap.image_names(bundles))
     except BackendError as exc:
         raise PipelineError(str(exc)) from exc
-    masks = project.masks_dir if settings.use_masks and _has_masks(project.masks_dir) else None
+    masks = project.masks_dir if settings.use_masks and has_masks(project) else None
     stages = stages or _stages(settings, masked=masks is not None)
     run = _Run(project, stages, on_event, cancel, force_from)
+    for problem in sides.check(project, bundles, use_masks=settings.use_masks):
+        run.emit(Notice(f"two-sided scan: {problem}"))
     sfm = tools.colmap
 
     feature_options = settings.features
@@ -403,6 +412,13 @@ def _sparse(
         )
     registered = colmap.registered_images(model)
     run.emit(Notice(f"{registered} of {total} images registered (model {model.name})"))
+    if (two_sided := sides.sides(bundles)) is not None and two_sided.complete:
+        try:
+            placed = colmap_model.read_images(model)
+        except BackendError as exc:
+            run.emit(Notice(f"could not check how the two sides joined: {exc}"))
+        else:
+            run.emit(Notice(sides.join_notice(sides.joined(two_sided, placed))))
     if len(colmap.models(sparse_dir)) > 1:
         run.emit(
             Notice(
@@ -502,7 +518,7 @@ def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle])
                 f"few matches with the others: {coverage.name_list(weak)}. More photos "
                 "between them and their neighbours would make the result more reliable."
             )
-        analysis = coverage.analyse(model, exif_orientations(bundles))
+        analysis = coverage.analyse(model, exif_orientations(bundles), sides.upright_names(bundles))
         notes += analysis.findings if analysis else ()
     except (OSError, ValueError, BackendError, sqlite3.Error):
         pass  # advice only: never stop the run for it
@@ -535,6 +551,21 @@ def _existing_sparse(project: Project, settings: MeshSettings) -> SparseResult:
     )
 
 
+def _stem_clash(project: Project) -> str | None:
+    """Why Brush can't tell two photos' masks apart, if it can't.
+
+    Brush finds a mask by the image's file stem, ignoring case, in one folder
+    for all captures (OpenMVS has the same limit, but compares case).
+    """
+    seen: dict[str, str] = {}
+    for name in colmap.image_names(list_bundles(project)):
+        stem = Path(name).stem.lower()
+        if stem in seen:
+            return f"{seen[stem]} and {name} have the same file name apart from case"
+        seen[stem] = name
+    return None
+
+
 def _stages(settings: MeshSettings, *, masked: bool) -> tuple[str, ...]:
     skip = set()
     if settings.refine is None:
@@ -557,10 +588,6 @@ def _auto_matching(bundles: list[CaptureBundle]) -> colmap.MatchOptions:
     if images > EXHAUSTIVE_MAX_IMAGES and all(b.source == "video" for b in bundles):
         return colmap.MatchOptions(mode="sequential")
     return colmap.MatchOptions(mode="exhaustive")
-
-
-def _has_masks(masks_dir: Path) -> bool:
-    return masks_dir.is_dir() and any(masks_dir.rglob("*.png"))
 
 
 def _tail(log: Path, lines: int = 30) -> list[str]:

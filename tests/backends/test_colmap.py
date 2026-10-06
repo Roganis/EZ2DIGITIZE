@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from ez2digitize.backends import colmap
 from ez2digitize.backends.colmap import (
@@ -110,6 +111,7 @@ def test_image_names(project: Project, tmp_path: Path) -> None:
 
 def test_extract_features(project: Project, tmp_path: Path) -> None:
     bundle = _bundle(project, tmp_path, "a.jpg", "b.jpg")
+    Image.new("RGB", (6, 4)).save(bundle.root / "b.jpg")  # a real image, 6x4 raw
     masks = project.masks_dir
     (masks / bundle.id).mkdir()
     (masks / bundle.id / "a.jpg.png").write_bytes(b"m")
@@ -119,7 +121,7 @@ def test_extract_features(project: Project, tmp_path: Path) -> None:
     assert spec.argv[:2] == [TOOL.path, "feature_extractor"]
     assert _opt(spec, "--database_path") == str(stage_dir / "database.db")
     assert _opt(spec, "--image_path") == str(project.captures_dir)
-    assert _opt(spec, "--ImageReader.mask_path") == str(masks)
+    assert _opt(spec, "--ImageReader.mask_path") == str(stage_dir / "masks")
     assert _opt(spec, "--ImageReader.single_camera_per_folder") == "1"
     assert _opt(spec, "--ImageReader.single_camera") == "0"
     assert _opt(spec, "--FeatureExtraction.use_gpu") == "0"
@@ -131,6 +133,11 @@ def test_extract_features(project: Project, tmp_path: Path) -> None:
     assert spec.prepare is not None
     spec.prepare(stage_dir)
     assert (stage_dir / "image_list.txt").read_text() == f"{bundle.id}/a.jpg\n{bundle.id}/b.jpg\n"
+    # COLMAP skips an image without a mask: b.jpg gets a white one of its size.
+    staged = stage_dir / "masks" / bundle.id
+    assert (staged / "a.jpg.png").read_bytes() == b"m"
+    with Image.open(staged / "b.jpg.png") as white:
+        assert (white.mode, white.size, white.getextrema()) == ("L", (6, 4), (255, 255))
 
 
 def test_feature_cache_key_follows_options_and_captures(project: Project, tmp_path: Path) -> None:

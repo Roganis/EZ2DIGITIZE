@@ -70,9 +70,22 @@ _EMPTY_MESH = Explanation(
 Rule = Callable[[str, int, str], Explanation | None]
 
 
-def _killed(exit_code: int, *signals: signal.Signals) -> bool:
+def _killed(exit_code: int, *signals: int | None) -> bool:
     # The runner reports death by signal as a negative exit code; a shell as 128 + n.
-    return any(exit_code in (-sig, 128 + sig) for sig in signals)
+    return any(exit_code in (-sig, 128 + sig) for sig in signals if sig is not None)
+
+
+# POSIX signal numbers; Windows has none of these, its crashes are NTSTATUS codes.
+SIGKILL: int | None = getattr(signal, "SIGKILL", None)
+SIGBUS: int | None = getattr(signal, "SIGBUS", None)
+# Windows: access violation, stack overflow, heap corruption; illegal instruction.
+WINDOWS_CRASHES = frozenset({0xC0000005, 0xC00000FD, 0xC0000374, 0xC0000409})
+WINDOWS_ILLEGAL = frozenset({0xC000001D})
+
+
+def _windows_status(exit_code: int, codes: frozenset[int]) -> bool:
+    # Python reports them unsigned; some tools pass them on as signed 32-bit.
+    return (exit_code & 0xFFFFFFFF) in codes
 
 
 def _matches(pattern: str) -> Callable[[str], bool]:
@@ -101,7 +114,7 @@ def _rules() -> list[Rule]:
     def memory(stage: str, code: int, log: str) -> Explanation | None:
         # The kernel's OOM killer sends SIGKILL, which also is how cancel ends: the
         # pipeline reports cancellation separately, so a SIGKILL here is not ours.
-        if _oom(log) or _killed(code, signal.SIGKILL):
+        if _oom(log) or _killed(code, SIGKILL):
             return _OUT_OF_MEMORY
         return None
 
@@ -109,7 +122,8 @@ def _rules() -> list[Rule]:
         return _DISK_FULL if _disk(log) else None
 
     def illegal(stage: str, code: int, log: str) -> Explanation | None:
-        if _killed(code, signal.SIGILL) or "illegal instruction" in log.lower():
+        illegal = _killed(code, signal.SIGILL) or _windows_status(code, WINDOWS_ILLEGAL)
+        if illegal or "illegal instruction" in log.lower():
             return _ILLEGAL_INSTRUCTION
         return None
 
@@ -128,7 +142,9 @@ def _rules() -> list[Rule]:
         return None
 
     def crash(stage: str, code: int, log: str) -> Explanation | None:
-        crashed = _killed(code, signal.SIGSEGV, signal.SIGABRT, signal.SIGBUS)
+        crashed = _killed(code, signal.SIGSEGV, signal.SIGABRT, SIGBUS) or _windows_status(
+            code, WINDOWS_CRASHES
+        )
         return _CRASH if crashed or "segmentation fault" in log.lower() else None
 
     # Most specific first: a crash after "out of memory" is an out-of-memory.

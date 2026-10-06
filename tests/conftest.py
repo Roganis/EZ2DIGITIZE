@@ -13,6 +13,9 @@ from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.backends.openmvs import TOOLS, OpenMVS
 from ez2digitize.pipeline import Tools
 
+# The Phase 1 benchmark harness (tools/feasibility) is POSIX only.
+collect_ignore_glob = ["feasibility/*"] if sys.platform == "win32" else []
+
 # Run Qt without a display (CI, SSH sessions). Must be set before Qt loads.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Chromium refuses WebGL on software renderers (CI has no GPU); only for tests.

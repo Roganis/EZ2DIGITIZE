@@ -99,10 +99,11 @@ def system_info() -> dict[str, Any]:
         "available_memory_gb": round(available_memory() / GIB, 1),
         "frozen": bool(getattr(sys, "frozen", False)),
     }
-    with contextlib.suppress(ValueError, OSError, AttributeError):
-        info["total_memory_gb"] = round(
-            os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / GIB, 1
-        )
+    if sys.platform != "win32":
+        with contextlib.suppress(ValueError, OSError, AttributeError):
+            info["total_memory_gb"] = round(
+                os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / GIB, 1
+            )
     info["gpus"] = [asdict(gpu) for gpu in detect_gpus()]
     return info
 

@@ -141,7 +141,7 @@ def run_process(
     emit = on_event or (lambda _event: None)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail: deque[str] = deque(maxlen=TAIL_LINES)
-    child_type: type[_Child] = _WindowsChild if sys.platform == "win32" else _PosixChild
+    child_type = _child_type()
 
     with log_path.open("w", encoding="utf-8") as log:
         log.write(f"$ {command_line(args)}\n\n")
@@ -347,9 +347,6 @@ if sys.platform != "win32":
             cpu = self.rusage.ru_utime + self.rusage.ru_stime
             return cpu, _peak_rss_mb(self.rusage.ru_maxrss, self.parent_maxrss, self.hwm_kb)
 
-    class _WindowsChild(_Child):  # only used on Windows
-        pass
-
 else:
 
     class _WindowsChild(_Child):
@@ -486,42 +483,6 @@ class _LineSplitter:
         return parts
 
 
-def _kill_group(pid: int, term_grace_s: float) -> tuple[int, Any]:
-    """SIGTERM the process group, SIGKILL it if the leader is still alive later."""
-    for sig, grace in ((signal.SIGTERM, term_grace_s), (signal.SIGKILL, None)):
-        _signal_group(pid, sig)
-        deadline = None if grace is None else time.monotonic() + grace
-        while deadline is None or time.monotonic() < deadline:
-            done, status, ru = os.wait4(pid, 0 if deadline is None else os.WNOHANG)
-            if done == pid:
-                if sig is signal.SIGTERM:
-                    # The leader is gone; make sure no stragglers survive it.
-                    _signal_group(pid, signal.SIGKILL)
-                return status, ru
-            time.sleep(_POLL_S)
-    raise AssertionError("unreachable")
-
-
-def _signal_group(pid: int, sig: signal.Signals) -> None:
-    # ESRCH: the group is gone. macOS answers EPERM for a group of zombies.
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, sig)
-
-
-def _vm_hwm_kb(pid: int) -> int:
-    """Peak resident memory of a running process on Linux (0 where unknown)."""
-    if sys.platform != "linux":
-        return 0
-    try:
-        with Path(f"/proc/{pid}/status").open(encoding="ascii", errors="replace") as fh:
-            for line in fh:
-                if line.startswith("VmHWM:"):
-                    return int(line.split()[1])
-    except (OSError, ValueError, IndexError):
-        pass
-    return 0
-
-
 def _peak_rss_mb(child_maxrss: int, parent_maxrss: int, sampled_hwm_kb: int) -> float | None:
     """Best estimate of the child's peak RSS in MB.
 
@@ -537,3 +498,46 @@ def _peak_rss_mb(child_maxrss: int, parent_maxrss: int, sampled_hwm_kb: int) -> 
     if sampled_hwm_kb > 0:
         return round(sampled_hwm_kb / 1024, 1)
     return None
+
+
+def _child_type() -> type[_Child]:
+    if sys.platform == "win32":
+        return _WindowsChild
+    else:  # an else, which mypy reads as "not on Windows"
+        return _PosixChild
+
+
+if sys.platform != "win32":
+
+    def _kill_group(pid: int, term_grace_s: float) -> tuple[int, Any]:
+        """SIGTERM the process group, SIGKILL it if the leader is still alive later."""
+        for sig, grace in ((signal.SIGTERM, term_grace_s), (signal.SIGKILL, None)):
+            _signal_group(pid, sig)
+            deadline = None if grace is None else time.monotonic() + grace
+            while deadline is None or time.monotonic() < deadline:
+                done, status, ru = os.wait4(pid, 0 if deadline is None else os.WNOHANG)
+                if done == pid:
+                    if sig is signal.SIGTERM:
+                        # The leader is gone; make sure no stragglers survive it.
+                        _signal_group(pid, signal.SIGKILL)
+                    return status, ru
+                time.sleep(_POLL_S)
+        raise AssertionError("unreachable")
+
+    def _signal_group(pid: int, sig: signal.Signals) -> None:
+        # ESRCH: the group is gone. macOS answers EPERM for a group of zombies.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pid, sig)
+
+    def _vm_hwm_kb(pid: int) -> int:
+        """Peak resident memory of a running process on Linux (0 where unknown)."""
+        if sys.platform != "linux":
+            return 0
+        try:
+            with Path(f"/proc/{pid}/status").open(encoding="ascii", errors="replace") as fh:
+                for line in fh:
+                    if line.startswith("VmHWM:"):
+                        return int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            pass
+        return 0

@@ -78,3 +78,6 @@ The first release.
   with COLMAP 4.2.1, OpenMVS v2.4.0 and Brush v0.3.0 inside. The macOS app
   isn't notarized and the Windows app isn't signed yet.
 - `ez2d`, a command line for everything the app does.
+- Programs from the computer rather than the app (a system FFmpeg, a
+  COLMAP chosen in the settings, plugins) run with the computer's own
+  libraries, so the packaged app doesn't break them.

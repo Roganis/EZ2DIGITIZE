@@ -372,18 +372,6 @@ def test_example_plugin(project: Project, fake_tools: Tools, tmp_path: Path) -> 
     assert progress == [pytest.approx(1 / 3, abs=1e-3), pytest.approx(2 / 3, abs=1e-3), 1.0]
 
 
-def test_user_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEI1234:/opt/lib")
-    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/lib")
-    assert plugins.user_environment() is None  # not a packaged app
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    assert plugins.user_environment() == {"LD_LIBRARY_PATH": "/opt/lib"}
-    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")
-    assert plugins.user_environment() == {"LD_LIBRARY_PATH": ""}
-    monkeypatch.delenv("LD_LIBRARY_PATH")
-    assert plugins.user_environment() is None
-
-
 # --- the command line -----------------------------------------------------------------
 
 

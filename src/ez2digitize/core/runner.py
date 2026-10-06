@@ -144,6 +144,8 @@ def run_process(
     args = [str(a) for a in argv]
     if not args:
         raise ValueError("empty command")
+    if restored := host_libraries(args[0]):
+        env = {**restored, **(env or {})}
     emit = on_event or (lambda _event: None)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail: deque[str] = deque(maxlen=TAIL_LINES)
@@ -445,6 +447,35 @@ class _Follower:
         return out
 
 
+LIBRARY_PATH_VARIABLES = ("LD_LIBRARY_PATH", "LIBPATH")
+
+
+def host_libraries(program: str | Path) -> dict[str, str] | None:
+    """Environment changes that let a program from outside the app use its own libraries.
+
+    A packaged app (PyInstaller) puts its own folder first in the library
+    path, and keeps the original in `<variable>_ORIG`. Its bundled backends
+    expect that; a program of the computer's (a system FFmpeg, a COLMAP set
+    in the settings, a plugin's Python) must not load the app's copies of
+    libraries it also uses, or it fails to start ("symbol lookup error").
+    None when nothing needs changing: not packaged, or the program is inside
+    the app.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if not getattr(sys, "frozen", False) or base is None:
+        return None
+    # The app's folder: _internal's parent (Linux), Contents (macOS .app).
+    app = Path(base).resolve().parent
+    if Path(program).resolve().is_relative_to(app):
+        return None
+    env = {
+        var: os.environ.get(f"{var}_ORIG", "")
+        for var in LIBRARY_PATH_VARIABLES
+        if var in os.environ
+    }
+    return env or None
+
+
 def run_quick(
     argv: Sequence[str | Path], *, timeout_s: float = 30.0, logs: str | None = None
 ) -> str:
@@ -459,11 +490,13 @@ def run_quick(
     command can't be started or times out.
     """
     args = [str(a) for a in argv]
+    restored = host_libraries(args[0])
     try:
         with tempfile.TemporaryDirectory(prefix="ez2d-probe-") as scratch:
             done = subprocess.run(  # noqa: S603 - argument list, never a shell
                 args,
                 cwd=scratch,
+                env={**os.environ, **restored} if restored else None,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,

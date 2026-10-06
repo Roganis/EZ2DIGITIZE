@@ -79,7 +79,10 @@ def locate(explicit: Path | None = None) -> FFmpeg:
         raise BackendMissing(f"FFmpeg at {path} can't be run: {exc}") from exc
     version = parse_version(text)
     if version is None:
-        raise BackendMissing(f"no FFmpeg version in the output of {path} -version")
+        said = "\n".join(text.strip().splitlines()[-5:]) or "nothing"
+        raise BackendMissing(
+            f"no FFmpeg version in the output of {path} -version; it said:\n{said}"
+        )
     return FFmpeg(path=path, probe=probe, version=version)
 
 

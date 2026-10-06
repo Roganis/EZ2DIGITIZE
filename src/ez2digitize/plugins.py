@@ -601,30 +601,11 @@ def _spec(
         # has the interpreter as its executable, whose hash says little.
         parameters={**parameters, "plugin_manifest": f"sha256:{sha256_file(plugin.manifest)}"},
         inputs=inputs,
-        env=user_environment(),
         parse_line=PluginProgress(plugin) if plugin.progress else None,
         use_pty=plugin.pty,
         prepare=prepare,
         gpu=plugin.gpu,
     )
-
-
-def user_environment() -> dict[str, str] | None:
-    """Environment changes that give a plugin this computer's libraries, not the app's.
-
-    A packaged app (PyInstaller) puts its own folder first in the library
-    path and keeps the original in `<variable>_ORIG`; a plugin's programs
-    (its Python, PyTorch...) must not load the app's copies. None when
-    nothing needs changing.
-    """
-    if not getattr(sys, "frozen", False):
-        return None
-    env = {
-        var: os.environ.get(f"{var}_ORIG", "")
-        for var in ("LD_LIBRARY_PATH", "LIBPATH")
-        if var in os.environ
-    }
-    return env or None
 
 
 def _argv(

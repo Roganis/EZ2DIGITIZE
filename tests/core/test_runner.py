@@ -17,7 +17,9 @@ from ez2digitize.core.runner import (
     Progress,
     Started,
     command_line,
+    host_libraries,
     run_process,
+    run_quick,
 )
 
 POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
@@ -364,3 +366,30 @@ def test_run_quick_reads_log_files() -> None:
     code = "open('App-7.log', 'w').write('OpenMVS x64 v2.4.0\\n')"
     assert "v2.4.0" not in run_quick(py(code))
     assert "OpenMVS x64 v2.4.0" in run_quick(py(code), logs="*.log")
+
+
+def test_programs_outside_a_packaged_app_get_the_host_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app's library path is for its bundled tools, not for a system FFmpeg."""
+    internal = tmp_path / "app" / "_internal"
+    bundled = tmp_path / "app" / "_internal" / "backends" / "bin" / "colmap"
+    monkeypatch.setenv("LD_LIBRARY_PATH", f"{internal}:/opt/lib")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/lib")
+    show = py("import os; print('path=' + os.environ.get('LD_LIBRARY_PATH', '-'))")
+    assert host_libraries(sys.executable) is None  # not a packaged app
+    assert f"path={internal}:/opt/lib" in run_quick(show)
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
+    assert host_libraries(bundled) is None  # the app's own tools keep its libraries
+    assert host_libraries(sys.executable) == {"LD_LIBRARY_PATH": "/opt/lib"}
+    assert "path=/opt/lib" in run_quick(show)
+    log = tmp_path / "log.txt"
+    run_process(show, log_path=log, env={"OTHER": "1"})
+    assert "path=/opt/lib" in log.read_text()
+
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")  # it was empty before the app set it
+    assert host_libraries(sys.executable) == {"LD_LIBRARY_PATH": ""}
+    monkeypatch.delenv("LD_LIBRARY_PATH")
+    assert host_libraries(sys.executable) is None

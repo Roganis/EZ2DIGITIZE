@@ -100,7 +100,9 @@ logs and settings, never your photos. The logs do contain file paths.
 ## Video, phone and splats
 
 - **"Importing a video needs FFmpeg".** Install FFmpeg 5 or newer, or set
-  its location in Settings → Reconstruction tools.
+  its location in Settings → Reconstruction tools. If FFmpeg is installed
+  and the message says "no FFmpeg version", it shows what FFmpeg printed
+  instead: run `ffmpeg -version` in a terminal to check it works there.
 - **The phone can't open the page.** Phone and computer must be on the
   same network (not a guest network that isolates devices), and the
   computer's firewall must allow incoming connections to the app while the

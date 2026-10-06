@@ -81,6 +81,13 @@ def test_locate(fake_ffmpeg: FFmpeg, monkeypatch: pytest.MonkeyPatch) -> None:
     assert ffmpeg.locate().path == fake_ffmpeg.path
 
 
+def test_locate_says_what_went_wrong(fake_ffmpeg: FFmpeg, monkeypatch: pytest.MonkeyPatch) -> None:
+    said = "ffmpeg: symbol lookup error: /usr/lib/libavcodec.so.61: undefined symbol: x"
+    monkeypatch.setattr(ffmpeg, "run_quick", lambda _argv: said + "\n")
+    with pytest.raises(BackendMissing, match="it said:\nffmpeg: symbol lookup error"):
+        ffmpeg.locate(fake_ffmpeg.path)
+
+
 def test_locate_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(BackendMissing, match="FFmpeg not found"):
         ffmpeg.locate(tmp_path / "nothing")

@@ -90,3 +90,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["tools/feasibility"]
 qt_api = "pyside6"
+# A test stuck this long prints every thread's stack, so a hang in CI shows
+# where it is.
+faulthandler_timeout = 120

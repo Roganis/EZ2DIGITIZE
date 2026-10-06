@@ -111,9 +111,11 @@ OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
                 upstream fix in tools/backends/patches applied
 Brush 0.3.0     Apache-2.0          https://github.com/ArthurBrussee/brush
                 The release binary, unmodified, with its LICENSE under
-                backends/licenses/brush. Its Rust dependencies' notices are
-                not in the release; collecting them (cargo-about) is a Phase
-                6 release task.
+                backends/licenses/brush, and THIRD-PARTY-NOTICES.txt there:
+                the license, copyright and NOTICE texts of the 545 Rust
+                crates compiled into it (MIT, Apache-2.0, BSD, ISC, Zlib,
+                MPL-2.0, Unicode-3.0 and the like), collected from Brush's
+                Cargo.lock by tools/packaging/brush_notices.py.
 GCC runtime     GPL-3.0 with the GCC Runtime Library Exception
                 (libgomp, libgfortran, libquadmath; AppImage only, copied
                 from the build machine for the backends; in the Windows

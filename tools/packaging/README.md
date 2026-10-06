@@ -5,6 +5,12 @@ Releases are built by the Release workflow from a version tag
 package workflows below with backends it builds itself. `release.py` sets
 the version and prints the release notes.
 
+`brush_notices.py` writes `brush-notices.txt`: the license notices of the
+Rust crates compiled into Brush's release binary, for the pinned Brush
+(needs cargo and the network; run it again when the pin changes). All three
+builders ship it as `backends/licenses/brush/THIRD-PARTY-NOTICES.txt` and
+stop if it was made for another Brush version.
+
 `build_appimage.py` builds the Linux AppImage: the app (PyInstaller onedir) with the
 pinned COLMAP and OpenMVS from
 [`tools/backends`](../backends/README.md) inside.

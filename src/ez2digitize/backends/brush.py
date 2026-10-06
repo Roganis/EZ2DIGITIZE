@@ -43,6 +43,8 @@ from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
 
 NAME = "brush"
+# A bump also means: BRUSH_VERSION in the package workflows, and the notices of
+# the crates inside it (tools/packaging/brush_notices.py).
 PINNED_VERSION = "0.3.0"
 ENV_VAR = "EZ2D_BRUSH"
 EXECUTABLE = "brush_app"

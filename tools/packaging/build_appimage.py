@@ -35,6 +35,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "src"))
+import brush_notices  # noqa: E402
+
 from ez2digitize import __version__  # noqa: E402
 
 APPIMAGETOOL = (
@@ -158,7 +160,15 @@ def add_brush(onedir: Path, release: Path) -> str:
     licenses = target / "licenses" / "brush"
     licenses.mkdir(parents=True, exist_ok=True)
     shutil.copy2(release / "LICENSE", licenses / "LICENSE")
-    return output([target / "bin" / "brush_app", "--version"]).strip()
+    version = output([target / "bin" / "brush_app", "--version"]).strip()
+    add_brush_notices(licenses, version)
+    return version
+
+
+def add_brush_notices(licenses: Path, brush_version: str) -> None:
+    """The notices of the crates inside Brush (brush_notices.py), for this Brush only."""
+    brush_notices.check(brush_notices.OUT, brush_version)
+    shutil.copy2(brush_notices.OUT, licenses / "THIRD-PARTY-NOTICES.txt")
 
 
 def _resolved_libraries(binary: Path) -> list[tuple[str, Path | None]]:

@@ -356,8 +356,8 @@ fails, they can see which stage failed and why.
   backends built from the tagged commit, the three packages built and
   tested with them, the backends' source packed from the same pins, the
   app's source and SHA256SUMS. `tools/packaging/release.py` sets the
-  version and dates the changelog. Before the first release: Brush's Rust
-  dependencies' notices (cargo-about).
+  version and dates the changelog. The notices of the Rust crates inside
+  Brush ship with it (`tools/packaging/brush_notices.py`).
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,

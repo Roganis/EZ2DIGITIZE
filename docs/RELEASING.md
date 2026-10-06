@@ -45,7 +45,9 @@ notes <v>` prints them).
    Backends workflow green on main (its vcpkg cache is what the release's
    backend build starts from; from a cold cache that build takes hours).
    Check THIRD_PARTY_LICENSES against what the packages contain (anything
-   added since the last release?).
+   added since the last release?). After a Brush pin bump, regenerate the
+   notices of the crates inside it (`tools/packaging/brush_notices.py`):
+   the package builds refuse notices made for another Brush.
 2. On a branch, set the version and date the changelog:
 
    ```sh
@@ -80,15 +82,6 @@ Actions → Release → Run workflow, on any branch, runs everything above
 except making the release: the summary lists the files it would attach
 with their checksums, and the notes. Worth doing before the first release
 of a version that changes the packaging.
-
-## Before the first release
-
-- **Brush's Rust dependencies' notices.** The apps bundle Brush's release
-  binary with Brush's own LICENSE, but not the notices of the Rust crates
-  compiled into it, which their MIT and Apache-2.0 licenses ask to be
-  passed on (THIRD_PARTY_LICENSES says so). Collect them for the pinned
-  Brush version (`cargo about generate` on its source) and ship them under
-  `backends/licenses/brush/`.
 
 ## Not yet
 

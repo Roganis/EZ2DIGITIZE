@@ -29,7 +29,16 @@ import sys
 import tarfile
 from pathlib import Path
 
-from build_appimage import EXCLUDED_MODULES, HERE, REPO, VIEWER_WEB, output, run, smoke
+from build_appimage import (
+    EXCLUDED_MODULES,
+    HERE,
+    REPO,
+    VIEWER_WEB,
+    add_brush_notices,
+    output,
+    run,
+    smoke,
+)
 
 from ez2digitize import __version__
 
@@ -126,7 +135,9 @@ def add_brush(folder: Path, release: Path) -> str:
     licenses = target / "licenses" / "brush"
     licenses.mkdir(parents=True, exist_ok=True)
     shutil.copy2(release / "LICENSE", licenses / "LICENSE")
-    return output([target / "bin" / "brush_app.exe", "--version"]).strip()
+    version = output([target / "bin" / "brush_app.exe", "--version"]).strip()
+    add_brush_notices(licenses, version)
+    return version
 
 
 def gui_self_test(folder: Path) -> None:

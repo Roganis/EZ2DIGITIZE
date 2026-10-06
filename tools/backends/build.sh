@@ -224,9 +224,10 @@ elif [ "$OS" = windows ]; then
   GLIBC=none
   DYNAMIC=$(for f in "$PREFIX"/bin/*.exe "$PREFIX"/bin/*.dll; do dumpbin //nologo //dependents "$(cygpath -w "$f")"; done \
     | grep -io '[a-z0-9_.-]*\.dll' | tr 'A-Z' 'a-z' | sort -u | tr '\n' ' ')
-  # Only Windows' own DLLs, and the runtime DLLs shipped next to them.
+  # Only Windows' own DLLs, and the runtime DLLs shipped next to them (dxgi:
+  # ONNX Runtime looks up GPUs with it; it is part of every Windows).
   SHIPPED=$(cd "$PREFIX/bin" && ls ./*.dll | sed 's|^\./||' | tr 'A-Z' 'a-z' | tr '\n' '|')
-  UNEXPECTED=$(echo "$DYNAMIC" | tr ' ' '\n' | grep -v -E "^(${SHIPPED})\$" | grep -v -E '^$|^(kernel32|user32|gdi32|advapi32|shell32|ole32|oleaut32|ws2_32|bcrypt|crypt32|shlwapi|dbghelp|psapi|comdlg32|winmm|version|secur32|ncrypt|iphlpapi|opengl32|glu32|setupapi|cfgmgr32|userenv|rpcrt4|vcomp140|api-ms-win-[a-z0-9-]*)\.dll$' || true)
+  UNEXPECTED=$(echo "$DYNAMIC" | tr ' ' '\n' | grep -v -E "^(${SHIPPED})\$" | grep -v -E '^$|^(kernel32|user32|gdi32|advapi32|shell32|ole32|oleaut32|ws2_32|bcrypt|crypt32|shlwapi|dbghelp|psapi|comdlg32|winmm|version|secur32|ncrypt|iphlpapi|opengl32|glu32|dxgi|setupapi|cfgmgr32|userenv|rpcrt4|vcomp140|api-ms-win-[a-z0-9-]*)\.dll$' || true)
   if [ -n "$UNEXPECTED" ]; then
     echo "error: the binaries need DLLs that won't be on users' machines: $UNEXPECTED" >&2
     exit 1

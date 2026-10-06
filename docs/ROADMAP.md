@@ -445,7 +445,35 @@ fails, they can see which stage failed and why.
     lens only (phones otherwise switch lenses and readjust between shots);
   - live guidance: coverage ring of angles already shot, blur check after
     each photo, optional automatic shutter once the phone has moved enough;
-  - optionally ARCore poses saved in `capture.json` as priors for COLMAP.
+  - the phone's motion recorded with the capture: raw gyroscope,
+    accelerometer and gravity readings, and ARCore's camera poses (camera
+    and motion sensors fused, in metres, a few centimetres of drift), all
+    on the camera frames' clock (Android stamps sensors and frames with
+    the same one on most phones). A sidecar file in the bundle, named in
+    `capture.json` (a schema bump with its migration); the video and
+    photos stay untouched. ARCore wants to drive the camera itself, often
+    below full resolution, which conflicts with the locked full-quality
+    capture above; its shared-camera mode may reconcile them, to try on a
+    real phone. The raw sensors have no such conflict, so they are always
+    recorded. A browser can read the sensors but gives no reliable time
+    per video frame, so the upload page can't do this.
+
+  What the pipeline does with the motion data, cheapest and surest first:
+  1. Up from gravity: the upright direction without guessing it from how
+     the photos were held, which fails for photos at all angles.
+  2. Frames from video picked by motion: drop frames shot while turning
+     fast (likely blurred), and space them by angle travelled rather than
+     by time. Needs only the gyroscope.
+  3. Matching guided by the poses: compare only photos that look at the
+     same side, as GPS positions already do for large sets.
+  4. A default scale from ARCore's metres (accuracy to measure; the marker
+     sheet stays the precise way).
+  5. Known poses for MapAnything (`camera_poses` input, next to the EXIF
+     focal length the plugin already passes) and as position priors for
+     COLMAP's mapper (check what the pinned 4.2.1 supports).
+
+  The motion sensors see nothing when a turntable turns the object under a
+  still phone: there only gravity helps.
 
   Before starting it, check the Phase 1 photo sets (EXIF focal lengths,
   exposure differences) to see how much the phone's automatic adjustments
@@ -457,6 +485,13 @@ fails, they can see which stage failed and why.
   were left unplaced or matched few others, against the rest. Running it on
   the Phase 1 phone captures decides whether the companion app is worth
   building; that waits for the maintainer's data.
+- Motion data already inside videos, with no app: GoPro writes its
+  gyroscope and accelerometer into the MP4 (GPMF), and some phones and 360°
+  cameras write Google's camera motion track (CAMM). Reading them at video
+  import gives steps 1 and 2 above for videos people already have. Check
+  the licences of the parsers (or read the tracks ourselves; both formats
+  are documented) and record the data in the bundle like the companion
+  app's.
 
 ## Testing and validation
 

@@ -2,16 +2,12 @@
 # collect_sources.sh): COLMAP and OpenMVS as tagged, the patches, vcpkg as
 # pinned, and every dependency's source archive. Releases publish these next
 # to the binaries (the corresponding source the GPL and AGPL ask for). Runs
-# by hand, on main when the pins change, and on pull requests that change
-# the collector.
+# by hand and on main when the pins change: about 20 minutes and 700-850 MB
+# per platform (first run: 224 port archives on Linux, 221 on macOS).
 name: Backend sources
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "tools/backends/collect_sources.sh"
-      - ".github/workflows/backend-sources.yml"
   push:
     branches: [main]
     paths:

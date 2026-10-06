@@ -214,12 +214,13 @@ fails, they can see which stage failed and why.
   missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
   notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
-  viewable in the embedded viewer. Done except masks and the viewer
+  viewable in the embedded viewer. Done except the viewer
   (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
   run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
-  renderers. Masking splats (Brush reads alpha) is next, now that masks
-  exist; viewing waits for the viewer decision. Rotating splats upright
-  on export is left out (needs the SH coefficients rotated too).
+  renderers. With masks, Brush gets the masks warped for OpenMVS where it
+  looks for them (`images/masks/<stem>.png`) and leaves the background out
+  of its loss. Viewing waits for the viewer decision. Rotating splats
+  upright on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in). Done
   (`ez2digitize.diagnostics`, Help → Export Diagnostics and a button after

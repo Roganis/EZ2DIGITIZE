@@ -344,5 +344,11 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 Splat path (Phase 3) branches after `undistort`:
 
 ```
-undistort -> Brush training -> PLY export
+undistort -> [mask-undistort] -> Brush training -> PLY export
 ```
+
+With masks, Brush trains on the masks warped for OpenMVS: the splat stage
+links them as `dataset/images/masks/<stem>.png`, where Brush 0.3.0 looks
+for an image's mask, and Brush leaves black pixels out of the loss. Brush
+matches stems ignoring case across all captures, so if two photos' names
+differ only in case the splats are trained without masks (with a notice).

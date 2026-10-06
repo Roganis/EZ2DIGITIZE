@@ -316,6 +316,56 @@ def test_splats(
     assert again.splat.run_id == result.splat.run_id
 
 
+def test_splats_use_the_masks(
+    project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir(parents=True)
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"mask of a")
+    with_brush = replace(tools, brush=fake_brush)
+    events, handler = _collect()
+    result = pipeline.run_splat(project, with_brush, on_event=handler)
+    started = [e.stage for e in events if isinstance(e, StageStarted)]
+    assert started[-2:] == ["mask-undistort", "splat"]
+    assert result.sparse.masks is not None
+    assert result.splat.inputs["masks"] == f"run:{result.sparse.masks.run_id}"
+    # Every registered photo has a mask (white where there was none).
+    assert "masks: 3" in (project.stage_dir("splat") / "log.txt").read_text()
+
+    unmasked = pipeline.run_splat(project, with_brush, MeshSettings(use_masks=False))
+    assert "masks" not in unmasked.splat.inputs
+    assert "masks: 0" in (project.stage_dir("splat") / "log.txt").read_text()
+
+
+def test_splats_skip_masks_brush_cannot_tell_apart(
+    project: Project, tools: Tools, fake_brush: Brush, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    from dataclasses import replace
+
+    from ez2digitize.core.hardware import Gpu
+
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    other = tmp_path / "other"
+    other.mkdir()
+    _jpeg(other / "A.JPG", 5)  # a.jpg's stem apart from case
+    import_files(project, [other / "A.JPG"], source="folder")
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir(parents=True)
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"m")
+    monkeypatch.setenv("FAKE_MODELS", "4")
+    events, handler = _collect()
+    result = pipeline.run_splat(project, replace(tools, brush=fake_brush), on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any("training splats without masks" in n and "apart from case" in n for n in notices)
+    assert "masks" not in result.splat.inputs
+
+
 def test_splats_need_brush_and_a_real_gpu(
     project: Project, tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
 ) -> None:

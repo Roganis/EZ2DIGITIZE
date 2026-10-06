@@ -39,7 +39,8 @@ def test_locate(fake_brush: Brush, tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_train_spec_and_dataset(fake_brush: Brush, tmp_path: Path) -> None:
     project = Project.create(tmp_path / "p")
     undistort = project.stage_dir("undistort")
-    (undistort / "images").mkdir(parents=True)
+    (undistort / "images" / "20261006-1").mkdir(parents=True)
+    (undistort / "images" / "20261006-1" / "a.jpg").write_bytes(b"a")
     (undistort / "sparse").mkdir()
     (undistort / "sparse" / "cameras.bin").write_bytes(b"c")
     spec = brush.train(fake_brush, project, _manifest("undistort"), options=SplatOptions(7000))
@@ -47,14 +48,44 @@ def test_train_spec_and_dataset(fake_brush: Brush, tmp_path: Path) -> None:
     assert args[args.index("--total-steps") + 1] == "7000"
     assert args[args.index("--export-name") + 1] == "splat.ply"
     assert spec.gpu and spec.use_pty and spec.inputs == {"undistorted": "run:u1"}
+    assert spec.parameters["masked"] is False
     folder = project.stage_dir("splat")
     folder.mkdir()
     assert spec.prepare is not None
     spec.prepare(folder)
     dataset = folder / "dataset"
     assert (dataset / "sparse" / "0" / "cameras.bin").read_bytes() == b"c"
-    assert (dataset / "images").resolve() == (undistort / "images").resolve()
-    assert not (dataset / "images").readlink().is_absolute()
+    capture = dataset / "images" / "20261006-1"
+    assert (capture / "a.jpg").read_bytes() == b"a"
+    assert not capture.readlink().is_absolute()
+    assert not (dataset / "images" / "masks").exists()
+
+
+def test_train_with_masks(fake_brush: Brush, tmp_path: Path) -> None:
+    project = Project.create(tmp_path / "p")
+    undistort = project.stage_dir("undistort")
+    (undistort / "images" / "cap").mkdir(parents=True)
+    (undistort / "sparse").mkdir()
+    warped = project.stage_dir("mask-undistort") / "masks"
+    warped.mkdir(parents=True)
+    (warped / "IMG_1.mask.png").write_bytes(b"m1")
+    (warped / "IMG_2.mask.png").write_bytes(b"m2")
+    masks = _manifest("mask-undistort")
+    spec = brush.train(fake_brush, project, _manifest("undistort"), masks=masks)
+    assert spec.inputs == {"undistorted": "run:u1", "masks": "run:u1"}
+    assert spec.parameters["masked"] is True
+    unmasked = brush.train(fake_brush, project, _manifest("undistort"))
+    assert spec.cache_key() != unmasked.cache_key()
+
+    folder = project.stage_dir("splat")
+    folder.mkdir()
+    assert spec.prepare is not None
+    spec.prepare(folder)
+    # Brush looks next to the image folders, by the image's stem.
+    linked = folder / "dataset" / "images" / "masks"
+    assert sorted(p.name for p in linked.iterdir()) == ["IMG_1.png", "IMG_2.png"]
+    assert (linked / "IMG_1.png").read_bytes() == b"m1"
+    assert not (linked / "IMG_1.png").readlink().is_absolute()
 
 
 def test_progress() -> None:

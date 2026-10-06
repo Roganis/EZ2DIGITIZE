@@ -322,8 +322,14 @@ def run_splat(
         stages = (*(s for s in SPARSE_STAGES if masked or s != "mask-undistort"), SPLAT_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
         run = _Run(project, stages, on_event, cancel, force_from)
+        masks = sparse.masks
+        if masks is not None and (clash := _stem_clash(project)):
+            run.emit(Notice(f"training splats without masks: {clash}"))
+            masks = None
         manifest = run(
-            brush.train(tools.brush, project, sparse.undistorted, options=settings.splat)
+            brush.train(
+                tools.brush, project, sparse.undistorted, options=settings.splat, masks=masks
+            )
         )
         file = project.stage_dir(SPLAT_STAGE) / brush.SPLAT_FILE
         if not file.is_file():
@@ -534,6 +540,21 @@ def _existing_sparse(project: Project, settings: MeshSettings) -> SparseResult:
         undistorted=undistorted,
         masks=warped,
     )
+
+
+def _stem_clash(project: Project) -> str | None:
+    """Why Brush can't tell two photos' masks apart, if it can't.
+
+    Brush finds a mask by the image's file stem, ignoring case, in one folder
+    for all captures (OpenMVS has the same limit, but compares case).
+    """
+    seen: dict[str, str] = {}
+    for name in colmap.image_names(list_bundles(project)):
+        stem = Path(name).stem.lower()
+        if stem in seen:
+            return f"{seen[stem]} and {name} have the same file name apart from case"
+        seen[stem] = name
+    return None
 
 
 def _stages(settings: MeshSettings, *, masked: bool) -> tuple[str, ...]:

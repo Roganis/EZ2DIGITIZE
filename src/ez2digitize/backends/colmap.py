@@ -409,6 +409,7 @@ def undistort(
 
 MASK_INPUT = "mask_cameras.txt"
 MASKS_OUT = "masks"
+MASK_SUFFIX = ".mask.png"  # OpenMVS's naming: <image stem>.mask.png
 
 
 def undistort_masks(
@@ -445,7 +446,7 @@ def undistort_masks(
         lines = []
         for name, camera_id in sorted(image_cameras.items()):
             camera = cameras[camera_id]
-            target = staged / f"{PurePosixPath(name).stem}.mask.png"
+            target = staged / f"{PurePosixPath(name).stem}{MASK_SUFFIX}"
             source = masks / f"{name}.png"
             if source.is_file():
                 _link_or_copy(source, target)

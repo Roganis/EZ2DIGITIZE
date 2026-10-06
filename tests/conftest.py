@@ -140,6 +140,9 @@ opt = lambda name: args[args.index(name) + 1]
 dataset = Path(args[0])
 assert (dataset / "sparse" / "0").is_dir() and (dataset / "images").is_dir(), "bad dataset"
 steps = int(opt("--total-steps"))
+masks = sorted((dataset / "images" / "masks").glob("*"))
+assert all(m.resolve().is_file() for m in masks), "dangling mask link"
+print(f"masks: {len(masks)}", flush=True)
 print("\\x1b[34mi\\x1b[0m Completed loading", flush=True)
 for done in (steps // 2, steps):
     print(f"[1s] \\x1b[36m###\\x1b[0m   {done}/{steps}   Steps (9/s, 0s remaining)", flush=True)

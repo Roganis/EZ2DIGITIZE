@@ -7,9 +7,17 @@ OpenMVS gets. It expects a COLMAP dataset folder with `images/` and
 `sparse/0/`; the splat stage builds one in its own folder from relative
 symlinks to the undistort stage, so nothing is copied.
 
-    splat/   dataset/images -> ../../undistort/images
+    splat/   dataset/images/<capture id> -> ../../../undistort/images/<capture id>
+             dataset/images/masks/<stem>.png -> the mask-undistort stage's
+                 <stem>.mask.png (only with masks)
              dataset/sparse/0 -> ../../../undistort/sparse
              splat.ply (the trained splats)
+
+Masks: Brush 0.3.0 looks for an image's mask in a `masks` folder next to
+the image's folder, by file stem (ignoring case), and uses it as the
+image's alpha. Black pixels then don't count in the loss (`alpha_is_mask`),
+so the background is not trained. The masks are the ones warped for
+OpenMVS, the same size as the undistorted images.
 
 Brush is pre-1.0 and its CLI changes between versions; this module is
 written for PINNED_VERSION. It only prints progress to a terminal, so it
@@ -27,6 +35,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ez2digitize.backends.colmap import MASK_SUFFIX, MASKS_OUT
 from ez2digitize.backends.common import BackendMissing, find_tool, result_parameters
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
@@ -37,6 +46,7 @@ PINNED_VERSION = "0.3.0"
 ENV_VAR = "EZ2D_BRUSH"
 EXECUTABLE = "brush_app"
 SPLAT_FILE = "splat.ply"
+MASKS_DIR = "masks"  # where Brush looks, next to each image folder
 
 
 @dataclass(frozen=True)
@@ -90,18 +100,34 @@ def train(
     *,
     stage: str = "splat",
     options: SplatOptions | None = None,
+    masks: StageManifest | None = None,
 ) -> StageSpec:
-    """Train splats on an undistort stage's images and model."""
+    """Train splats on an undistort stage's images and model.
+
+    `masks` is a mask-undistort stage made from the same images (see
+    colmap.undistort_masks); without it the whole photos are trained.
+    """
     options = options or SplatOptions()
     stage_dir = project.stage_dir(stage)
     source = project.stage_dir(undistorted.stage)
+    warped = project.stage_dir(masks.stage) if masks is not None else None
 
     def prepare(folder: Path) -> None:
         dataset = folder / "dataset"
+        images = dataset / "images"
         (dataset / "sparse").mkdir(parents=True)
+        images.mkdir()
         # Relative, so a moved project still works.
-        (dataset / "images").symlink_to(Path("..") / ".." / source.name / "images")
-        (dataset / "sparse" / "0").symlink_to(Path("..") / ".." / ".." / source.name / "sparse")
+        up = Path("..") / ".." / ".."
+        (dataset / "sparse" / "0").symlink_to(up / source.name / "sparse")
+        for capture in sorted(p.name for p in (source / "images").iterdir() if p.is_dir()):
+            (images / capture).symlink_to(up / source.name / "images" / capture)
+        if warped is not None:
+            (images / MASKS_DIR).mkdir()
+            for mask in sorted((warped / MASKS_OUT).glob(f"*{MASK_SUFFIX}")):
+                stem = mask.name.removesuffix(MASK_SUFFIX)
+                link = images / MASKS_DIR / f"{stem}.png"
+                link.symlink_to(Path("..") / up / warped.name / MASKS_OUT / mask.name)
 
     argv: list[str | Path] = [
         brush.path,
@@ -114,12 +140,15 @@ def train(
         "--export-path", stage_dir,
         "--export-name", SPLAT_FILE,
     ]  # fmt: skip
+    inputs = {"undistorted": stage_input(undistorted)}
+    if masks is not None:
+        inputs["masks"] = stage_input(masks)
     return StageSpec(
         name=stage,
         backend=brush.backend,
         argv=argv,
-        parameters=result_parameters(options),
-        inputs={"undistorted": stage_input(undistorted)},
+        parameters={**result_parameters(options), "masked": masks is not None},
+        inputs=inputs,
         parse_line=BrushProgress(),
         use_pty=True,
         prepare=prepare,

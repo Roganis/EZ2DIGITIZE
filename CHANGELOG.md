@@ -43,6 +43,8 @@ The first release.
 - OBJ and GLB (textured), STL and 3MF for printing (in millimetres once the
   scale is set), the dense point cloud, and the splats; stood upright,
   centred and on the ground.
+- Splats also as SPZ, about a tenth of the PLY's size, stood upright like
+  the mesh.
 - Common backend failures explained in plain words, and a diagnostics zip
   for bug reports.
 

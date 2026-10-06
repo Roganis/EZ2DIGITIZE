@@ -13,9 +13,12 @@ there:
   edges; `export_notes` says when it isn't printable as is);
 - `points`: the dense point cloud (PLY with colours and normals).
 
+Splats (`export_splat`) go out twice: Brush's PLY as it is, and SPZ, about
+a tenth of the size, stood upright like the mesh (see core.splats).
+
 Units: with the scale set (ez2digitize.scale), STL and 3MF are in
-millimetres, as slicers expect, and OBJ, GLB and the point cloud in metres
-(glTF's unit). Without it, everything is in the reconstruction's own
+millimetres, as slicers expect, and OBJ, GLB, the point cloud and SPZ in
+metres (glTF's unit). Without it, everything is in the reconstruction's own
 arbitrary units. The `ply` copy is always OpenMVS's file as it is.
 
 Exporting is not a pipeline stage: it runs in-process (mesh export is
@@ -32,7 +35,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ez2digitize import upright
+from ez2digitize.backends.common import BackendError
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
 from ez2digitize.core.meshio import (
     MeshFormatError,
@@ -47,11 +54,13 @@ from ez2digitize.core.meshio import (
     write_stl,
 )
 from ez2digitize.core.project import Project
+from ez2digitize.core.splats import SplatFormatError, placed, read_ply, write_spz
 from ez2digitize.core.stage import load_manifest
 from ez2digitize.orientation import IDENTITY, Placement, place_rotated
 from ez2digitize.scale import current as current_scale
+from ez2digitize.views import read_points
 
-ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat"]
+ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat", "spz"]
 FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
 PRINT_FORMATS = frozenset({"stl", "3mf"})
 # Millimetres per export unit: print formats in mm, the others in metres.
@@ -168,28 +177,54 @@ def export_mesh(
 
 
 def export_splat(
-    project: Project, *, stage: str = "splat", now: datetime | None = None
+    project: Project,
+    *,
+    stage: str = "splat",
+    align: bool = True,
+    now: datetime | None = None,
 ) -> list[Path]:
-    """Copy the trained splats to `exports/<timestamp>/<name>_splat.ply`.
+    """Export the trained splats: `<name>_splat.ply` and `<name>.spz`.
 
-    Splats keep the reconstruction's frame: standing them upright would mean
-    rotating every splat's orientation and its spherical harmonics too.
+    The PLY is Brush's file as it is, in the reconstruction's frame. The SPZ
+    (compressed about tenfold; most splat viewers read it) is, with `align`,
+    stood upright, centred and put on the ground like the mesh, each splat's
+    rotation and colour turned with it; in metres once the scale is set.
     """
     manifest = load_manifest(project.stage_dir(stage))
     source = project.stage_dir(stage) / SPLAT_PLY
     if manifest is None or not manifest.succeeded or not source.is_file():
         raise ExportError("there are no splats to export yet; train them first")
-    formats: list[ExportFormat] = ["splat"]
-    previous = _find_export(project.exports_dir, manifest.run_id, formats, False, None, None)
+    formats: list[ExportFormat] = ["splat", "spz"]
+    scale = current_scale(project)
+    mm_per_unit = scale.mm_per_unit if scale is not None else None
+    rotation = upright.rotation(project) if align else None
+    rows = [list(row) for row in rotation] if rotation is not None else None
+    previous = _find_export(project.exports_dir, manifest.run_id, formats, align, mm_per_unit, rows)
     if previous is not None:
         return previous
-    folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
-    target = folder / f"{_file_stem(project.name)}_splat.ply"
     try:
-        shutil.copyfile(source, target)
+        splats = read_ply(source)
+    except (SplatFormatError, OSError) as exc:
+        raise ExportError(f"cannot read the splats: {exc}") from exc
+    folder = _new_folder(project.exports_dir, now or datetime.now().astimezone())
+    name = _file_stem(project.name)
+    files = [folder / f"{name}_splat.ply", folder / f"{name}.spz"]
+    units = mm_per_unit / UNIT_MM if mm_per_unit is not None else 1.0
+    try:
+        shutil.copyfile(source, files[0])
+        write_spz(placed(splats, rotation, units, _sparse_points(project)), files[1])
     except OSError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise ExportError(f"export failed: {exc}") from exc
+    info: dict[str, object] = {
+        "align": align,
+        "scale_mm_per_unit": mm_per_unit,
+        "upright": rows,  # for the SPZ; the PLY keeps the reconstruction's frame
+        "splats": splats.count,
+        "sh_degree": splats.sh_degree,
+    }
+    if mm_per_unit is not None:
+        info["units"] = {"spz": "m"}
     write_json_atomic(
         folder / "export.json",
         {
@@ -197,11 +232,20 @@ def export_splat(
             "created": utc_now(),
             "formats": formats,
             "source": {"stage": stage, "run_id": manifest.run_id},
-            "align": False,
-            "files": [target.name],
+            **info,
+            "files": [f.name for f in files],
         },
     )
-    return [target]
+    return files
+
+
+def _sparse_points(project: Project) -> NDArray[np.float64] | None:
+    """The camera placement's points (model coordinates), to place splats by."""
+    try:
+        positions, _colours = read_points(project.stage_dir("undistort") / "sparse")
+    except BackendError:
+        return None
+    return np.array(positions, dtype=np.float64).reshape(-1, 3)
 
 
 def export_notes(files: list[Path]) -> list[str]:

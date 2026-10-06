@@ -65,8 +65,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    upright, centred, on the ground; with the scale set, STL and 3MF are in
    millimetres and OBJ and GLB in metres.
 
-**Build splats** trains Gaussian splats from the same camera positions
-(PLY, for splat viewers).
+**Build splats** trains Gaussian splats from the same camera positions.
+They are exported twice: as Brush's PLY, and as a ten times smaller SPZ
+stood upright like the mesh (most splat viewers open either).
 
 ## From the command line
 

@@ -296,8 +296,8 @@ def test_splats(
     monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
     events: list[pipeline.PipelineEvent] = []
     result = pipeline.run_splat(project, replace(tools, brush=fake_brush), on_event=events.append)
-    assert result.file.read_text() == "ply splats"
-    assert result.exports and result.exports[0].name.endswith("_splat.ply")
+    assert result.file.read_bytes().startswith(b"ply\n")
+    assert [f.suffix for f in result.exports] == [".ply", ".spz"]
     started = [e.stage for e in events if isinstance(e, pipeline.StageStarted)]
     assert started == ["features", "matching", "mapping", "undistort", "splat"]
     assert result.splat.host["gpu"]

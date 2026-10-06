@@ -146,7 +146,7 @@ print("progress=end", flush=True)
 # Brush: checks the dataset layout, prints a progress bar like the real one
 # (with colour codes) and writes the splat file.
 FAKE_BRUSH = """
-import os, sys
+import os, struct, sys
 from pathlib import Path
 args = sys.argv[1:]
 if args == ["--version"]:
@@ -164,7 +164,16 @@ print(f"masks: {len(masks)}", flush=True)
 print("\\x1b[34mi\\x1b[0m Completed loading", flush=True)
 for done in (steps // 2, steps):
     print(f"[1s] \\x1b[36m###\\x1b[0m   {done}/{steps}   Steps (9/s, 0s remaining)", flush=True)
-(Path(opt("--export-path")) / opt("--export-name")).write_text("ply splats")
+# Two splats, SH degree 0, in Brush's property order.
+names = ["f_dc_0", "f_dc_1", "f_dc_2", "opacity", "rot_0", "rot_1", "rot_2", "rot_3",
+         "scale_0", "scale_1", "scale_2", "x", "y", "z"]
+header = "ply\\nformat binary_little_endian 1.0\\ncomment Exported from Brush\\n"
+header += "element vertex 2\\n" + "".join(f"property float {n}\\n" for n in names)
+header += "end_header\\n"
+rows = [[0.1, 0.2, 0.3, 2.0, 1, 0, 0, 0, -3, -3, -3, 0, 0, 0],
+        [-0.1, 0.0, 0.1, 2.0, 1, 0, 0, 0, -3, -3, -3, 1, 1, 1]]
+body = struct.pack("<28f", *rows[0], *rows[1])
+(Path(opt("--export-path")) / opt("--export-name")).write_bytes(header.encode() + body)
 """
 
 

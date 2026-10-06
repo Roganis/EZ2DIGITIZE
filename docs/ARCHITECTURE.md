@@ -248,6 +248,15 @@ outputs.
 Formats: `obj`, `glb` (textured), `ply` (OpenMVS's own), `stl` and `3mf`
 (geometry for printing, with a watertightness check recorded in
 export.json and reported as a notice), `points` (the dense point cloud).
+Splats (`export_splat`, `core/splats.py`): Brush's PLY as it is, and SPZ
+version 2 (positions as 24-bit fixed point, the rest quantised to bytes,
+gzipped: about a tenth of the PLY). The SPZ is stood upright: positions and
+rotations turned, and the view-dependent colour (SH degrees 1 to 3) turned
+by a per-degree matrix fitted by least squares on sample directions; it is
+centred and grounded by the camera placement's sparse points (2nd-98th
+percentiles), since trained splats can have floaters far out. Written from
+the format's description (Niantic's spz, MIT), and decoded identically by
+its reference reader.
 A Mesh size setting (`TextureOptions.target_faces`) has TextureMesh
 simplify the mesh before texturing, so the texture keeps its detail.
 

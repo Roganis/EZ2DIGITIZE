@@ -4,9 +4,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ez2digitize import pipeline
+from ez2digitize.backends.brush import Brush
 from ez2digitize.core.capture import import_files
 from ez2digitize.core.project import Project
 from ez2digitize.export import ExportError, _file_stem, export_mesh
@@ -203,3 +205,58 @@ def test_orientation_correction_is_used(built: Project) -> None:
     assert info["upright"] == [list(row) for row in rotation]
     assert info["placement"]["rotation"] == info["upright"]
     assert export_mesh(built, ["stl"]) == after  # reused while nothing changes
+
+
+def test_splat_export(
+    tmp_path: Path, fake_tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize import crop, scale, upright
+    from ez2digitize.core.hardware import Gpu
+    from ez2digitize.core.splats import read_ply, read_spz
+    from ez2digitize.export import export_splat
+
+    project = Project.create(tmp_path / "My Skull")
+    for name in ("a.jpg", "b.jpg"):
+        (tmp_path / name).write_bytes(name.encode())
+    import_files(project, [tmp_path / "a.jpg", tmp_path / "b.jpg"], source="folder")
+    with pytest.raises(ExportError, match="train them first"):
+        export_splat(project)
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    tools = replace(fake_tools, brush=fake_brush)
+    pipeline.run_splat(project, tools, MeshSettings(export_formats=()))
+
+    plain = export_splat(project, align=False, now=NOW)  # nothing says which way is up
+    assert json.loads((plain[0].parent / "export.json").read_text())["upright"] is None
+    run = crop.camera_run(project)
+    assert run is not None
+    # The model's Z is up: a quarter turn about X stands it up (Y up).
+    turn = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+    upright.save(project, upright.Orientation(turn, 0.0, run))
+
+    ply, spz = export_splat(project, now=NOW)
+    assert (ply.name, spz.name) == ("My_Skull_splat.ply", "My_Skull.spz")
+    trained = project.stage_dir("splat") / "splat.ply"
+    assert ply.read_bytes() == trained.read_bytes()  # Brush's file as it is
+    original, packed = read_ply(trained), read_spz(spz)
+    assert packed.count == original.count == 2 and packed.sh_degree == 0
+    info = json.loads((ply.parent / "export.json").read_text())
+    assert info["formats"] == ["splat", "spz"] and info["splats"] == 2
+    assert info["upright"] == [list(r) for r in turn]
+    # The splats at (0, 0, 0) and (1, 1, 1): the model's z is now the height.
+    heights = packed.positions[:, 1]
+    assert heights.max() - heights.min() == pytest.approx(1, abs=1e-3)
+    assert heights.min() == pytest.approx(0, abs=0.03)  # on the ground (2nd percentile)
+    assert export_splat(project) == [ply, spz]  # the same export again
+
+    scale.save(project, scale.make(((0, 0, 0), (0, 2, 0)), 10.0, run))  # 5 mm per unit
+    _ply, scaled = export_splat(project)
+    assert scaled.parent != spz.parent
+    spread = np.ptp(read_spz(scaled).positions, axis=0)
+    assert spread == pytest.approx(np.ptp(packed.positions, axis=0) * 0.005, abs=1e-3)  # metres
+    assert json.loads((scaled.parent / "export.json").read_text())["units"] == {"spz": "m"}
+
+    (project.stage_dir("splat") / "splat.ply").write_text("not splats")
+    with pytest.raises(ExportError, match="cannot read the splats"):
+        export_splat(project, align=False)

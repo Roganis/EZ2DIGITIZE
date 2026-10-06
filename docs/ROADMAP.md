@@ -338,7 +338,13 @@ fails, they can see which stage failed and why.
   (masks made automatically, the still-camera notice turned into a
   suggestion to make them) waits for more real turntable captures.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
-  Gaussian splatting extension.
+  Gaussian splatting extension. SPZ done (`core/splats.py`): every splat
+  export writes `<name>.spz` next to Brush's PLY, about a tenth of its size
+  (1.4 MB to 0.08 MB on the skull video test; 248 MB to 9 MB for a million
+  splats), stood upright, centred and on the ground like the mesh, each
+  splat's rotation and colour coefficients turned with it, in metres once
+  the scale is set. Checked against Niantic's reference reader. The glTF
+  extension waits for its adoption.
 
 ## Phase 6: Packaging and release
 

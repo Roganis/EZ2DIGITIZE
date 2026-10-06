@@ -63,7 +63,9 @@ mode), and from phones and cameras that write Google's camera motion track
 import and notes gravity's direction for every frame, so the model is
 stood upright by measurement rather than by guessing how the camera was
 held, which goes wrong when you shoot steeply from above or below. The
-import says when a video has such data.
+frames are also spaced by how far the camera turned rather than by time,
+so slowing down or pausing on one side doesn't crowd the frames there.
+The import says when a video has such data.
 
 ## Turntables
 

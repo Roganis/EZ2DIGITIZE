@@ -11,6 +11,7 @@ the MAX's fused gravity vector agrees with its accelerometer.
 """
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -174,7 +175,7 @@ def test_corrupt_gpmf(tmp_path: Path) -> None:
 def test_frame_entry() -> None:
     track = MotionTrack("camm", gravity="orientation")
     track.down = [(t / 10, (0.0, 2.0, 0.0)) for t in range(20)]
-    track.turn = [(t / 10, math.radians(10)) for t in range(20)]
+    track.gyro = [(t / 10, (0.0, math.radians(10), 0.0)) for t in range(20)]
     assert motion.frame_motion(track, 1.0) == {"down": [0, 1, 0], "turn_deg_s": 10.0}
     assert motion.frame_motion(track, 50.0) == {}
 
@@ -189,3 +190,33 @@ def test_describe() -> None:
     assert motion.describe(gyro_only) == "Has CAMM motion data, but no gravity in it."
     broken = {"motion": {"error": "x.mp4: unreadable motion track: corrupt box size"}}
     assert "can't be read" in (motion.describe(broken) or "")
+
+
+def _gyro_track(rate_at: Callable[[float], Vector], seconds: float, hz: int = 400) -> MotionTrack:
+    track = MotionTrack("camm")
+    track.gyro = [(i / hz, rate_at(i / hz)) for i in range(int(seconds * hz) + 1)]
+    return track
+
+
+def test_angle_travelled() -> None:
+    steady = _gyro_track(lambda _t: (0.0, math.radians(30), 0.0), 4.0)
+    angles = steady.angle_travelled([0.0, 1.0, 2.0, 4.0, 9.0])
+    assert angles == pytest.approx([0, 30, 60, 120, 120], abs=0.5)
+    # Turning about a tilted axis is the same angle.
+    tilted = _gyro_track(lambda _t: _scaled(_unit((1.0, 1.0, 0.0)), math.radians(30)), 2.0)
+    assert tilted.angle_travelled([2.0]) == pytest.approx([60], abs=0.5)
+    assert MotionTrack("camm").angle_travelled([1.0]) is None
+
+
+def test_tremor_adds_little() -> None:
+    """Shaking at 8 Hz, ±20°/s: |rate| adds up to about 50° in 4 s, the path to about 10°."""
+    amplitude = math.radians(20)
+    shaking = _gyro_track(lambda t: (amplitude * math.sin(2 * math.pi * 8 * t), 0.0, 0.0), 4.0)
+    naive = sum(abs(amplitude * math.sin(2 * math.pi * 8 * i / 400)) / 400 for i in range(1600))
+    assert math.degrees(naive) > 45
+    travelled = shaking.angle_travelled([4.0])
+    assert travelled is not None and travelled[0] < math.degrees(naive) / 4
+
+
+def _scaled(v: Vector, k: float) -> Vector:
+    return (v[0] * k, v[1] * k, v[2] * k)

@@ -18,6 +18,7 @@ from ez2digitize.core.runner import CancelToken, Event, Progress
 from ez2digitize.video import (
     FramePlan,
     VideoImportCancelled,
+    frame_progress,
     import_video,
     plan_frames,
     select_frames,
@@ -61,6 +62,42 @@ def test_select_when_candidates_are_capped() -> None:
     plan = FramePlan(rate=5.0, candidate_rate=12.0)
     chosen = select_frames([1.0] * 24, plan)
     assert len(chosen) == 10 and chosen == sorted(chosen)
+
+
+def test_frame_progress() -> None:
+    times = [0.0, 1.0, 2.0, 3.0, 4.0]
+    # Turned 300° in the first two seconds, then held still.
+    progress = frame_progress([0, 150, 300, 300, 300], times, 4.0)
+    assert progress == pytest.approx([0, 0.375 + 0.0625, 0.75 + 0.125, 0.75 + 0.1875, 1.0])
+    # A camera that hardly turned (a turntable): spaced by time.
+    assert frame_progress([0, 10, 20, 30, 40], times, 4.0) is None
+    assert frame_progress([], [], 4.0) is None
+
+
+def test_select_by_progress() -> None:
+    plan = FramePlan(1.0, 4.0)
+    # Eight candidates; the first four cover three quarters of the progress.
+    progress = [0.0, 0.25, 0.5, 0.74, 0.8, 0.85, 0.9, 0.95]
+    scores = [1.0, 2.0, 1.0, 2.0, 1.0, 1.0, 3.0, 1.0]
+    assert select_frames(scores, plan, progress, windows=4) == [0, 1, 3, 6]
+
+
+def test_frames_follow_the_turning(project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg) -> None:
+    """Turning for the first 5 s of 10, then still: most frames come from the turning."""
+    clip = tmp_path / "VID_0002.mp4"
+    readings = []
+    for i in range(1000):  # 10 ms apart
+        turning = 1.0 if i < 500 else 0.0
+        readings += [camm(3, 0.0, -9.81, 0.0), camm(2, 0.0, turning, 0.0)]
+    write_mp4(clip, [TrackSpec("meta", "camm", 1000, [(r, 5) for r in readings])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    times = [f.metadata["video"]["time_s"] for f in bundle.files if f.kind == "image"]
+    assert bundle.source_info["spacing"] == {
+        "by": "angle",
+        "turned_deg": pytest.approx(286.5, abs=1),
+    }
+    assert sum(t < 5 for t in times) >= 15 and len(times) <= 20
+    assert times == sorted(times)
 
 
 def test_import_keeps_the_sharp_frames(project: Project, clip: Path, fake_ffmpeg: FFmpeg) -> None:

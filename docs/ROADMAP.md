@@ -500,10 +500,19 @@ fails, they can see which stage failed and why.
   placed frames have it. Checked on GoPro's sample files (HERO5 to MAX):
   on the HERO6 sample, COLMAP's cameras and the measured gravity agree to
   within 9° on every frame, while the guess from how the camera was held
-  was 51° off where it looked down at a table. Not done yet: frames chosen
-  by angle travelled and turning rate (step 2; the rate is recorded
-  already), a real CAMM file (none at hand; the tests build them from the
-  specification), and GoPro's in-camera stabilisation (HyperSmooth turns
+  was 51° off where it looked down at a table. Frames are now also chosen
+  by angle travelled (video.frame_progress): the gyroscope integrated into
+  an orientation and measured in 0.2 s steps, so hand tremor adds about a
+  fifth of what it would if the turning rate were simply summed; a quarter
+  of the spacing stays by time, and a video that turned less than 90° in
+  all (tripod, turntable) is spaced by time alone. On GoPro's samples the
+  gaps between kept frames now range from 0.15 to 1.3 s with the pace; on
+  the HERO6 room pan, COLMAP placed all 60 frames either way, in four
+  pieces (largest 29 frames by angle, 32 by time), so that clip shows no
+  gain; an object walked around is the case it is for, still to measure.
+  Not done yet: dropping frames shot while turning fast (sharpness already
+  picks against blur), a real CAMM file (none at hand; the tests build them
+  from the specification), and GoPro's in-camera stabilisation (HyperSmooth turns
   the image against the body, so the accelerometer's gravity is off by
   that turn; the MAX's and HERO8's fused gravity vector, used when
   present, accounts for it).

@@ -190,7 +190,7 @@ def read_gpmf(path: Path, track: Track) -> MotionTrack:
                         if record.key == "ACCL":  # the push against gravity
                             accel_down.append((t, (-v[0], -v[1], -v[2])))
                         else:
-                            motion.turn.append((t, _length(v)))
+                            motion.gyro.append((t, v))
                 elif record.key == "GRAV" and record.size // _width(record) == 3:
                     # Fused, and already in the image's axes (checked against
                     # ACCL on GoPro MAX and HERO8 samples).
@@ -232,8 +232,8 @@ def read_camm(path: Path, track: Track) -> MotionTrack:
             axis_angle = struct.unpack_from("<3f", data, 4)
             oriented.append((t, _mul_transposed(_rodrigues(axis_angle), (0.0, 1.0, 0.0))))
         elif kind == 2:
-            gyro = struct.unpack_from("<3f", data, 4)
-            motion.turn.append((t, _length(gyro)))
+            gx, gy, gz = struct.unpack_from("<3f", data, 4)
+            motion.gyro.append((t, (gx, gy, gz)))
         elif kind == 3:  # the push against gravity, as phones measure it
             a = struct.unpack_from("<3f", data, 4)
             accel_down.append((t, (-a[0], -a[1], -a[2])))
@@ -251,6 +251,8 @@ def read_camm(path: Path, track: Track) -> MotionTrack:
 ACCEL_WINDOW_S = 1.0
 FUSED_WINDOW_S = 0.2
 TURN_WINDOW_S = 0.1
+# The step the angle travelled is measured in (see MotionTrack.angle_travelled).
+PATH_STEP_S = 0.2
 
 
 @dataclass
@@ -259,13 +261,14 @@ class MotionTrack:
     device: str = ""
     gravity: str = ""  # what down comes from: "gravity vector", "orientation", "accelerometer"
     down: list[tuple[float, Vector]] = field(default_factory=list)  # (time, camera axes)
-    turn: list[tuple[float, float]] = field(default_factory=list)  # (time, rad/s)
+    gyro: list[tuple[float, Vector]] = field(default_factory=list)  # (time, rad/s, camera axes)
 
     def rotated(self, degrees: int) -> MotionTrack:
         """The same, in the axes of the frames turned by `degrees` clockwise."""
         turn_matrix = _image_turn(degrees)
         down = [(t, _mul(turn_matrix, v)) for t, v in self.down]
-        return MotionTrack(self.format, self.device, self.gravity, down, self.turn)
+        gyro = [(t, _mul(turn_matrix, v)) for t, v in self.gyro]
+        return MotionTrack(self.format, self.device, self.gravity, down, gyro)
 
     def down_at(self, time_s: float) -> Vector | None:
         """Gravity's direction (unit) in the camera's axes around `time_s`; None if unknown."""
@@ -285,10 +288,40 @@ class MotionTrack:
 
     def turn_at(self, time_s: float) -> float | None:
         """How fast the camera turned around `time_s`, in degrees a second."""
-        near = [rate for _t, rate in _between(self.turn, time_s, TURN_WINDOW_S)]
+        near = [_length(v) for _t, v in _between(self.gyro, time_s, TURN_WINDOW_S)]
         if not near:
             return None
         return math.degrees(sum(near) / len(near))
+
+    def angle_travelled(self, times: Sequence[float]) -> list[float] | None:
+        """Degrees the camera has turned since the track's start, at each of `times`.
+
+        The gyroscope is integrated into an orientation, and the path is
+        measured between orientations PATH_STEP_S apart: hand tremor, back
+        and forth within a step, adds little, while turning on purpose adds
+        its full angle. None without gyroscope data.
+        """
+        if len(self.gyro) < 2:
+            return None
+        grid_times, path = [], []
+        q = (1.0, 0.0, 0.0, 0.0)
+        previous_t = self.gyro[0][0]
+        last_q, total = q, 0.0
+        next_grid = previous_t
+        for t, w in self.gyro:
+            q = _integrate(q, w, t - previous_t)
+            previous_t = t
+            if t >= next_grid:
+                total += _quaternion_angle(last_q, q)
+                grid_times.append(t)
+                path.append(math.degrees(total))
+                last_q = q
+                next_grid = t + PATH_STEP_S
+        if previous_t > grid_times[-1]:  # the last, shorter step
+            total += _quaternion_angle(last_q, q)
+            grid_times.append(previous_t)
+            path.append(math.degrees(total))
+        return [_interpolate(grid_times, path, t) for t in times]
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -296,7 +329,7 @@ class MotionTrack:
             "device": self.device,
             "gravity": self.gravity,
             "gravity_samples": len(self.down),
-            "gyro_samples": len(self.turn),
+            "gyro_samples": len(self.gyro),
         }
 
 
@@ -317,7 +350,7 @@ def read_motion(path: Path, rotation_deg: int = 0) -> MotionTrack | None:
                 motion = read_camm(path, track)
             else:
                 continue
-            if motion.down or motion.turn:
+            if motion.down or motion.gyro:
                 return motion.rotated(-rotation_deg)
     except (Mp4Error, MotionError, struct.error) as exc:
         raise MotionError(f"{path.name}: unreadable motion track: {exc}") from exc
@@ -377,6 +410,47 @@ def _between(
     lo = bisect.bisect_left(samples, time_s - window / 2, key=lambda s: s[0])
     hi = bisect.bisect_right(samples, time_s + window / 2, key=lambda s: s[0])
     return samples[lo:hi]
+
+
+def _integrate(
+    q: tuple[float, float, float, float], w: Vector, dt: float
+) -> tuple[float, float, float, float]:
+    """Orientation `q` turned by angular velocity `w` (camera axes) for `dt` seconds."""
+    angle = _length(w) * dt
+    if angle <= 0:
+        return q
+    half = angle / 2
+    k = math.sin(half) / _length(w)
+    d = (math.cos(half), w[0] * k, w[1] * k, w[2] * k)
+    a0, a1, a2, a3 = q
+    b0, b1, b2, b3 = d
+    r = (
+        a0 * b0 - a1 * b1 - a2 * b2 - a3 * b3,
+        a0 * b1 + a1 * b0 + a2 * b3 - a3 * b2,
+        a0 * b2 - a1 * b3 + a2 * b0 + a3 * b1,
+        a0 * b3 + a1 * b2 - a2 * b1 + a3 * b0,
+    )
+    n = math.sqrt(sum(c * c for c in r))
+    return (r[0] / n, r[1] / n, r[2] / n, r[3] / n)
+
+
+def _quaternion_angle(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> float:
+    """The angle (radians) of the rotation between two orientations."""
+    dot = abs(sum(x * y for x, y in zip(a, b, strict=True)))
+    return 2 * math.acos(min(1.0, dot))
+
+
+def _interpolate(xs: list[float], ys: list[float], x: float) -> float:
+    """Linear interpolation in sorted `xs`, held at the ends."""
+    i = bisect.bisect_right(xs, x)
+    if i == 0:
+        return ys[0]
+    if i == len(xs):
+        return ys[-1]
+    x0, x1 = xs[i - 1], xs[i]
+    return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - x0) / (x1 - x0)
 
 
 def _image_turn(degrees: int) -> tuple[Vector, Vector, Vector]:

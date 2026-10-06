@@ -16,7 +16,12 @@ sharpest of each (by the photo checks' score) is kept.
 Videos that carry a motion track (GoPro's GPMF, Google's CAMM; see
 ez2digitize.motion) also give each frame the direction of gravity and how
 fast the camera was turning (`metadata["motion"]`); `source_info["motion"]`
-says where it came from.
+says where it came from. With a gyroscope, the windows are cut by the angle
+the camera turned rather than by time (`frame_progress`): a walk around an
+object gets its frames evenly round it however the pace changed, and
+fewer frames come from pauses. Part of the spacing stays by time, so a
+stretch of sideways movement without turning still gets frames; a camera
+that hardly turned at all (a turntable) is spaced by time alone.
 """
 
 from __future__ import annotations
@@ -55,6 +60,11 @@ CANDIDATES_PER_FRAME = 4
 MAX_FRAMES_PER_S = 5.0
 VIDEO_KEY = "video"
 CANDIDATES_DIR = ".candidates"
+# Spacing by angle: the share of each frame's position that is still by time,
+# and the turning below which a video is spaced by time alone (a camera on a
+# tripod, or a turntable, turns only by shaking).
+TIME_SHARE = 0.25
+MIN_ANGLE_DEG = 90.0
 
 
 class VideoImportCancelled(Exception):
@@ -75,17 +85,47 @@ def plan_frames(info: VideoInfo, frames: int) -> FramePlan:
     return FramePlan(rate, min(rate * CANDIDATES_PER_FRAME, info.frame_rate))
 
 
-def select_frames(scores: Sequence[float | None], plan: FramePlan) -> list[int]:
+def frame_progress(
+    angles: Sequence[float], times: Sequence[float], duration_s: float
+) -> list[float] | None:
+    """Each candidate's position along the video, 0 to 1, mostly by angle turned.
+
+    `angles`: degrees turned since the start at each candidate's time
+    (motion.MotionTrack.angle_travelled). None if the camera turned less
+    than MIN_ANGLE_DEG in all: then time is the better guide.
+    """
+    if not angles:
+        return None
+    start, total = angles[0], angles[-1] - angles[0]
+    if total < MIN_ANGLE_DEG or duration_s <= 0:
+        return None
+    return [
+        (1 - TIME_SHARE) * (angle - start) / total + TIME_SHARE * min(t / duration_s, 1.0)
+        for angle, t in zip(angles, times, strict=True)
+    ]
+
+
+def select_frames(
+    scores: Sequence[float | None],
+    plan: FramePlan,
+    progress: Sequence[float] | None = None,
+    windows: int = 0,
+) -> list[int]:
     """Index of the sharpest candidate in each window, in time order.
 
     Candidate i was taken at i / candidate_rate seconds; windows are
-    1 / rate seconds long. Unreadable candidates (None) are skipped.
+    1 / rate seconds long. With `progress` (frame_progress), the video is
+    cut into `windows` equal steps of it instead. Unreadable candidates
+    (None) are skipped.
     """
     best: dict[int, int] = {}
     for index, score in enumerate(scores):
         if score is None:
             continue
-        window = math.floor(index * plan.rate / plan.candidate_rate + 1e-9)
+        if progress is not None:
+            window = min(math.floor(progress[index] * windows), windows - 1)
+        else:
+            window = math.floor(index * plan.rate / plan.candidate_rate + 1e-9)
         current = best.get(window)
         if current is None or score > (scores[current] or 0.0):
             best[window] = index
@@ -160,7 +200,14 @@ def import_video(
             raise CaptureError(f"FFmpeg extracted no frames from {video.name}")
 
         scores = _score(candidates, emit, cancel)
-        chosen = select_frames(scores, plan)
+        times = [i / plan.candidate_rate for i in range(len(candidates))]
+        angles = motion.angle_travelled(times) if motion is not None else None
+        progress = frame_progress(angles, times, info.duration_s) if angles else None
+        windows = max(1, round(info.duration_s * plan.rate))
+        chosen = select_frames(scores, plan, progress, windows)
+        if angles:
+            turned = round(angles[-1] - angles[0], 1)
+            source_info["spacing"] = {"by": "angle" if progress else "time", "turned_deg": turned}
         if not chosen:
             raise CaptureError(f"none of the frames extracted from {video.name} can be read")
         files = [original]

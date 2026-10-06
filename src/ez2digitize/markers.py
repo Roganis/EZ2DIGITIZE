@@ -346,13 +346,42 @@ def _detector() -> Any:
         # Quads found at half resolution (4x faster on 12 MP photos), their edges
         # then refined at full resolution, so the corners keep their accuracy.
         threads = min(4, os.cpu_count() or 1)
+
+        class OrderlyDetector(Detector):  # type: ignore[misc]
+            def __del__(self) -> None:
+                _destroy(self)
+
         try:
-            _DETECTOR = Detector(
+            _DETECTOR = OrderlyDetector(
                 families=FAMILY, nthreads=threads, quad_decimate=2.0, refine_edges=True
             )
         except (RuntimeError, OSError) as exc:  # its C library didn't load
             raise MarkerError(f"the marker detector couldn't load: {exc}") from exc
     return _DETECTOR
+
+
+def _destroy(detector: Any) -> None:
+    """Free a pupil-apriltags detector: the detector first, then its tag families.
+
+    pupil-apriltags 1.0.4.post11's own __del__ frees the families first, and
+    apriltag_detector_destroy then reads and writes them (quick_decode_uninit,
+    through apriltag_detector_clear_families): a use after free that corrupted
+    the heap at interpreter exit, where our one detector is freed, so glibc
+    aborted the process now and then after everything had passed (found with
+    valgrind). The detector only uses the families; each family's own destroy
+    frees it.
+    """
+    pointer = getattr(detector, "tag_detector_ptr", None)
+    if pointer is None:  # its C library never loaded, or already freed
+        return
+    detector.tag_detector_ptr = None
+    libc = detector.libc
+    libc.apriltag_detector_destroy.restype = None
+    libc.apriltag_detector_destroy(pointer)
+    for family, data in detector.tag_families.items():
+        free_family = getattr(libc, f"{family}_destroy")
+        free_family.restype = None
+        free_family(data)
 
 
 # --- in the project ------------------------------------------------------------------

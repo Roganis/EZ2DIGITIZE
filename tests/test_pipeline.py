@@ -187,6 +187,74 @@ def test_matching_mode_follows_capture_source_and_size(
     assert matcher() == "sequential"
 
 
+def test_matching_many_photos(
+    project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beyond EXHAUSTIVE_MAX_IMAGES: by GPS, by the vocabulary tree, else in order."""
+    from ez2digitize.backends import colmap
+    from ez2digitize.core import photos
+
+    monkeypatch.setattr(pipeline, "EXHAUSTIVE_MAX_IMAGES", 2)
+
+    def matched() -> tuple[str, list[str]]:
+        events, handler = _collect()
+        pipeline.run_sparse(project, tools, on_event=handler)
+        log = (project.stage_dir("matching") / "log.txt").read_text().splitlines()[0]
+        return log, [e.message for e in events if isinstance(e, Notice)]
+
+    # No tree (the tests are offline): photos in the order they were taken.
+    log, notices = matched()
+    assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 0" in log
+    assert any(n.startswith("could not download the vocabulary tree") for n in notices)
+    assert any("taken just before and after it" in n for n in notices)
+
+    tree = colmap.vocab_tree_file()
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    tree.write_bytes(b"tree")
+    log, notices = matched()
+    assert "vocab_tree_matcher" in log and str(tree) in log
+    assert "3 photos: each is matched with the most similar ones" in notices
+
+    monkeypatch.setattr(photos, "gps_share", lambda _bundles: 0.95)
+    log, notices = matched()
+    assert "spatial_matcher" in log
+    assert "3 photos with GPS positions: each is matched with its neighbours" in notices
+
+    # Video: frames in order, loops found with the tree.
+    for bundle in list_bundles(project):
+        bundle.source = "video"
+        bundle.save()
+    log, _notices = matched()
+    assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 1" in log
+
+
+def test_chosen_vocab_tree_matching_needs_the_tree(project: Project, tools: Tools) -> None:
+    from ez2digitize.backends import colmap
+
+    settings = MeshSettings(matching=colmap.MatchOptions(mode="vocab_tree"))
+    with pytest.raises(PipelineError, match="needs COLMAP's vocabulary tree"):
+        pipeline.run_sparse(project, tools, settings)
+
+
+def test_scene(project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A room or outdoor scene: no masks, no ring advice, walls kept when meshing."""
+    from ez2digitize import coverage, presets
+
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir()
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"mask")
+    analysed: list[object] = []
+    monkeypatch.setattr(coverage, "analyse", lambda *args: analysed.append(args))
+    monkeypatch.setattr(coverage, "weak_photos", lambda _db: [])  # the fake has no database
+    pipeline.run_mesh(project, tools, presets.mesh_settings(subject="scene"))
+    assert "--ImageReader.mask_path" not in (project.stage_dir("features") / "log.txt").read_text()
+    assert "--free-space-support 1" in (project.stage_dir("mesh") / "log.txt").read_text()
+    assert analysed == []
+    pipeline.run_mesh(project, tools, presets.mesh_settings())
+    assert len(analysed) == 1
+    assert "--free-space-support" not in (project.stage_dir("mesh") / "log.txt").read_text()
+
+
 def test_masks_are_used_when_present(project: Project, tools: Tools) -> None:
     pipeline.run_sparse(project, tools)
     assert "--ImageReader.mask_path" not in (project.stage_dir("features") / "log.txt").read_text()

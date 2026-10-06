@@ -92,6 +92,12 @@ def test_mesh_refine_texture(project: Project) -> None:
     dense, mesh = _manifest("densify", "d1"), _manifest("mesh", "m1")
     spec = openmvs.reconstruct_mesh(MVS, project, dense)
     assert _opt(spec, "--pointcloud-file") == str(project.stage_dir("densify") / "scene_dense.ply")
+    assert "--free-space-support" not in spec.argv
+    scene = openmvs.reconstruct_mesh(
+        MVS, project, dense, options=openmvs.MeshOptions(free_space_support=True)
+    )
+    assert _opt(scene, "--free-space-support") == "1"
+    assert scene.cache_key() != spec.cache_key()
 
     with pytest.raises(BackendError, match="no mesh output"):
         openmvs.texture_mesh(MVS, project, dense, mesh)

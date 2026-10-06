@@ -28,6 +28,10 @@ The first release.
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.
 - Each camera and zoom setting calibrated separately.
+- Rooms and outdoor scenes as well as small objects (**Subject**), and
+  large photo sets: beyond 200 photos, they are paired by GPS position, by
+  how alike they look (with COLMAP's vocabulary tree, downloaded once) or
+  in the order they were taken, instead of every pair.
 
 ### The 3D view
 

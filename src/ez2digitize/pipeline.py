@@ -33,7 +33,7 @@ from pathlib import Path
 from ez2digitize import coverage, crop, markers, plugins, scale, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
-from ez2digitize.core import photos
+from ez2digitize.core import download, photos
 from ez2digitize.core.capture import CaptureBundle, list_bundles
 from ez2digitize.core.hardware import detect_gpus
 from ez2digitize.core.photos import exif_orientations
@@ -45,6 +45,7 @@ from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
 from ez2digitize.masks import has_masks
+from ez2digitize.subject import Subject
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
@@ -109,6 +110,8 @@ class MeshSettings:
     align: bool = True
     # Splat training (run_splat only).
     splat: brush.SplatOptions = field(default_factory=brush.SplatOptions)
+    # A scene skips the advice that assumes photos all round an object.
+    subject: Subject = "object"
 
 
 # --- events --------------------------------------------------------------------
@@ -441,7 +444,7 @@ def _sparse(
         run.emit(
             Notice(f"only {registered} of {total} images were placed; the mesh may be partial")
         )
-    for finding in _coverage_notes(project, model, bundles):
+    for finding in _coverage_notes(project, model, bundles, settings.subject):
         run.emit(Notice(finding))
 
     undistorted = run(
@@ -531,7 +534,7 @@ def _colmap_mapping(
     features = run(
         colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
     )
-    matching_options = settings.matching or _auto_matching(bundles)
+    matching_options = _matching(settings.matching, bundles, run)
     matching = run(
         colmap.match_features(
             sfm, project, features, options=matching_options, camera_groups=groups or None
@@ -611,7 +614,9 @@ def _dense(
     return MeshResult(sparse=sparse, textured=textured, files=files, exports=exports)
 
 
-def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle]) -> list[str]:
+def _coverage_notes(
+    project: Project, model: Path, bundles: list[CaptureBundle], subject: Subject
+) -> list[str]:
     """What the camera placement says about the capture (advice only)."""
     notes = []
     try:
@@ -629,8 +634,11 @@ def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle])
                 f"few matches with the others: {coverage.name_list(weak)}. More photos "
                 "between them and their neighbours would make the result more reliable."
             )
-        analysis = coverage.analyse(model, exif_orientations(bundles), sides.upright_names(bundles))
-        notes += analysis.findings if analysis else ()
+        if subject == "object":  # all round an object; a room or a street isn't
+            analysis = coverage.analyse(
+                model, exif_orientations(bundles), sides.upright_names(bundles)
+            )
+            notes += analysis.findings if analysis else ()
     except (OSError, ValueError, BackendError, sqlite3.Error):
         pass  # advice only: never stop the run for it
     return notes
@@ -691,19 +699,66 @@ def _stages(settings: MeshSettings, tools: Tools, *, masked: bool) -> tuple[str,
     return _sparse_stages(tools, masked=masked) + dense
 
 
-# Up to this many images, every pair is matched even for video: it closes the
-# loop of an orbit, which sequential matching (without a vocabulary tree)
-# can't. Pairs grow with the square: 63 images took 17 s on the reference
-# desktop, 200 would take about 3 minutes.
+# Up to this many images, every pair is matched, whatever the capture: it is
+# the most thorough. Pairs grow with the square: 63 images took 17 s on the
+# reference desktop, 200 would take about 3 minutes, 1000 over an hour.
 EXHAUSTIVE_MAX_IMAGES = 200
+# Beyond that, photos with GPS positions are paired by distance if at least
+# this share has one (outdoors, from a phone).
+GPS_SHARE = 0.9
 
 
-def _auto_matching(bundles: list[CaptureBundle]) -> colmap.MatchOptions:
+def _matching(
+    chosen: colmap.MatchOptions | None, bundles: list[CaptureBundle], run: _Run
+) -> colmap.MatchOptions:
+    """The matching settings: chosen ones (with the vocabulary tree they need), or
+    picked from the photos (see colmap.MatchOptions for the modes).
+
+    Beyond EXHAUSTIVE_MAX_IMAGES: video frames sequentially, with loops found
+    by the vocabulary tree; photos by GPS if they have it, else by the tree,
+    else sequentially in name order (the order they were taken).
+    """
+    if chosen is not None:
+        if chosen.mode == "vocab_tree" and chosen.vocab_tree is None:
+            tree = _vocab_tree(run)
+            if tree is None:
+                raise PipelineError("vocabulary tree matching needs COLMAP's vocabulary tree")
+            return replace(chosen, vocab_tree=tree)
+        return chosen
     images = sum(len(b.images) for b in bundles)
-    # Beyond that, video frames are matched with their neighbours in time.
-    if images > EXHAUSTIVE_MAX_IMAGES and all(b.source == "video" for b in bundles):
-        return colmap.MatchOptions(mode="sequential")
-    return colmap.MatchOptions(mode="exhaustive")
+    if images <= EXHAUSTIVE_MAX_IMAGES:
+        return colmap.MatchOptions(mode="exhaustive")
+    if all(b.source == "video" for b in bundles):
+        return colmap.MatchOptions(mode="sequential", vocab_tree=_vocab_tree(run))
+    if photos.gps_share(bundles) >= GPS_SHARE:
+        run.emit(Notice(f"{images} photos with GPS positions: each is matched with its neighbours"))
+        return colmap.MatchOptions(mode="spatial")
+    tree = _vocab_tree(run)
+    if tree is not None:
+        run.emit(Notice(f"{images} photos: each is matched with the most similar ones"))
+        return colmap.MatchOptions(mode="vocab_tree", vocab_tree=tree)
+    run.emit(
+        Notice(
+            f"{images} photos: each is matched with those taken just before and after it, "
+            "so the photos should be taken in order, without jumping around"
+        )
+    )
+    return colmap.MatchOptions(mode="sequential")
+
+
+def _vocab_tree(run: _Run) -> Path | None:
+    """COLMAP's vocabulary tree, downloaded the first time; None if that fails."""
+    tree = colmap.find_vocab_tree()
+    if tree is not None:
+        return tree
+    run.emit(Notice("downloading COLMAP's vocabulary tree, for matching many photos (once)"))
+    try:
+        return colmap.download_vocab_tree(cancel=run.cancel)
+    except download.DownloadCancelled as exc:
+        raise PipelineCancelled("cancelled") from exc
+    except download.DownloadError as exc:
+        run.emit(Notice(f"could not download the vocabulary tree: {exc}"))
+        return None
 
 
 def _tail(log: Path, lines: int = 30) -> list[str]:

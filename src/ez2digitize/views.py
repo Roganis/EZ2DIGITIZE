@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize import coverage, upright
+from ez2digitize import coverage, subject, upright
 from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
@@ -73,6 +73,8 @@ class View:
     finished: str = ""
     # The cameras view: COLMAP's database, for the photos with few matches.
     database: Path | None = None
+    # The cameras view: rings round an object (not for a room or a scene).
+    rings: bool = True
 
     @property
     def label(self) -> str:
@@ -115,6 +117,7 @@ def available(project: Project) -> list[View]:
             up,
             undistorted.finished,
             colmap.matched_database(project),
+            rings=subject.of(project) == "object",
         )
     return [views[k] for k in ORDER if k in views]
 
@@ -180,10 +183,10 @@ def camera_coverage(view: View) -> tuple[coverage.RingLayout | None, list[str]]:
     """The cameras view's rings and its photos with few matches (advice: never fails)."""
     if view.key != "cameras":
         return None, []
-    try:
-        rings = coverage.rings(view.source, view.upright)
-    except (OSError, ValueError, BackendError):
-        rings = None
+    rings = None
+    if view.rings:
+        with contextlib.suppress(OSError, ValueError, BackendError):
+            rings = coverage.rings(view.source, view.upright)
     weak: list[str] = []
     if view.database is not None and view.database.is_file():
         with contextlib.suppress(OSError, sqlite3.Error):

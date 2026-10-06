@@ -7,6 +7,12 @@ options override single values on top (`mesh_settings(..., level=0)`).
 `describe` lists the values that differ between presets in words, for the
 advanced panel and the CLI.
 
+The subject (`pipeline.Subject`) adjusts a preset: a room or an outdoor
+scene uses no masks (they cut an object out of its background) and keeps
+weakly supported surfaces such as plain walls when meshing. Matching adapts
+to the number of photos by itself (pipeline._matching). A project keeps its
+subject in its settings (see ez2digitize.subject).
+
 Reference timings, 63 photos of a skull on the RX 7900 GRE desktop (CPU
 only): balanced about 15 minutes, of which densify 8 and refine (high only)
 4. Fast reads a quarter of the pixels in every step.
@@ -17,8 +23,10 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal, get_args
 
+from ez2digitize import subject as subjects
 from ez2digitize.backends import brush, colmap, openmvs
 from ez2digitize.pipeline import MeshSettings
+from ez2digitize.subject import Subject
 
 Quality = Literal["fast", "balanced", "high"]
 QUALITIES: tuple[Quality, ...] = get_args(Quality)
@@ -61,6 +69,7 @@ def mesh_settings(
     max_image_size: int | None = None,
     faces: int | None = None,
     steps: int | None = None,
+    subject: Subject = subjects.DEFAULT,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
@@ -70,6 +79,13 @@ def mesh_settings(
     simplifies the mesh to about that many faces before texturing.
     """
     settings = _PRESETS[quality]
+    if subject == "scene":
+        settings = replace(
+            settings,
+            subject=subject,
+            use_masks=False,
+            mesh=replace(settings.mesh, free_space_support=True),
+        )
     if faces is not None:
         settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
     if steps is not None:
@@ -98,6 +114,7 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
 
     refine = settings.refine
     return [
+        ("Subject", subjects.LABELS[settings.subject]),
         ("Photo size for features", f"up to {settings.features.max_image_size} px"),
         ("Features per photo", f"up to {settings.features.max_num_features}"),
         (

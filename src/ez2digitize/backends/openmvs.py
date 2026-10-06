@@ -116,6 +116,9 @@ class DensifyOptions:
 
 @dataclass(frozen=True)
 class MeshOptions:
+    # Use the free space between cameras and points to keep surfaces that few
+    # points support (plain walls, floors): for rooms and outdoor scenes.
+    free_space_support: bool = False
     threads: int | None = None
 
 
@@ -247,6 +250,8 @@ def reconstruct_mesh(
         "-o", stage_dir / "scene_mesh.mvs",
         "-w", stage_dir,
     ]  # fmt: skip
+    if options.free_space_support:
+        argv += ["--free-space-support", "1"]
     if options.threads:
         argv += ["--max-threads", str(options.threads)]
     return StageSpec(

@@ -394,6 +394,12 @@ fails, they can see which stage failed and why.
   `tools/plugins/example-poses`. More slots (features and matching, mesh
   from splats) can follow once a real plugin needs them.
 - Larger scenes (rooms, outdoor) with appropriate matchers and presets.
+  Done: a project's subject (object, or room/outdoor scene: no masks, no
+  camera-ring advice, OpenMVS free-space support for plain walls), and
+  matching for more than 200 photos by GPS, by COLMAP's vocabulary tree
+  (downloaded once, pinned like COLMAP pins it) or in order, with loop
+  detection for video (docs/CAPTURE.md). Waits for a real room and an
+  outdoor capture to tune the presets (memory, dense detail).
 - Better features/matching inside COLMAP: learned local features and
   matchers (e.g. ALIKED or DISK with LightGlue, permissively licensed;
   SuperPoint weights are not). A nearer-term gain than replacing SfM.

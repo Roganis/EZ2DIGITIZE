@@ -222,6 +222,21 @@ def test_quality_presets_and_advanced_values(page: ProjectPage) -> None:
     assert page.settings().refine is not None and page.refine.isChecked()
 
 
+def test_scene_subject(qtbot: QtBot, page: ProjectPage, fake_tools: Tools) -> None:
+    from ez2digitize import subject
+
+    assert page.chosen_subject == "object" and page.use_masks.isChecked()
+    page.subject.setCurrentIndex(1)  # Room or outdoor scene
+    assert subject.of(Project.open(page.project.root)) == "scene"  # stored at once
+    assert not page.use_masks.isChecked()
+    settings = page.settings()
+    assert settings.subject == "scene" and settings.mesh.free_space_support
+    assert "Subject: Room or outdoor scene" in page.values.text()
+    reopened = ProjectPage(Project.open(page.project.root), lambda: fake_tools)
+    qtbot.addWidget(reopened)
+    assert reopened.chosen_subject == "scene" and not reopened.use_masks.isChecked()
+
+
 def test_quality_is_saved_with_the_project(
     qtbot: QtBot, page: ProjectPage, photos: Path, fake_tools: Tools
 ) -> None:

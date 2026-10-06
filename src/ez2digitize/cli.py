@@ -34,7 +34,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TextIO, cast
+from typing import TextIO, cast, get_args
 
 import segno
 
@@ -48,6 +48,7 @@ from ez2digitize import (
     presets,
     scale,
     sides,
+    subject,
     upright,
     video,
     views,
@@ -121,6 +122,9 @@ def _parser() -> argparse.ArgumentParser:
     new = sub.add_parser("new", help="create an empty project folder")
     new.add_argument("project", type=Path)
     new.add_argument("--name", help="display name (default: the folder name)")
+    new.add_argument(
+        "--scene", action="store_true", help="a room or an outdoor scene, not a small object"
+    )
     new.set_defaults(func=_cmd_new)
 
     imp = sub.add_parser("import", help="import folders of photos, or videos, as capture bundles")
@@ -339,6 +343,19 @@ def _parser() -> argparse.ArgumentParser:
         help="preset: fast, balanced or high (default: the project's last, else balanced); "
         "the options below override single values",
     )
+    run.add_argument(
+        "--subject",
+        choices=subject.SUBJECTS,
+        help="object (photos all round a small object) or scene (a room, a building, "
+        "a landscape); default: the project's",
+    )
+    run.add_argument(
+        "--matching",
+        choices=["auto", *get_args(colmap.MatchMode)],
+        default="auto",
+        help="how photos are paired: auto (every pair up to 200 photos, then by GPS, "
+        "similarity or order), or one mode",
+    )
     run.add_argument("--max-image-size", type=int, help="COLMAP feature image size")
     run.add_argument("--mapper", choices=["global", "incremental"], default="global")
     run.add_argument("--level", type=int, help="OpenMVS resolution level (0 = full size)")
@@ -438,6 +455,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _cmd_new(args: argparse.Namespace) -> int:
     project = Project.create(args.project, name=args.name)
+    subject.store(project, "scene" if args.scene else "object")
     print(f"created project {project.name!r} in {project.root}")
     return 0
 
@@ -1042,6 +1060,7 @@ def _is_bundled(path: Path) -> bool:
 def _cmd_status(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
     print(f"{project.name} ({project.root})")
+    print(f"subject: {subject.LABELS[subject.of(project)].lower()}")
     bundles = list_bundles(project)
     print(f"captures: {len(bundles)}")
     for bundle in bundles:
@@ -1089,7 +1108,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if project.preset != quality:
         project.preset = quality
         project.save()
-    settings = _settings(args, quality)
+    chosen = args.subject or subject.of(project)
+    subject.store(project, chosen)
+    settings = _settings(args, quality, chosen)
     print(f"quality: {presets.LABELS[quality]}")
     for label, value in presets.describe(settings):
         print(f"  {label}: {value}")
@@ -1190,9 +1211,12 @@ def _formats(text: str) -> tuple[ExportFormat, ...]:
     return tuple(cast(ExportFormat, n) for n in names)
 
 
-def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSettings:
+def _settings(
+    args: argparse.Namespace, quality: presets.Quality, chosen: subject.Subject
+) -> MeshSettings:
     settings = presets.mesh_settings(
         quality,
+        subject=chosen,
         level=args.level,
         refine=args.refine,
         max_image_size=args.max_image_size,
@@ -1208,8 +1232,11 @@ def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSetting
         mesh=replace(settings.mesh, threads=threads),
         refine=None if settings.refine is None else replace(settings.refine, threads=threads),
         texture=replace(settings.texture, threads=threads),
+        matching=None
+        if args.matching == "auto"
+        else colmap.MatchOptions(mode=args.matching, threads=threads),
         export_formats=args.export,
-        use_masks=not args.no_masks,
+        use_masks=settings.use_masks and not args.no_masks,
         align=not args.no_align,
     )
 

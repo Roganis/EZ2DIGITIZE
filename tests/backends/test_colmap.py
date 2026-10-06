@@ -175,6 +175,55 @@ def test_match_features_copies_database(project: Project) -> None:
     assert seq.argv[1] == "sequential_matcher"
     assert _opt(seq, "--SequentialMatching.overlap") == "15"
     assert _opt(seq, "--SequentialMatching.loop_detection") == "0"
+    assert "--SequentialMatching.vocab_tree_path" not in seq.argv
+
+
+def test_matching_for_large_sets(project: Project, tmp_path: Path) -> None:
+    features = _manifest("features")
+    tree = tmp_path / "tree.bin"
+    loops = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("sequential", vocab_tree=tree)
+    )
+    assert _opt(loops, "--SequentialMatching.loop_detection") == "1"
+    assert _opt(loops, "--SequentialMatching.vocab_tree_path") == str(tree)
+    # The tree is recorded by its hash, not where it is.
+    assert loops.parameters["vocab_tree"] == colmap.VOCAB_TREE.sha256
+    moved = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("sequential", vocab_tree=tmp_path / "x")
+    )
+    assert moved.cache_key() == loops.cache_key()
+
+    spatial = colmap.match_features(TOOL, project, features, options=MatchOptions("spatial"))
+    assert spatial.argv[1] == "spatial_matcher"
+    assert _opt(spatial, "--SpatialMatching.max_num_neighbors") == "50"
+    assert _opt(spatial, "--SpatialMatching.ignore_z") == "1"
+
+    similar = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("vocab_tree", vocab_tree=tree)
+    )
+    assert similar.argv[1] == "vocab_tree_matcher"
+    assert _opt(similar, "--VocabTreeMatching.vocab_tree_path") == str(tree)
+    assert _opt(similar, "--VocabTreeMatching.num_images") == "100"
+    with pytest.raises(BackendError, match="needs the tree"):
+        colmap.match_features(TOOL, project, features, options=MatchOptions("vocab_tree"))
+
+
+def test_vocab_tree_download(server: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    from ez2digitize.core import download
+
+    monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
+    for var in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    data = b"tree" * 1000
+    (tmp_path / "www" / "tree.bin").write_bytes(data)
+    pinned = colmap.VocabTree("tree.bin", f"{server}/tree.bin", hashlib.sha256(data).hexdigest())
+    monkeypatch.setattr(colmap, "VOCAB_TREE", pinned)
+    assert colmap.find_vocab_tree() is None
+    # What download_vocab_tree does (the tests stand it in, to stay offline).
+    path = download.fetch(pinned.url, colmap.vocab_tree_file(), pinned.sha256)
+    assert colmap.find_vocab_tree() == path and path.read_bytes() == data
 
 
 @pytest.mark.parametrize(("kind", "command", "threads"), [

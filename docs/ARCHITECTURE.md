@@ -393,10 +393,21 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 - `run_sparse` and `run_dense` are the two halves around the crop box;
   `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
   stage is reused and `force_from` re-runs a stage and everything after it.
-- Matching is exhaustive, except for more than 200 images that all come
-  from videos, which are matched sequentially (each frame with the next 10).
-  Exhaustive matching closes the loop of an orbit, which sequential matching
-  can't without a vocabulary tree; 200 images take about 3 minutes.
+- Matching (`_matching`) is exhaustive up to 200 images, which take about
+  3 minutes; pairs grow with the square. Beyond that: video frames
+  sequentially, with loop detection by COLMAP's vocabulary tree; photos by
+  their EXIF GPS position if 90% have one (`spatial`); else by image
+  retrieval with the vocabulary tree (`vocab_tree`); else sequentially in
+  name order, with a notice to take them in order. The tree is COLMAP's
+  own pinned file (`colmap.VOCAB_TREE`, the SIFT tree COLMAP 4.2.1 would
+  download itself; our builds have downloads off), fetched once into the
+  user's cache by `core.download`, like the masking model. The matching
+  stage records the tree by its hash, not its path.
+- The subject (`ez2digitize.subject`, in the project's settings): an
+  object, or a room or outdoor scene. A scene's preset uses no masks and
+  meshes with OpenMVS's free-space support (`--free-space-support`, for
+  weakly supported surfaces such as plain walls). The camera rings and
+  their advice are only for objects (`View.rings`, `_coverage_notes`).
   The best model is the one with the most registered images; a `Notice`
   event reports split models and low registration.
 - Only one pipeline runs per process (`PipelineBusy` otherwise): the 8 GB

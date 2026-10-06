@@ -1,11 +1,8 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 import hashlib
-import http.server
 import json
 import sys
-import threading
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -193,29 +190,6 @@ def test_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     if variable:
         monkeypatch.setenv(variable, str(tmp_path / "cache"))
         assert masks.models_dir() == tmp_path / "cache" / "ez2digitize" / "models"
-
-
-@pytest.fixture
-def server(tmp_path: Path) -> Iterator[str]:
-    root = tmp_path / "www"
-    root.mkdir()
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            super().__init__(*args, directory=str(root), **kwargs)  # type: ignore[arg-type]
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    class Server(http.server.ThreadingHTTPServer):
-        def handle_error(self, request: object, client_address: object) -> None:
-            pass  # a cancelled download hangs up mid-transfer
-
-    httpd = Server(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{httpd.server_address[1]}"
-    httpd.shutdown()
 
 
 def test_download_model(server: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

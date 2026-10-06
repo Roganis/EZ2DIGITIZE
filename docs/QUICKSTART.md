@@ -41,7 +41,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    keeps only the object in every photo (cleaner, faster). Uncheck any mask
    that cuts off part of the object. To scan the underside too, see
    **Other side…** and the Both sides tab ([capture guide](CAPTURE.md)).
-5. Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
+5. For a room or an outdoor scene instead of an object, set **Subject** to
+   **Room or outdoor scene** (see the [capture guide](CAPTURE.md)).
+   Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
    default), High for the finest surface (much slower). **Mesh size**
    simplifies the result for the web or a slicer.
 6. Press **Build mesh**. The steps list shows progress; the Log tab shows

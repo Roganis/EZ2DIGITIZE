@@ -26,14 +26,11 @@ mask keeps everything (see `colmap.extract_features`).
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import importlib.metadata
-import os
 import re
 import shutil
 import statistics
 import sys
-import urllib.request
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,7 +39,9 @@ from typing import Any, Literal
 from PIL import Image
 
 from ez2digitize.backends.colmap import READABLE_SUFFIXES
+from ez2digitize.core import download
 from ez2digitize.core.capture import CaptureBundle, CaptureError, CaptureFile, import_masks
+from ez2digitize.core.download import models_dir as models_dir
 from ez2digitize.core.files import (
     FormatError,
     fingerprint,
@@ -106,19 +105,6 @@ class MaskingCancelled(MaskingError):
 # --- The model ---------------------------------------------------------------
 
 
-def models_dir() -> Path:
-    """Where downloaded models live: the user's cache, or `EZ2D_MODELS_DIR`."""
-    if override := os.environ.get("EZ2D_MODELS_DIR"):
-        return Path(override)
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Caches"
-    elif sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / "ez2digitize" / "models"
-
-
 def model_file(model: MaskModel = MODEL) -> Path:
     return models_dir() / f"{model.name}.onnx"
 
@@ -145,39 +131,25 @@ def download_model(
     download is never left under the final name.
     """
     target = model_file(model)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(target.name + ".part")
-    digest = hashlib.sha256()
-    received = 0
     source = url or model.url
     try:
-        with (
-            urllib.request.urlopen(source, timeout=60) as response,  # noqa: S310 - pinned URL
-            partial.open("wb") as out,
-        ):
-            total = int(response.headers.get("Content-Length") or model.size)
-            while chunk := response.read(1 << 20):
-                if cancel is not None and cancel.cancelled:
-                    raise MaskingCancelled("download cancelled")
-                out.write(chunk)
-                digest.update(chunk)
-                received += len(chunk)
-                if on_progress is not None:
-                    on_progress(received, total)
-    except OSError as exc:
-        partial.unlink(missing_ok=True)
+        return download.fetch(
+            source,
+            target,
+            model.sha256,
+            size=model.size,
+            on_progress=on_progress,
+            cancel=cancel,
+        )
+    except download.DownloadCancelled as exc:
+        raise MaskingCancelled(str(exc)) from exc
+    except download.DownloadDamaged as exc:
+        raise MaskingError(f"the downloaded model is damaged ({exc})") from exc
+    except download.DownloadError as exc:
         raise MaskingError(
-            f"could not download the masking model from {source}: {exc}. "
+            f"could not download the masking model from {source}: {exc.__cause__}. "
             f"Download it by hand and save it as {target}"
         ) from exc
-    except BaseException:
-        partial.unlink(missing_ok=True)
-        raise
-    if digest.hexdigest() != model.sha256:
-        partial.unlink(missing_ok=True)
-        raise MaskingError(f"the downloaded model is damaged (sha256 mismatch, {received} bytes)")
-    partial.replace(target)
-    return target
 
 
 # --- Making masks ------------------------------------------------------------

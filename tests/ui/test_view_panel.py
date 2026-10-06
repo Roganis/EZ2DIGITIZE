@@ -213,6 +213,16 @@ def test_coverage_tool(qtbot: QtBot, project: Project) -> None:
     assert text.startswith("Photos by height: 24 at ") and ", 12 at " in text
     assert "Gaps in the rings" in text
 
+    # A room or a scene has no rings round an object: no coverage tool.
+    from ez2digitize import subject
+
+    subject.store(project, "scene")
+    panel.refresh(prefer="cameras")
+    assert panel.tool != "coverage" and panel.tools["coverage"].isHidden()
+    [cameras] = [v for v in panel.available if v.key == "cameras"]
+    rings, _weak = views.camera_coverage(cameras)
+    assert rings is None
+
 
 def test_scale_from_markers(qtbot: QtBot, tmp_path: Path) -> None:
     from models import marker_scene

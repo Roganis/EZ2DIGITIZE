@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import http.server
 import os
 import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -223,6 +226,42 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Never the user's model cache or plugins.
     monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("EZ2D_PLUGINS_DIR", str(tmp_path / "plugins"))
+
+
+@pytest.fixture
+def server(tmp_path: Path) -> Iterator[str]:
+    """A local web server for tmp_path/www (for download tests)."""
+    root = tmp_path / "www"
+    root.mkdir()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, directory=str(root), **kwargs)  # type: ignore[arg-type]
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    class Server(http.server.ThreadingHTTPServer):
+        def handle_error(self, request: object, client_address: object) -> None:
+            pass  # a cancelled download hangs up mid-transfer
+
+    httpd = Server(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def _no_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never the network: the vocabulary tree can't be fetched unless a test says so."""
+    from ez2digitize.backends import colmap
+    from ez2digitize.core.download import DownloadError
+
+    def offline(**_kwargs: object) -> Path:
+        raise DownloadError("no network in the tests")
+
+    monkeypatch.setattr(colmap, "download_vocab_tree", offline)
 
 
 @pytest.fixture(autouse=True)

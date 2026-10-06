@@ -32,7 +32,8 @@ from ez2digitize.core.resources import cpu_threads
 PHOTO_KEY = "photo"
 # Bump when inspection changes; older results are then inspected again.
 # 2: EXIF orientation (for standing the reconstruction upright).
-INSPECT_VERSION = 2
+# 3: whether it has a GPS position (for matching large outdoor sets).
+INSPECT_VERSION = 3
 SHARPNESS_SIZE = 1024
 
 # A photo this much less sharp than the median of its set is flagged. On a
@@ -62,6 +63,8 @@ class PhotoInfo:
     sharpness: float | None = None
     # EXIF orientation (1-8): how the stored pixels are turned for display.
     orientation: int = 1
+    # Has an EXIF GPS position (latitude and longitude).
+    gps: bool = False
     # Why the file can't be read as an image; the other fields are then empty.
     error: str | None = None
 
@@ -112,6 +115,7 @@ def inspect_photo(path: Path) -> PhotoInfo:
                 width, height = image.size
                 exif = image.getexif()
                 details = exif.get_ifd(ExifTags.IFD.Exif)
+                gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
                 # JPEG decodes straight to a fraction of its size; about 8x faster.
                 image.draft("L", (SHARPNESS_SIZE, SHARPNESS_SIZE))
                 gray = image.convert("L")
@@ -127,6 +131,7 @@ def inspect_photo(path: Path) -> PhotoInfo:
         focal_35mm=_number(details.get(ExifTags.Base.FocalLengthIn35mmFilm)),
         sharpness=_sharpness(gray),
         orientation=_orientation(exif.get(ExifTags.Base.Orientation)),
+        gps=ExifTags.GPS.GPSLatitude in gps and ExifTags.GPS.GPSLongitude in gps,
     )
 
 
@@ -177,6 +182,12 @@ def photo_infos(bundle: CaptureBundle) -> dict[str, PhotoInfo | None]:
         for f in bundle.used
         if f.kind == "image"
     }
+
+
+def gps_share(bundles: Iterable[CaptureBundle]) -> float:
+    """Share of the inspected photos in use that have a GPS position (0 if none)."""
+    infos = [i for b in bundles for i in photo_infos(b).values() if i is not None and not i.error]
+    return sum(1 for i in infos if i.gps) / len(infos) if infos else 0.0
 
 
 def exif_orientations(bundles: Iterable[CaptureBundle]) -> dict[str, int]:

@@ -98,6 +98,34 @@ To capture the underside too:
 - **Thin parts** (wires, hair, leaves): they will be thick or missing at
   any quality; High helps a little.
 
+## Rooms and outdoor scenes
+
+The app is made for small objects, but a room, a building front or a
+garden works too. Set **Subject** to **Room or outdoor scene** (`ez2d new
+--scene`, or `ez2d run --subject scene`). Masks are then not used, the
+camera rings and their advice are left out (they assume photos all round
+an object), and plain walls and floors are kept when meshing.
+
+- **Walk, don't spin.** Standing in one spot and turning gives views with
+  no depth between them. Take a step sideways between photos, so each
+  overlaps the last by about two thirds.
+- **In a room,** walk along the walls looking across and inwards, then
+  through the middle; add photos looking up at the ceiling and down at the
+  floor near the walls. Plain walls with nothing on them are hard: posters,
+  furniture or a few sticky notes help.
+- **Outdoors,** keep the light the same (overcast is best) and leave out
+  moving things (people, cars, trees in wind) where you can.
+- **Many photos are fine.** Up to 200 photos, every pair is compared.
+  Beyond that, phone photos with a GPS position are compared with their
+  neighbours, and others with the photos that look most alike. That needs
+  COLMAP's vocabulary tree, which is downloaded once. Without it, each
+  photo is compared with those taken just before and after it, so take
+  them in order then. Videos are compared frame by frame, with the tree
+  finding where a walk comes back to its start.
+- **Size and memory.** Large scenes need far more memory in the dense
+  step. Start with Fast, and use the crop box to keep only the part you
+  want.
+
 ## After a run
 
 The log notes what the reconstruction saw: how many photos were placed,

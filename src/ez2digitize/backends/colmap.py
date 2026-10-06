@@ -29,7 +29,7 @@ import re
 import shutil
 import sqlite3
 import struct
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -43,10 +43,11 @@ from ez2digitize.backends.common import (
     find_tool,
     result_parameters,
 )
+from ez2digitize.core import download
 from ez2digitize.core.capture import CaptureBundle
 from ez2digitize.core.files import fingerprint, write_uniform_png
 from ez2digitize.core.project import Project
-from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
+from ez2digitize.core.runner import CancelToken, ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import (
     Backend,
     StageManifest,
@@ -66,7 +67,7 @@ IMAGE_LIST = "image_list.txt"
 READABLE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"})
 
 CameraGrouping = Literal["per_capture", "per_image", "single"]
-MatchMode = Literal["exhaustive", "sequential"]
+MatchMode = Literal["exhaustive", "sequential", "spatial", "vocab_tree"]
 MapperKind = Literal["incremental", "global"]
 
 
@@ -105,6 +106,52 @@ def locate(explicit: Path | None = None) -> Colmap:
     return Colmap(path=path, version=version)
 
 
+# --- the vocabulary tree --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class VocabTree:
+    name: str
+    url: str
+    sha256: str
+
+
+# The tree for SIFT features that COLMAP 4.2.1 itself would download
+# (src/colmap/retrieval/resources.h, kDefaultSiftVocabTreeUri); our builds
+# have downloads off, so the app fetches it, like the masking model.
+VOCAB_TREE = VocabTree(
+    name="vocab_tree_faiss_flickr100K_words256K.bin",
+    url="https://github.com/colmap/colmap/releases/download/3.11.1/"
+    "vocab_tree_faiss_flickr100K_words256K.bin",
+    sha256="96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc",
+)
+
+
+def vocab_tree_file() -> Path:
+    return download.models_dir() / VOCAB_TREE.name
+
+
+def find_vocab_tree() -> Path | None:
+    """The downloaded tree, or None (its hash was checked when it arrived)."""
+    path = vocab_tree_file()
+    return path if path.is_file() else None
+
+
+def download_vocab_tree(
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    cancel: CancelToken | None = None,
+) -> Path:
+    """Fetch the tree into the user's cache; raises core.download.DownloadError."""
+    return download.fetch(
+        VOCAB_TREE.url,
+        vocab_tree_file(),
+        VOCAB_TREE.sha256,
+        on_progress=on_progress,
+        cancel=cancel,
+    )
+
+
 # --- options -------------------------------------------------------------------
 
 
@@ -121,9 +168,28 @@ class FeatureOptions:
 
 @dataclass(frozen=True)
 class MatchOptions:
+    """How photos are paired for matching.
+
+    - exhaustive: every pair; best, but grows with the square of the count.
+    - sequential: each photo with the next `sequential_overlap` (and, with
+      COLMAP's quadratic overlap, the 2nd, 4th, 8th... after), in name order:
+      video frames, or a walk through a room. With a vocabulary tree it also
+      looks for loops (back at the start of an orbit or a walk).
+    - spatial: each photo with its nearest neighbours by EXIF GPS position
+      (outdoors, phones).
+    - vocab_tree: each photo with the `vocab_tree_images` most similar ones,
+      by image retrieval: large unordered sets.
+
+    `vocab_tree` is the tree file (see `VOCAB_TREE`), for vocab_tree and for
+    loop detection in sequential matching.
+    """
+
     mode: MatchMode = "exhaustive"
-    # Sequential matching (video frames): how many following frames to match.
     sequential_overlap: int = 10
+    spatial_neighbors: int = 50
+    spatial_max_distance_m: float = 100.0
+    vocab_tree_images: int = 100
+    vocab_tree: Path | None = None
     threads: int | None = None
 
 
@@ -300,7 +366,7 @@ def match_features(
     options: MatchOptions | None = None,
     camera_groups: Mapping[str, str] | None = None,
 ) -> StageSpec:
-    """Exhaustive (photo sets) or sequential (video) matching.
+    """Feature matching over the pairs `options.mode` chooses (see MatchOptions).
 
     `camera_groups` (image name -> group, see `merge_cameras`) merges the
     per-image cameras of features extracted with `camera_grouping="per_image"`
@@ -314,10 +380,28 @@ def match_features(
         "--database_path", stage_dir / DATABASE,
         "--FeatureMatching.use_gpu", "0",
     ]  # fmt: skip
+    tree = options.vocab_tree
     if options.mode == "sequential":
         argv += [
             "--SequentialMatching.overlap", str(options.sequential_overlap),
-            "--SequentialMatching.loop_detection", "0",
+            "--SequentialMatching.quadratic_overlap", "1",
+            "--SequentialMatching.loop_detection", _flag(tree is not None),
+        ]  # fmt: skip
+        if tree is not None:
+            argv += ["--SequentialMatching.vocab_tree_path", tree]
+    elif options.mode == "spatial":
+        # COLMAP reads the positions from EXIF GPS during feature extraction.
+        argv += [
+            "--SpatialMatching.max_num_neighbors", str(options.spatial_neighbors),
+            "--SpatialMatching.max_distance", str(options.spatial_max_distance_m),
+            "--SpatialMatching.ignore_z", "1",
+        ]  # fmt: skip
+    elif options.mode == "vocab_tree":
+        if tree is None:
+            raise BackendError("vocabulary tree matching needs the tree file")
+        argv += [
+            "--VocabTreeMatching.vocab_tree_path", tree,
+            "--VocabTreeMatching.num_images", str(options.vocab_tree_images),
         ]  # fmt: skip
     if options.threads:
         argv += ["--FeatureMatching.num_threads", str(options.threads)]
@@ -327,7 +411,8 @@ def match_features(
         if camera_groups:
             merge_cameras(folder / DATABASE, camera_groups)
 
-    parameters = result_parameters(options)
+    # The tree by what it is, not where it is.
+    parameters = {**result_parameters(options), "vocab_tree": VOCAB_TREE.sha256 if tree else None}
     if camera_groups:
         parameters["camera_groups"] = fingerprint(sorted(camera_groups.items()))
     return StageSpec(

@@ -232,3 +232,20 @@ def test_camera_groups(project: Project, tmp_path: Path) -> None:
     for entry in bundle.files:
         entry.metadata[PHOTO_KEY] = CANON.to_dict()
     assert camera_groups([bundle]) == {}
+
+
+def test_inspect_finds_gps(tmp_path: Path) -> None:
+    path = write_photo(tmp_path / "outdoors.jpg")
+    with Image.open(path) as image:
+        tags = image.getexif()
+        tags.get_ifd(ExifTags.IFD.GPSInfo).update(
+            {
+                ExifTags.GPS.GPSLatitudeRef: "N",
+                ExifTags.GPS.GPSLatitude: (48.0, 51.0, 30.0),
+                ExifTags.GPS.GPSLongitudeRef: "E",
+                ExifTags.GPS.GPSLongitude: (2.0, 17.0, 40.0),
+            }
+        )
+        image.save(tmp_path / "tagged.jpg", exif=tags)
+    assert photos.inspect_photo(tmp_path / "tagged.jpg").gps
+    assert not photos.inspect_photo(path).gps

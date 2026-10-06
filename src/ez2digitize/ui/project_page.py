@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import diagnostics, masks, presets, video
+from ez2digitize import diagnostics, masks, presets, subject, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -181,6 +181,13 @@ class ProjectPage(QWidget):
                 self.quality.count() - 1, presets.HINTS[quality], Qt.ItemDataRole.ToolTipRole
             )
         self.quality.setCurrentIndex(presets.QUALITIES.index(presets.parse_quality(project.preset)))
+        self.subject = QComboBox()
+        for name in subject.SUBJECTS:
+            self.subject.addItem(subject.LABELS[name], name)
+            self.subject.setItemData(
+                self.subject.count() - 1, subject.HINTS[name], Qt.ItemDataRole.ToolTipRole
+            )
+        self.subject.setCurrentIndex(subject.SUBJECTS.index(subject.of(project)))
         self.detail = QComboBox()
         for label, level in DETAIL_LEVELS:
             self.detail.addItem(label, level)
@@ -201,7 +208,7 @@ class ProjectPage(QWidget):
             "slicers; the texture keeps its detail"
         )
         self.use_masks = QCheckBox("Use masks")
-        self.use_masks.setChecked(True)
+        self.use_masks.setChecked(subject.of(project) == "object")
         self.align = QCheckBox("Stand the model upright")
         self.align.setChecked(True)
         self.align.setToolTip(
@@ -218,6 +225,7 @@ class ProjectPage(QWidget):
         )
         settings_box = QGroupBox("Settings")
         form = QFormLayout(settings_box)
+        form.addRow("Subject:", self.subject)
         form.addRow("Quality:", self.quality)
         form.addRow("Save as:", self.export_formats)
         form.addRow("Mesh size:", self.mesh_size)
@@ -238,6 +246,7 @@ class ProjectPage(QWidget):
         advanced_form.addRow(self.values)
         form.addRow(self.advanced)
         self.quality.currentIndexChanged.connect(self._show_values)
+        self.subject.currentIndexChanged.connect(self._on_subject_changed)
         self.advanced.toggled.connect(self._show_values)
         self.detail.currentIndexChanged.connect(self._show_values)
         self.refine.toggled.connect(self._show_values)
@@ -420,7 +429,7 @@ class ProjectPage(QWidget):
         self.import_video_button.setEnabled(not busy)
         self.phone_button.setEnabled(not busy)
         busy_widgets = (
-            self.quality, self.advanced, self.export_formats, self.mesh_size,
+            self.subject, self.quality, self.advanced, self.export_formats, self.mesh_size,
             self.video_frames, self.align,
         )  # fmt: skip
         for widget in busy_widgets:
@@ -451,6 +460,17 @@ class ProjectPage(QWidget):
     def chosen_quality(self) -> presets.Quality:
         return presets.parse_quality(str(self.quality.currentData()))
 
+    @property
+    def chosen_subject(self) -> subject.Subject:
+        return subject.parse(self.subject.currentData())
+
+    def _on_subject_changed(self) -> None:
+        """Stored at once; masks follow it (an object's are the point, a scene has none)."""
+        subject.store(self.project, self.chosen_subject)
+        self.use_masks.setChecked(self.chosen_subject == "object")
+        self.view_panel.refresh()
+        self._show_values()
+
     def settings(self) -> MeshSettings:
         """The preset, with the advanced panel's values if it is switched on."""
         faces = int(self.mesh_size.currentData()) or None
@@ -460,9 +480,12 @@ class ProjectPage(QWidget):
                 level=int(self.detail.currentData()),
                 refine=self.refine.isChecked(),
                 faces=faces,
+                subject=self.chosen_subject,
             )
         else:
-            settings = presets.mesh_settings(self.chosen_quality, faces=faces)
+            settings = presets.mesh_settings(
+                self.chosen_quality, faces=faces, subject=self.chosen_subject
+            )
         return replace(
             settings,
             export_formats=tuple(self.export_formats.currentData()),
@@ -484,6 +507,7 @@ class ProjectPage(QWidget):
         rows = presets.describe(self.settings())
         self.values.setText("\n".join(f"{label}: {value}" for label, value in rows))
         self.quality.setToolTip(presets.HINTS[self.chosen_quality])
+        self.subject.setToolTip(subject.HINTS[self.chosen_subject])
 
     def choose_folder_to_import(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Import a folder of photos")

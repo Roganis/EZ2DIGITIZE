@@ -106,6 +106,17 @@ Qin et al.)
   Notes:    The ONNX export published by the rembg project (MIT),
             https://github.com/danielgatis/rembg/releases/tag/v0.0.0
 
+COLMAP's vocabulary tree is not bundled either: it is downloaded when a
+project has more than 200 photos, into the same cache, checked against the
+sha256 COLMAP 4.2.1 itself pins (ez2digitize.backends.colmap.VOCAB_TREE):
+
+vocab_tree_faiss_flickr100K_words256K.bin
+  License:  none stated for the file itself; published by the COLMAP project
+            (BSD-3-Clause) as an asset of its 3.11.1 release, and the
+            file COLMAP itself downloads. It holds visual words trained on
+            the Flickr100k images, not the images.
+  Source:   https://github.com/colmap/colmap/releases/tag/3.11.1
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------

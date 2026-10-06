@@ -293,7 +293,7 @@ class ViewPanel(QWidget):
     def tool(self) -> str | None:
         """The tool in use: the one chosen if the view has it, else its first; None if none."""
         view = self._chosen()
-        usable = [t for t, (_label, keys) in TOOLS.items() if view and view.key in keys]
+        usable = [t for t, (_label, keys) in TOOLS.items() if view and _offers(view, t, keys)]
         if not usable:
             return None
         return self._wanted_tool if self._wanted_tool in usable else usable[0]
@@ -311,7 +311,7 @@ class ViewPanel(QWidget):
         view = self._chosen()
         tool = self.tool
         for name, button in self.tools.items():
-            button.setVisible(view is not None and view.key in TOOLS[name][1])
+            button.setVisible(view is not None and _offers(view, name, TOOLS[name][1]))
             if name == tool and not button.isChecked():
                 button.blockSignals(True)
                 button.setChecked(True)
@@ -658,3 +658,8 @@ class ViewPanel(QWidget):
             self._orient(upright.levelled(start, points, centre))  # type: ignore[arg-type]
         except upright.OrientationError as exc:
             self.orient_hint.setText(f"Not levelled: {exc}.")
+
+
+def _offers(view: views.View, tool: str, keys: tuple[str, ...]) -> bool:
+    """Whether the view has the tool: coverage only for rings round an object."""
+    return view.key in keys and (tool != "coverage" or view.rings)

@@ -169,6 +169,26 @@ def test_run_with_quality(
     out = capsys.readouterr().out
     assert "quality: Fast" in out and "Dense point cloud: full size photos" in out
 
+    # A scene: stored like the quality; --matching picks the pairs by hand.
+    assert (
+        main(["run", scan, "--subject", "scene", "--matching", "sequential", "--export", "none"])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Subject: Room or outdoor scene" in out
+    log = (Path(scan) / "stages" / "matching" / "log.txt").read_text()
+    assert "sequential_matcher" in log
+    assert main(["status", scan]) == 0
+    assert "subject: room or outdoor scene" in capsys.readouterr().out
+
+
+def test_new_scene(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize import subject
+    from ez2digitize.core.project import Project
+
+    assert main(["new", str(tmp_path / "room"), "--scene"]) == 0
+    assert subject.of(Project.open(tmp_path / "room")) == "scene"
+
 
 def test_licenses(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["licenses"]) == 0

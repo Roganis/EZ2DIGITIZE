@@ -181,3 +181,44 @@ scene writes both files; other datasets (DTU scans, rendered Google Scanned
 Objects) need a small converter each. Reconstruction far outside the
 ground truth's bounding box (background, turntable) is reported but left
 out of accuracy.
+
+## Regression check
+
+Reconstruction isn't deterministic, so a new COLMAP, OpenMVS or Brush (or
+a change to how the app drives them) is checked against tolerances, not
+byte for byte. On the reference machine, run the Phase 1 plans once with
+the versions you trust and keep the result as the reference:
+
+```sh
+uv run --group feasibility tools/feasibility/bench.py run plans/skull.toml
+uv run --group feasibility tools/feasibility/bench.py regress save ~/ez2d-reference
+```
+
+`regress save` keeps the metrics of every finished run, and each OpenMVS
+run's mesh (geometry only, binary PLY) with the cameras it was built
+from, in the reference folder. After the change, run the same plans into
+another results folder (`--results`, or `--force`) and check:
+
+```sh
+uv run --group feasibility tools/feasibility/bench.py regress check ~/ez2d-reference \
+    --results ~/ez2d-feasibility-new --out regress.md
+```
+
+Every reference run must finish again, and stay within the tolerances in
+`reference.json` (edit them there for a dataset that varies more):
+
+| Check | Fails when |
+| ----- | ---------- |
+| registered photos | more than 5% fewer (at least one photo) |
+| reprojection error | above reference × 1.2 + 0.1 px |
+| sparse points | 25% fewer |
+| models | more of them: the photos split |
+| mesh, refined, textured faces | 25% more or fewer |
+| mesh | Chamfer distance to the reference mesh over 1%, or a side of its bounding box over 5% off, of the reference's diagonal (aligned by the cameras, then ICP, as in `eval`) |
+| splat PSNR | 0.5 dB lower on the evaluation views |
+| time | 1.5 × slower: a warning only |
+
+The exit code is 1 if anything failed, 2 if the two can't be compared.
+Runs not in the reference are listed and not checked. With results from
+several machines, `--machine` picks one; compare runs from the machine the
+reference was made on.

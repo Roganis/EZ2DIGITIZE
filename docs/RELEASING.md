@@ -48,6 +48,10 @@ notes <v>` prints them).
    added since the last release?). After a Brush pin bump, regenerate the
    notices of the crates inside it (`tools/packaging/brush_notices.py`):
    the package builds refuse notices made for another Brush.
+   After a backend bump, and before a release that changes how the app
+   drives the backends, run the Phase 1 plans on the reference machine and
+   `bench.py regress check` them against the saved reference (see
+   tools/feasibility/README.md): it must pass.
 2. On a branch, set the version and date the changelog:
 
    ```sh

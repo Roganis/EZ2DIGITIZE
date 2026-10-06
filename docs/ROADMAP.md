@@ -459,7 +459,12 @@ fails, they can see which stage failed and why.
   self-hosted runner):** the Phase 1 datasets, checked for completion, mesh
   metrics against reference (bounding box, Chamfer distance to a reference
   mesh), splat PSNR on held-out views within tolerance. Run before each
-  release and each backend version bump.
+  release and each backend version bump. The check is done:
+  `bench.py regress save` keeps a results folder as the reference (metrics,
+  and each mesh with its cameras), `bench.py regress check` compares new
+  results with it, aligning the meshes by their cameras, and fails outside
+  the tolerances (see tools/feasibility/README.md). The reference itself
+  waits for the Phase 1 datasets on the reference machines.
 - **Scale accuracy:** measure a known object with calipers and check the
   scaled mesh against it.
 - **Human review:** reference screenshots per dataset, compared by a person

@@ -31,7 +31,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 # Behaviour is steered through environment variables the fakes read:
 # FAKE_FAIL=<command> makes that command exit 1, FAKE_MODELS="30,2" sets the
-# registered images per model, FAKE_SLEEP=<command> makes it hang.
+# registered images per model ("none": no model; Windows drops empty variables),
+# FAKE_SLEEP=<command> makes it hang.
 FAKE_COLMAP = """
 import os, struct, sys, time
 from pathlib import Path
@@ -49,7 +50,7 @@ if cmd == "feature_extractor":
     print("Processed file [1/1]")
 elif cmd in ("mapper", "global_mapper"):
     names = Path(opt("--database_path")).read_text().split()
-    for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").split(",")):
+    for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").replace("none", "").split(",")):
         if not n:
             continue
         model = Path(opt("--output_path")) / str(i)

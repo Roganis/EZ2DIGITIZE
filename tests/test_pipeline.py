@@ -142,7 +142,7 @@ def test_best_of_several_models_and_notices(
 
 
 def test_no_model(project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FAKE_MODELS", "")
+    monkeypatch.setenv("FAKE_MODELS", "none")
     with pytest.raises(PipelineError, match="could not reconstruct any cameras"):
         pipeline.run_sparse(project, tools)
 

@@ -18,8 +18,12 @@ def python_script(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
         launcher = path if path.suffix == ".cmd" else path.with_name(path.name + ".cmd")
-        # "exit /b" without a number keeps Python's exit code.
-        launcher.write_text(f'@"{sys.executable}" -x "%~f0" %* & exit /b\n{body}')
+        # cmd must stop before the Python lines, passing Python's exit code on:
+        # "exit /b" alone would end with 0, and %errorlevel% is read when the
+        # line is parsed, so "call" reads it again after Python ran.
+        launcher.write_text(
+            f'@"{sys.executable}" -x "%~f0" %* & call exit /b %%errorlevel%%\n{body}'
+        )
         return launcher
     path.write_text(f"#!{sys.executable}\n{body}")
     path.chmod(0o755)

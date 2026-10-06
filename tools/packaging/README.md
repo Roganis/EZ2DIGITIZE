@@ -89,3 +89,31 @@ xattr -dr com.apple.quarantine EZ2DIGITIZE.app
 
 Not done yet: notarization, AppStream metadata, and the viewer's
 QtWebEngine (about +140 MB, see the spike).
+
+## Windows app (community-tested)
+
+```sh
+uv run --group packaging python tools/packaging/build_windows.py \
+    --backends build/backends/ez2d-backends-windows-x86_64.tar.gz \
+    --brush build/brush --smoke build/synthetic/images
+```
+
+A portable zip, nothing to install: unzip, run `EZ2DIGITIZE.exe`. One
+PyInstaller onedir (from a spec the script writes) holds two programs over
+the same files: `EZ2DIGITIZE.exe`, the GUI, without a console window, and
+`ez2d.exe`, the CLI (`ez2d check`, `ez2d run ...`), a console program, since
+a windowed program can't print to the terminal it was started from. The
+backends (built by `tools/backends/build.sh` with MSVC: static, plus
+`vcomp140.dll`) go into `_internal/backends`, Brush's `brush_app.exe` (which
+needs only Windows' own DLLs) next to them. Backends run with
+`CREATE_NO_WINDOW`, so the GUI shows no console windows. The icon is drawn
+from the SVG by Qt at build time.
+
+The [Windows app workflow](../../.github/workflows/windows-app.yml) builds
+it on `windows-latest` and runs the AppImage's smoke test through
+`ez2d.exe`; `EZ2DIGITIZE.exe --self-test` has no console, so for it only its
+exit code counts (1 if the window, HEIC decoding or the viewer failed).
+
+Not code-signed (Phase 6): SmartScreen warns on the first start ("More
+info", then "Run anyway"). No installer yet. Windows has no maintainer
+hardware: CI is its only test until community testers report.

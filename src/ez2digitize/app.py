@@ -37,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     window.show()
     if self_test:
         # For packaging checks: the window came up, and the viewer's page
-        # loads (QtWebEngine starts in the bundle); report and quit.
+        # loads (QtWebEngine starts in the bundle); report and quit, with exit
+        # code 1 if any of it failed (all a program without a console can say).
         info: dict[str, object] = {
             "self-test": "gui",
             "version": __version__,
@@ -48,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
 
         def report() -> None:
             print(json.dumps(info), flush=True)
-            app.quit()
+            app.exit(0 if all(info[k] for k in ("visible", "heif", "viewer")) else 1)
 
         if viewer.usable():
             scratch = QTemporaryDir()
@@ -57,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             def page_ready(event: dict[str, object]) -> None:
                 info["viewer"] = True  # the page loaded; drawing needs WebGL too
                 info["webgl"] = event.get("gpu") if event.get("webgl") else False
-                report()
+                QTimer.singleShot(0, report)  # not from inside the page's callback
 
             probe.ready.connect(page_ready)
             QTimer.singleShot(60_000, report)

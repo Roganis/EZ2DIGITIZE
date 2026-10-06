@@ -422,6 +422,8 @@ def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
                 errors="replace",
                 timeout=timeout_s,
                 check=False,
+                # From the windowed app, a console tool would flash a window.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
     except subprocess.TimeoutExpired as exc:
         raise ProcessStartError(f"{args[0]} did not answer within {timeout_s:.0f} s") from exc

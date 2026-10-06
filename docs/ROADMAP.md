@@ -66,7 +66,8 @@ Phases are ordered by dependency. No durations are given on purpose.
 - Stack: Python 3.12+ with PySide6 (LGPL-3.0, compatible with GPL-3.0),
   managed with `uv` and a lockfile. Ruff, pyright or mypy, pytest, pytest-qt.
 - CI (GitHub Actions): lint, type check, unit tests on Linux and macOS
-  (Windows added later, as build-only).
+  (Windows added later, as build-only: since October 2026 the suite runs
+  there too).
 - Process runner design: `QProcess` or asyncio subprocesses off the GUI
   thread; cancel kills the whole process group.
 
@@ -330,7 +331,8 @@ fails, they can see which stage failed and why.
 ## Phase 6: Packaging and release
 
 - Release builds: Linux AppImage (primary), macOS `.app` (secondary),
-  Windows installer (community-tested).
+  Windows installer (community-tested). A portable Windows zip is built in
+  CI (Windows app workflow); the installer comes later.
 - Backend binaries bundled or auto-downloaded with SHA-256 checksums and
   pinned versions; source tarballs for every GPL/AGPL binary published with
   each release. Bundled (AppImage, macOS app); the source archive is built

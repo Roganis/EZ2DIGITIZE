@@ -161,6 +161,7 @@ def test_import_records_the_motion_track(
         "gravity": "accelerometer",
         "gravity_samples": 3000,
         "gyro_samples": 3000,
+        "pose_samples": 0,
     }
     frames = [f for f in bundle.files if f.kind == "image"]
     assert all(f.metadata["motion"]["down"] == [0, 1, 0] for f in frames)

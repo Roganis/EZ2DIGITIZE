@@ -78,7 +78,9 @@ The first release.
   network in one pass, on a GPU, under VGGT's own licenses.
 - A MapAnything plugin (tools/plugins/mapanything-poses): cameras placed by
   Meta's MapAnything in one pass, on a GPU, helped by the photos' EXIF focal
-  length, with Apache-2.0 weights (or non-commercial ones).
+  length and by the camera poses a phone's tracking wrote into a video
+  (CAMM), with Apache-2.0 weights (or non-commercial ones).
+- Camera placement plugins get the known camera poses (`{priors}`).
 
 ### Packages
 

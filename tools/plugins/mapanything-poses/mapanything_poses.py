@@ -5,7 +5,9 @@
 All photos go through MapAnything at once: it predicts every camera and a
 depth map per photo in one pass, with no feature matching. Unlike VGGT it
 also takes what is already known: here each photo's focal length from EXIF,
-when every photo has one (settings.json can turn that off). feedforward_colmap
+when every photo has one (settings.json can turn that off), and the camera
+poses a video's motion track recorded, when every photo has one from the
+same recording (the app's `{priors}` file). feedforward_colmap
 turns the prediction into the COLMAP model the camera placement slot asks
 for.
 
@@ -66,6 +68,7 @@ def main() -> int:
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--image-list", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--priors", type=Path)
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     chosen = settings(here)
@@ -92,6 +95,11 @@ def main() -> int:
     use_focal = chosen.get("exif_focal", True) and all(p.focal for p in photos)
     if chosen.get("exif_focal", True) and not use_focal:
         print("not every photo has a focal length in EXIF: MapAnything estimates it", flush=True)
+    poses, why = mapanything_inputs.known_poses(args.priors, names) if args.priors else (None, "")
+    if poses is not None:
+        print(f"giving MapAnything the {why} (their scale left to it)", flush=True)
+    elif why:
+        print(f"not giving MapAnything poses: {why}", flush=True)
     views = []
     for i, photo in enumerate(photos):
         pixels = torch.from_numpy(photo.pixels).permute(2, 0, 1).float() / 255
@@ -106,6 +114,11 @@ def main() -> int:
             place = photo.placement
             k = place.input_intrinsics(photo.focal, photo.focal, place.width / 2, place.height / 2)
             view["intrinsics"] = torch.from_numpy(k).float()[None]
+        if poses is not None:
+            # OpenCV axes, camera to world, as MapAnything takes them; the
+            # recording app's unit isn't guaranteed, so MapAnything sets the scale.
+            view["camera_poses"] = torch.from_numpy(poses[i]).float()[None]
+            view["is_metric_scale"] = torch.tensor([False])
         views.append(view)
 
     step(3, f"predicting cameras and depth at {size[0]} x {size[1]}")

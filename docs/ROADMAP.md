@@ -516,7 +516,13 @@ fails, they can see which stage failed and why.
   score also rises with how busy the frame is. On GoPro's samples that
   overrules sharpness in 5 of 40 windows on the HERO5 clip, 2 on the
   HERO6 (where the gyroscope's pick is visibly crisper) and none on the
-  HERO7. Not done yet: a real CAMM file (none at hand; the tests build them
+  HERO7. Known poses reach camera placement plugins too: CAMM's 6DoF
+  samples (orientation and position, as ARCore-tracking apps write them)
+  give each frame a pose in capture.json, the app hands plugins a
+  `{priors}` file of them (docs/PLUGINS.md), and the MapAnything plugin
+  passes them as `camera_poses` (not metric: CAMM leaves the unit to the
+  app) when every photo has one from the same video. Not done yet: a real
+  CAMM file (none at hand; the tests build them
   from the specification), and GoPro's in-camera stabilisation (HyperSmooth turns
   the image against the body, so the accelerometer's gravity is off by
   that turn; the MAX's and HERO8's fused gravity vector, used when

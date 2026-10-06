@@ -28,6 +28,8 @@ app and `ez2d`.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -42,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast, get_args
 
+from ez2digitize import motion
 from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.common import BackendError, executable, find_tool
 from ez2digitize.core.capture import CaptureBundle
@@ -77,11 +80,12 @@ BUILT_IN: dict[Slot, str] = {"poses": "COLMAP", "splats": "Brush"}
 # What each slot's command may use, besides {plugin}, {output}, {threads} and
 # {colmap} (the COLMAP the app uses: bundled, or set in its settings).
 PLACEHOLDERS: dict[Slot, frozenset[str]] = {
-    "poses": frozenset({"captures", "image_list", "masks"}),
+    "poses": frozenset({"captures", "image_list", "masks", "priors"}),
     "splats": frozenset({"dataset", "steps", "max_resolution", "max_splats", "sh_degree"}),
 }
 COMMON_PLACEHOLDERS = frozenset({"plugin", "output", "threads", "colmap"})
 IMAGE_LIST = "image_list.txt"
+PRIORS = "priors.json"
 MASKS_DIR = "masks"
 PLATFORMS = {"linux": "linux", "macos": "darwin", "windows": "win32"}
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -519,6 +523,7 @@ def pose_stage(
     It gets the photos as COLMAP would: `{captures}` and the names in
     `{image_list}` (`<capture id>/IMG_0001.jpg`), and with `with_masks`, a
     mask for every photo in `{masks}/<name>.png` (black: leave out).
+    `{priors}` is what is already known of the cameras (`pose_priors`).
     """
     stage_dir = project.stage_dir(stage)
     names = colmap.image_names(bundles)
@@ -528,21 +533,45 @@ def pose_stage(
         "captures": str(project.captures_dir),
         "image_list": str(stage_dir / IMAGE_LIST),
         "masks": str(stage_dir / MASKS_DIR),
+        "priors": str(stage_dir / PRIORS),
     }
     argv = _argv(plugin, plugin.command, stage_dir, values)
     if masked:
         argv += _expand(plugin.with_masks, plugin, stage_dir, values)
-    inputs = {"captures": fingerprint([capture_input(b) for b in bundles])}
+    priors = json.dumps(pose_priors(bundles, names), indent=1, sort_keys=True) + "\n"
+    inputs = {
+        "captures": fingerprint([capture_input(b) for b in bundles]),
+        "priors": hashlib.sha256(priors.encode()).hexdigest(),
+    }
     if masked and masks is not None:
         inputs["masks"] = tree_input(masks)
 
     def prepare(folder: Path) -> None:
         (folder / "sparse").mkdir()
         (folder / IMAGE_LIST).write_text("\n".join(names) + "\n", encoding="utf-8")
+        (folder / PRIORS).write_text(priors, encoding="utf-8")
         if masked and masks is not None:
             colmap.stage_masks(project, masks, names, folder / MASKS_DIR)
 
     return _spec(plugin, stage, argv, inputs, {"masked": masked}, prepare)
+
+
+def pose_priors(bundles: Sequence[CaptureBundle], names: Sequence[str]) -> dict[str, Any]:
+    """What `{priors}` holds: the known camera poses of the photos in `names`.
+
+    `{"version": 1, "images": {name: {"camera_to_world": 3 x 4 rows,
+    "frame": capture id, "metric": false}}}`, OpenCV camera axes (x right,
+    y down, z forward). Poses come from a video's 6DoF motion track (see
+    motion.known_poses); each capture's are in its own world (`frame`), and
+    their unit isn't guaranteed (`metric`).
+    """
+    known = motion.known_poses(bundles)
+    images = {}
+    for name in names:
+        if name in known:
+            frame, rows = known[name]
+            images[name] = {"camera_to_world": rows, "frame": frame, "metric": False}
+    return {"version": 1, "images": images}
 
 
 def splat_stage(

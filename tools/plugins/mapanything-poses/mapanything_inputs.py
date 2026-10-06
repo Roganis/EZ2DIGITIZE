@@ -14,6 +14,7 @@ does (feedforward_colmap.Placement.cover).
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,3 +70,29 @@ def prepare(path: Path, size: tuple[int, int]) -> Photo:
     placement = Placement.cover(rgb.size, size)
     resized = rgb.resize(size, Image.Resampling.LANCZOS, box=placement.source_box(size))
     return Photo(np.array(resized, dtype=np.uint8), placement, focal)  # writable, for torch
+
+
+def known_poses(priors: Path, names: list[str]) -> tuple[list[NDArray[np.float64]] | None, str]:
+    """Camera to world (4 x 4) for every photo from the app's priors, or None and why.
+
+    MapAnything takes poses for all views in one world, so they are used
+    only when every photo has one and all come from the same recording
+    (`frame`): a video whose motion track has 6DoF poses.
+    """
+    try:
+        images = json.loads(priors.read_text(encoding="utf-8")).get("images", {})
+    except (OSError, ValueError, AttributeError):
+        return None, "no priors file"
+    if not images:
+        return None, "no known poses"
+    missing = [name for name in names if name not in images]
+    if missing:
+        return None, f"{len(missing)} of {len(names)} photos have no known pose"
+    if len({images[name].get("frame") for name in names}) > 1:
+        return None, "the known poses come from separate recordings"
+    poses = []
+    for name in names:
+        pose = np.eye(4)
+        pose[:3, :] = np.array(images[name]["camera_to_world"], dtype=np.float64)
+        poses.append(pose)
+    return poses, f"known poses for all {len(names)} photos"

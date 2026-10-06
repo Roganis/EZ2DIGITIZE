@@ -115,6 +115,7 @@ a brace):
 | poses: `{captures}`   | the project's `captures/` folder                          |
 | poses: `{image_list}` | a file naming one photo per line, relative to `{captures}` |
 | poses: `{masks}`      | (in `with_masks`) a mask per photo                         |
+| poses: `{priors}`     | a JSON file of what is known of the cameras (see below)    |
 | splats: `{dataset}`   | the COLMAP dataset to train on                             |
 | splats: `{steps}`, `{max_resolution}`, `{max_splats}`, `{sh_degree}` | the quality preset's values (Brush's meaning) |
 
@@ -129,6 +130,21 @@ This step replaces COLMAP's features, matching and mapping. It runs as the
   With `with_masks` and a masked project, `{masks}/<name>.png` is a mask
   of the photo's size for every photo. White is the object, black is to
   be ignored.
+- **Known poses:** `{priors}` is a JSON file of the camera poses already
+  known, from a video whose motion track records them (CAMM's 6DoF samples,
+  written by ARCore-style tracking apps):
+
+  ```json
+  {"version": 1, "images": {"<capture id>/frame_0001.jpg": {
+    "camera_to_world": [[r, r, r, x], [r, r, r, y], [r, r, r, z]],
+    "frame": "<capture id>", "metric": false}}}
+  ```
+
+  OpenCV camera axes (x right, y down, z forward), camera to world, the
+  last column the camera centre. Poses with different `frame`s are in
+  different worlds (each recording has its own) and can't be mixed;
+  `metric` false means the unit isn't guaranteed. Photos without a known
+  pose are absent, and the file is written (with no images) for every run.
 - **Out:** a binary COLMAP model in `{output}/sparse/0`: `cameras.bin`,
   `images.bin` and `points3D.bin` (the points may be few, but the file must
   exist). Name each image exactly as in the list. If the photos fall into

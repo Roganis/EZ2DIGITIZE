@@ -14,6 +14,12 @@ How it differs from the VGGT plugin:
   focal length from EXIF (the 35 mm equivalent phones and cameras write)
   when every photo has one. Video frames have none, so then MapAnything
   estimates it, as VGGT always does.
+- **It can start from known camera poses.** A video recorded by an app that
+  tracks the phone (ARCore) and writes the poses into the video (Google's
+  CAMM track, with orientation and position) gives every frame a pose. The
+  plugin passes them to MapAnything when every photo has one from the same
+  video, leaving the scale to MapAnything since the format doesn't promise
+  metres.
 - **Weights for commercial use with no access request.** The code is under
   Apache-2.0, and so are the `map-anything-apache` weights, trained on data
   that allows commercial use.

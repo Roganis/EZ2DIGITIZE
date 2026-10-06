@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Camera placement with MapAnything (Meta, 2025): every camera predicted in
-# one pass, no feature matching, using the photos' focal lengths from EXIF.
+# one pass, no feature matching, using the photos' focal lengths from EXIF
+# and the poses a video's motion track recorded, when there are any.
 # Install it, then run install_mapanything.py in its folder once (README.md).
 api = 1
 id = "mapanything-poses"
@@ -16,6 +17,7 @@ command = [
     "--images", "{captures}",
     "--image-list", "{image_list}",
     "--output", "{output}",
+    "--priors", "{priors}",
 ]
 gpu = true
 

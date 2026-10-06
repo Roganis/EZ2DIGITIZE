@@ -220,3 +220,51 @@ def test_tremor_adds_little() -> None:
 
 def _scaled(v: Vector, k: float) -> Vector:
     return (v[0] * k, v[1] * k, v[2] * k)
+
+
+def test_camm_poses(tmp_path: Path) -> None:
+    """Orientation (type 0) and position (type 4) samples: a 6DoF pose per frame."""
+    angle = math.radians(30)
+    samples = []
+    for i in range(100):  # 10 ms apart: the camera moving along world x
+        samples += [camm(0, angle, 0.0, 0.0), camm(4, 0.01 * i, 0.0, 2.0)]
+    path = tmp_path / "VID_0004.mp4"
+    _camm_file(path, samples)
+    track = read_motion(path)
+    assert track is not None and track.summary()["pose_samples"] == 100
+    pose = track.pose_at(0.5)
+    assert pose is not None
+    rotation, centre = pose
+    assert centre == pytest.approx((0.25, 0.0, 2.0), abs=0.011)
+    c, s_ = math.cos(angle), math.sin(angle)
+    assert [list(row) for row in rotation] == [
+        pytest.approx(row) for row in ([1, 0, 0], [0, c, -s_], [0, s_, c])
+    ]
+    entry = motion.frame_motion(track, 0.5)
+    assert len(entry["camera_to_world"]) == 3 and entry["camera_to_world"][0][3] == pytest.approx(
+        centre[0]
+    )
+    assert track.pose_at(30.0) is None  # past the end
+    # Orientation alone (3DoF): no pose.
+    _camm_file(path, [camm(0, angle, 0.0, 0.0)] * 50)
+    track = read_motion(path)
+    assert track is not None and track.pose_at(0.2) is None
+
+
+def test_poses_follow_the_display_rotation(tmp_path: Path) -> None:
+    path = tmp_path / "VID_0005.mp4"
+    _camm_file(path, [camm(0, 0.3, -0.2, 0.5), camm(4, 1.0, 2.0, 3.0)] * 50)
+    stored, shown = read_motion(path), read_motion(path, rotation_deg=-90)
+    assert stored is not None and shown is not None
+    stored_pose, shown_pose = stored.pose_at(0.2), shown.pose_at(0.2)
+    assert stored_pose is not None and shown_pose is not None
+
+    # A direction seen to the right in the stored pixels is seen down once turned:
+    # both poses must send it to the same direction in the world.
+    def apply(m: motion.Matrix, v: Vector) -> list[float]:
+        return [sum(m[i][k] * v[k] for k in range(3)) for i in range(3)]
+
+    assert apply(shown_pose[0], (0.0, 1.0, 0.0)) == pytest.approx(
+        apply(stored_pose[0], (1.0, 0.0, 0.0))
+    )
+    assert shown_pose[1] == stored_pose[1]

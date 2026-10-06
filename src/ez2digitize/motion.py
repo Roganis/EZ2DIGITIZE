@@ -11,7 +11,10 @@ frame it keeps:
 - `down`: the direction of gravity, averaged over a short window, so the
   upright direction is measured rather than guessed from how the camera
   was held (ez2digitize.orientation);
-- `turn_deg_s`: how fast the camera was turning.
+- `turn_deg_s`: how fast the camera was turning;
+- `camera_to_world`: the camera's pose (3 x 4), where the video has CAMM's
+  6DoF samples (orientation and position, from ARCore-style tracking), for
+  camera placement plugins that can start from known poses.
 
 Formats, both documented by their makers and read here without their
 libraries (standard library only):
@@ -45,6 +48,7 @@ from ez2digitize.core.capture import CaptureBundle
 from ez2digitize.core.mp4 import Mp4Error, Track, read_samples, read_tracks
 
 Vector = tuple[float, float, float]
+Matrix = tuple[Vector, Vector, Vector]
 
 # A video frame's capture.json entry: {"down": [x, y, z], "turn_deg_s": n}.
 MOTION_KEY = "motion"
@@ -221,6 +225,7 @@ def read_camm(path: Path, track: Track) -> MotionTrack:
     motion = MotionTrack(CAMM_FORMAT)
     oriented: list[tuple[float, Vector]] = []
     accel_down: list[tuple[float, Vector]] = []
+    positions: list[tuple[float, Vector]] = []
     for sample, data in read_samples(path, track):
         if len(data) < 4:
             continue
@@ -230,13 +235,20 @@ def read_camm(path: Path, track: Track) -> MotionTrack:
         t = sample.time_s
         if kind == 0:  # camera to world, world Y down along gravity
             axis_angle = struct.unpack_from("<3f", data, 4)
-            oriented.append((t, _mul_transposed(_rodrigues(axis_angle), (0.0, 1.0, 0.0))))
+            rotation = _rodrigues(axis_angle)
+            oriented.append((t, _mul_transposed(rotation, (0.0, 1.0, 0.0))))
+            motion.orientations.append((t, rotation))
+        elif kind == 4:  # with the orientations, a 6DoF pose (ARCore and the like)
+            px, py, pz = struct.unpack_from("<3f", data, 4)
+            positions.append((t, (px, py, pz)))
         elif kind == 2:
             gx, gy, gz = struct.unpack_from("<3f", data, 4)
             motion.gyro.append((t, (gx, gy, gz)))
         elif kind == 3:  # the push against gravity, as phones measure it
             a = struct.unpack_from("<3f", data, 4)
             accel_down.append((t, (-a[0], -a[1], -a[2])))
+    if motion.orientations:
+        motion.positions = positions
     if oriented:
         motion.down, motion.gravity = oriented, "orientation"
     elif accel_down:
@@ -253,6 +265,8 @@ FUSED_WINDOW_S = 0.2
 TURN_WINDOW_S = 0.1
 # The step the angle travelled is measured in (see MotionTrack.angle_travelled).
 PATH_STEP_S = 0.2
+# A frame's pose is the nearest 6DoF sample, if one is this close.
+POSE_GAP_S = 0.1
 
 
 @dataclass
@@ -262,13 +276,36 @@ class MotionTrack:
     gravity: str = ""  # what down comes from: "gravity vector", "orientation", "accelerometer"
     down: list[tuple[float, Vector]] = field(default_factory=list)  # (time, camera axes)
     gyro: list[tuple[float, Vector]] = field(default_factory=list)  # (time, rad/s, camera axes)
+    # CAMM's 6DoF poses: camera to world rotations, and camera centres.
+    orientations: list[tuple[float, Matrix]] = field(default_factory=list)
+    positions: list[tuple[float, Vector]] = field(default_factory=list)
 
     def rotated(self, degrees: int) -> MotionTrack:
         """The same, in the axes of the frames turned by `degrees` clockwise."""
         turn_matrix = _image_turn(degrees)
         down = [(t, _mul(turn_matrix, v)) for t, v in self.down]
         gyro = [(t, _mul(turn_matrix, v)) for t, v in self.gyro]
-        return MotionTrack(self.format, self.device, self.gravity, down, gyro)
+        # Camera to world: a frame vector is turned back to the stored axes first.
+        back = _transpose(turn_matrix)
+        orientations = [(t, _matmul(r, back)) for t, r in self.orientations]
+        return MotionTrack(
+            self.format, self.device, self.gravity, down, gyro, orientations, self.positions
+        )
+
+    def pose_at(self, time_s: float) -> tuple[Matrix, Vector] | None:
+        """Camera to world (rotation, camera centre) at `time_s`, from 6DoF samples.
+
+        The nearest orientation and position within POSE_GAP_S; None without
+        them. The world is the recording app's own (CAMM leaves its origin
+        and unit to the app; ARCore's is in metres), with y down along gravity.
+        """
+        if not self.positions:
+            return None
+        rotation = _nearest(self.orientations, time_s)
+        position = _nearest(self.positions, time_s)
+        if rotation is None or position is None:
+            return None
+        return rotation, position
 
     def down_at(self, time_s: float) -> Vector | None:
         """Gravity's direction (unit) in the camera's axes around `time_s`; None if unknown."""
@@ -330,6 +367,7 @@ class MotionTrack:
             "gravity": self.gravity,
             "gravity_samples": len(self.down),
             "gyro_samples": len(self.gyro),
+            "pose_samples": len(self.positions),
         }
 
 
@@ -368,6 +406,12 @@ def frame_motion(motion: MotionTrack, time_s: float) -> dict[str, Any]:
     turn = motion.turn_at(time_s)
     if turn is not None:
         entry["turn_deg_s"] = round(turn, 2)
+    pose = motion.pose_at(time_s)
+    if pose is not None:
+        rotation, centre = pose
+        entry["camera_to_world"] = [
+            [round(c, 7) for c in (*row, centre[i])] for i, row in enumerate(rotation)
+        ]
     return entry
 
 
@@ -402,6 +446,35 @@ def measured_downs(bundles: Iterable[CaptureBundle]) -> dict[str, Vector]:
             ):
                 found[f"{bundle.id}/{file.name}"] = (float(down[0]), float(down[1]), float(down[2]))
     return found
+
+
+def known_poses(bundles: Iterable[CaptureBundle]) -> dict[str, tuple[str, list[list[float]]]]:
+    """Camera to world (3 x 4) by COLMAP image name, with the capture it is relative to.
+
+    Each capture's poses are in its own recording's world, so poses from
+    different captures can't be mixed.
+    """
+    found = {}
+    for bundle in bundles:
+        for file in bundle.used:
+            entry = file.metadata.get(MOTION_KEY)
+            pose = entry.get("camera_to_world") if isinstance(entry, dict) else None
+            if (
+                isinstance(pose, list)
+                and len(pose) == 3
+                and all(isinstance(row, list) and len(row) == 4 for row in pose)
+                and all(isinstance(c, int | float) for row in pose for c in row)
+            ):
+                rows = [[float(c) for c in row] for row in pose]
+                found[f"{bundle.id}/{file.name}"] = (bundle.id, rows)
+    return found
+
+
+def _nearest(samples: list[tuple[float, Any]], time_s: float) -> Any:
+    near = _between(samples, time_s, 2 * POSE_GAP_S)
+    if not near:
+        return None
+    return min(near, key=lambda s: abs(s[0] - time_s))[1]
 
 
 def _between(
@@ -470,6 +543,23 @@ def _rodrigues(axis_angle: Sequence[float]) -> tuple[Vector, Vector, Vector]:
         (t * x * x + c, t * x * y - s * z, t * x * z + s * y),
         (t * x * y + s * z, t * y * y + c, t * y * z - s * x),
         (t * x * z - s * y, t * y * z + s * x, t * z * z + c),
+    )
+
+
+def _transpose(m: Matrix) -> Matrix:
+    return (
+        (m[0][0], m[1][0], m[2][0]),
+        (m[0][1], m[1][1], m[2][1]),
+        (m[0][2], m[1][2], m[2][2]),
+    )
+
+
+def _matmul(a: Matrix, b: Matrix) -> Matrix:
+    rows = [tuple(sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)) for i in range(3)]
+    return (
+        (rows[0][0], rows[0][1], rows[0][2]),
+        (rows[1][0], rows[1][1], rows[1][2]),
+        (rows[2][0], rows[2][1], rows[2][2]),
     )
 
 

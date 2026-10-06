@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Plugins: the manifest, installing, licenses, and running in the pipeline."""
 
+import json
 import shutil
 import stat
 import sys
@@ -290,6 +291,36 @@ def test_camera_placement_plugin(project: Project, fake_tools: Tools, tmp_path: 
     log = (project.stage_dir("mapping") / "log.txt").read_text()
     names = " ".join(f"{bundle.id}/{n}.jpg.png" for n in "abc")
     assert f"masks: {names}" in log
+
+
+def test_pose_priors(project: Project, fake_tools: Tools, tmp_path: Path) -> None:
+    """Poses a video's motion track recorded reach the plugin in {priors}."""
+    bundle = list_bundles(project)[0]
+    pose = [[1.0, 0.0, 0.0, 0.5], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 2.0]]
+    for file in bundle.files[:2]:
+        file.metadata["motion"] = {"down": [0, 1, 0], "camera_to_world": pose}
+    bundle.save()
+    names = [f"{bundle.id}/{n}" for n in ("a.jpg", "b.jpg", "c.jpg")]
+    priors = plugins.pose_priors(list_bundles(project), names)
+    assert priors == {
+        "version": 1,
+        "images": {
+            name: {"camera_to_world": pose, "frame": bundle.id, "metric": False}
+            for name in names[:2]
+        },
+    }
+    source = make_plugin(
+        tmp_path / "src" / "poses-test",
+        provides="poses",
+        script=FAKE_POSES,
+        command=[*POSES_COMMAND, "{priors}"],
+    )
+    plugin = _use(source)
+    pipeline.run_mesh(project, replace(fake_tools, poses=plugin))
+    written = json.loads((project.stage_dir("mapping") / "priors.json").read_text())
+    assert written == priors
+    log = (project.stage_dir("mapping") / "log.txt").read_text()
+    assert "priors.json" in log  # in the command line
 
 
 def test_camera_placement_plugin_without_masks_says_so(

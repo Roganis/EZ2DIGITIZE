@@ -7,6 +7,7 @@ the focal length from EXIF), and its copy of feedforward_colmap, which
 tests/test_vggt_plugin.py tests.
 """
 
+import json
 import math
 from pathlib import Path
 
@@ -83,3 +84,31 @@ def test_photos_are_read_as_stored_then_scaled_and_cropped(tmp_path: Path) -> No
     x, y = photo.placement.to_photo(u, v)
     assert np.abs(photo.pixels[..., 0] - 255 * x / 300).max() < 4
     assert np.abs(photo.pixels[..., 1] - 255 * y / 400).max() < 4
+
+
+def test_known_poses(tmp_path: Path) -> None:
+    """Poses go to MapAnything only when every photo has one, from one recording."""
+    priors = tmp_path / "priors.json"
+    names = ["v/frame_0001.jpg", "v/frame_0002.jpg"]
+    pose = [[1.0, 0.0, 0.0, 0.5], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 2.0]]
+
+    def write(images: dict[str, dict[str, object]]) -> None:
+        priors.write_text(json.dumps({"version": 1, "images": images}))
+
+    write({n: {"camera_to_world": pose, "frame": "v", "metric": False} for n in names})
+    poses, why = mapanything_inputs.known_poses(priors, names)
+    assert poses is not None and why == "known poses for all 2 photos"
+    assert poses[1][:3, 3].tolist() == [0.5, 0.0, 2.0] and poses[1][3].tolist() == [0, 0, 0, 1]
+
+    write({names[0]: {"camera_to_world": pose, "frame": "v", "metric": False}})
+    assert mapanything_inputs.known_poses(priors, names) == (
+        None,
+        "1 of 2 photos have no known pose",
+    )
+    write({n: {"camera_to_world": pose, "frame": n[-5], "metric": False} for n in names})
+    assert mapanything_inputs.known_poses(priors, names)[1] == (
+        "the known poses come from separate recordings"
+    )
+    write({})
+    assert mapanything_inputs.known_poses(priors, names) == (None, "no known poses")
+    assert mapanything_inputs.known_poses(tmp_path / "none.json", names)[0] is None

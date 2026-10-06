@@ -107,6 +107,21 @@ past that commit.
   the atlas with black blobs and saturated red/green/blue specks (seen on
   the skull turntable set). Fixed upstream in `eeedab7`.
 
+`patches/vcpkg-*.patch` fix ports of the pinned vcpkg release. On Windows,
+`build.sh` and `collect_sources.sh` copy the ports they touch, apply them
+and use the copies as overlay ports (`prepare_vcpkg_overlays` in
+`pins.sh`; `BUILDINFO.json` lists them as `vcpkg_overlay_ports`). Drop a
+patch when the vcpkg pin moves past the upstream fix.
+
+- `vcpkg-2026.07.29-gmp-autoconf.patch`: the gmp port builds on Windows
+  with MSYS2's autoconf 2.71, pinned as package 2.71-3, which MSYS2 has
+  since replaced with 2.71-4 and deleted from every mirror. Upstream vcpkg
+  made the same change after the release.
+
+Some sources are also fetched from mirrors.kernel.org before vcpkg asks
+for them (`MIRRORED_SOURCES` in `pins.sh`: GMP, MPFR, automake), checked
+against the ports' SHA512: GNU's own servers often time out from CI.
+
 ## What is turned off, and why
 
 - **CUDA, HIP, GUI, OpenGL** (COLMAP) and **CUDA, viewer, Python**

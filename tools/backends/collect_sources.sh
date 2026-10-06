@@ -45,6 +45,7 @@ mkdir -p "$VCPKG_DOWNLOADS" "$X_VCPKG_REGISTRIES_CACHE"
 log "vcpkg $VCPKG_VERSION"
 fetch_vcpkg vcpkg
 prefetch_sources "$VCPKG_DOWNLOADS"
+[ "$OS" = windows ] && prepare_vcpkg_overlays vcpkg "$REPO" "$WORK/vcpkg-overlays"
 log "COLMAP $COLMAP_VERSION"
 fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
 [ "$OS" = windows ] && prepare_colmap colmap
@@ -110,7 +111,9 @@ OpenMVS  $OPENMVS_VERSION  openmvs-$OPENMVS_VERSION/    ($OPENMVS_URL)
          on Windows, prepare_colmap adds GLEW to COLMAP's manifest)
 vcpkg    $VCPKG_VERSION    vcpkg-$VCPKG_VERSION/        ($VCPKG_URL)
          COLMAP's manifest pins its own baseline; the port scripts of those
-         versions are in vcpkg-versioned-ports/
+         versions are in vcpkg-versioned-ports/. On Windows, the ports that
+         ez2digitize-backends/patches/vcpkg-*.patch fixes are used patched
+         (pins.sh, prepare_vcpkg_overlays)
 Dependencies: downloads/ holds each port's source archive as vcpkg
 downloaded it. The license of every library is in the app, under
 backends/licenses/.

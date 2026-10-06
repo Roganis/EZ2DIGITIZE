@@ -56,6 +56,7 @@ fetch_vcpkg() {  # fetch_vcpkg <dir>: the vcpkg release, with history for baseli
 MIRRORED_SOURCES=(
   "gmp-6.3.0.tar.xz https://mirrors.kernel.org/gnu/gmp/gmp-6.3.0.tar.xz e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df5219538eb003e4b5343f989aaa00f96321559063ed8c8f29fd2"
   "mpfr-4.2.2.tar.xz https://mirrors.kernel.org/gnu/mpfr/mpfr-4.2.2.tar.xz eb9e7f51b5385fb349cc4fba3a45ffdf0dd53be6dfc74932dc01258158a10514667960c530c47dd9dfc5aa18be2bd94859d80499844c5713710581e6ac6259a9"
+  "automake-1.17.tar.gz https://mirrors.kernel.org/gnu/automake/automake-1.17.tar.gz 11357dfab8cbf4b5d94d9d06e475732ca01df82bef1284888a34bd558afc37b1a239bed1b5eb18a9dbcc326344fb7b1b301f77bb8385131eb8e1e118b677883a"
 )
 
 prefetch_sources() {  # prefetch_sources <vcpkg downloads dir>
@@ -77,6 +78,27 @@ prefetch_sources() {  # prefetch_sources <vcpkg downloads dir>
     fi
     rm -f "$1/$name.part"
   done
+}
+
+prepare_vcpkg_overlays() {  # prepare_vcpkg_overlays <vcpkg root> <repo root> <overlay dir>
+  # Fixes to ports of the pinned vcpkg release (see each patch's header): the
+  # ports they touch are copied, patched and used as overlay ports, which win
+  # over the release's version and any manifest baseline's. Sets
+  # VCPKG_OVERLAY_PORTS. The fixes so far concern Windows only.
+  rm -rf "$3"
+  mkdir -p "$3/ports"
+  local patch port
+  for patch in "$2"/tools/backends/patches/vcpkg-*.patch; do
+    [ -e "$patch" ] || continue
+    for port in $(sed -n 's|^+++ b/ports/\([^/]*\)/.*|\1|p' "$patch" | sort -u); do
+      [ -d "$3/ports/$port" ] || cp -R "$1/ports/$port" "$3/ports/$port"
+    done
+    patch -p1 --batch --forward -d "$3" <"$patch"
+  done
+  # vcpkg.exe wants a Windows path; cygpath exists only in Git Bash.
+  VCPKG_OVERLAY_PORTS=$(cygpath -m "$3/ports" 2>/dev/null || echo "$3/ports")
+  export VCPKG_OVERLAY_PORTS
+  echo "overlay ports: $(ls "$3/ports" | tr '\n' ' ')"
 }
 
 # Python for the manifest edits below (Windows has no python3 by that name).

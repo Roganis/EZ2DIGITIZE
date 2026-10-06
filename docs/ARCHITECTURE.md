@@ -289,6 +289,16 @@ for the format.
   photos as COLMAP sees them in, a binary COLMAP model in `sparse/0` out.
   Undistortion and everything after it are unchanged. `splats` is the
   `splat` stage: Brush's dataset in, `splat.ply` out.
+- A `poses` plugin's placement can be refined by COLMAP
+  (`MeshSettings.refine_poses`, `backends.colmap_refine`): the plugin then
+  runs as the `poses` stage, followed by COLMAP's `features`, `matching`
+  of only the pairs its poses suggest (`matches_importer`), `triangulation`
+  with its poses held (`point_triangulator`), `pose-check` (photos with
+  almost no points leave the model, `image_filterer`) and `mapping`
+  (COLMAP's mapper continuing from that model: it places the left-out
+  photos and refines everything). `point_triangulator` checks the model's
+  cameras, rigs and frames against the database's, so the model it starts
+  from is rebuilt from the database with the plugin's poses.
 - The backend in the manifest is `plugin:<id>` with the plugin's version,
   and its build is the program's hash. The manifest file's hash is a
   parameter, since a plugin run as `python3 run.py` has the interpreter as

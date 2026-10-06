@@ -61,7 +61,11 @@ def test_run_mesh_runs_every_stage_in_order(project: Project, tools: Tools) -> N
     result = pipeline.run_mesh(project, tools, on_event=handler)
 
     started = [e for e in events if isinstance(e, StageStarted)]
-    unmasked = [s for s in pipeline.STAGES if s not in ("refine", "mask-undistort")]
+    unmasked = [
+        s
+        for s in pipeline.STAGES
+        if s not in ("refine", "mask-undistort", *pipeline.REFINE_POSE_STAGES)
+    ]
     assert [e.stage for e in started] == unmasked
     assert [(e.index, e.count) for e in started][:2] == [(1, 8), (2, 8)]
     assert result.sparse.registered_images == 3 and result.sparse.total_images == 3
@@ -98,7 +102,9 @@ def test_refine_is_optional(project: Project, tools: Tools) -> None:
     settings = MeshSettings(refine=RefineOptions())
     pipeline.run_mesh(project, tools, settings, on_event=handler)
     stages = [e.stage for e in events if isinstance(e, StageStarted)]
-    assert stages == [s for s in pipeline.STAGES if s != "mask-undistort"]
+    assert stages == [
+        s for s in pipeline.STAGES if s not in ("mask-undistort", *pipeline.REFINE_POSE_STAGES)
+    ]
     texture_cmd = (project.stage_dir("texture") / "log.txt").read_text()
     assert "scene_refined.ply" in texture_cmd
 

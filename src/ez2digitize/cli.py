@@ -393,6 +393,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
     run.add_argument(
+        "--refine-poses",
+        action="store_true",
+        help="with a camera placement plugin: refine its cameras with COLMAP (features, "
+        "matching of the photos its cameras say overlap, refinement at full resolution)",
+    )
+    run.add_argument(
         "--no-align", action="store_true", help="export in the reconstruction's own frame"
     )
     run.add_argument("--threads", type=int, help="limit CPU threads of every tool")
@@ -1312,6 +1318,7 @@ def _settings(
         export_formats=args.export,
         use_masks=settings.use_masks and not args.no_masks,
         align=not args.no_align,
+        refine_poses=args.refine_poses,
     )
 
 

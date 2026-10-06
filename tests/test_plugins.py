@@ -15,6 +15,8 @@ from PIL import Image
 from scripts import FAKE_BRUSH, FAKE_POSES, make_plugin
 
 from ez2digitize import cli, licenses, pipeline, plugins
+from ez2digitize.backends import colmap
+from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.core.capture import import_files, list_bundles
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import Progress
@@ -321,6 +323,44 @@ def test_pose_priors(project: Project, fake_tools: Tools, tmp_path: Path) -> Non
     assert written == priors
     log = (project.stage_dir("mapping") / "log.txt").read_text()
     assert "priors.json" in log  # in the command line
+
+
+def test_camera_placement_plugin_refined_by_colmap(
+    project: Project, fake_tools: Tools, tmp_path: Path
+) -> None:
+    """refine_poses: the plugin as "poses", then COLMAP's features, pairs and refinement."""
+    plugin = _use(_poses(tmp_path / "src" / "poses-test"))
+    tools = replace(fake_tools, poses=plugin)
+    settings = replace(pipeline.MeshSettings(), refine_poses=True)
+    events: list[pipeline.PipelineEvent] = []
+    result = pipeline.run_sparse(project, tools, settings, on_event=events.append)
+
+    started = [e.stage for e in events if isinstance(e, StageStarted)]
+    assert started == [
+        "poses", "features", "matching", "triangulation", "pose-check", "mapping", "undistort"
+    ]  # fmt: skip
+    assert result.registered_images == 3
+    assert result.model == project.stage_dir("mapping") / "sparse" / "0"
+    # The fake plugin puts every camera in one spot looking one way: all pairs.
+    pairs = (project.stage_dir("matching") / "pairs.txt").read_text().splitlines()
+    assert len(pairs) == 3
+    log = (project.stage_dir("matching") / "log.txt").read_text()
+    assert "matches_importer" in log and "matching 3 pairs" in log
+    # The model point_triangulator starts from mirrors the database.
+    known = project.stage_dir("triangulation") / "known_poses"
+    assert sorted(read_images(known)) == sorted(read_images(result.model))
+    assert {c.model for c in read_cameras(known).values()} == {"SIMPLE_RADIAL"}
+    mapping = load_manifest(project.stage_dir("mapping"))
+    assert mapping is not None and "--input_path" in mapping.command
+    # The coverage notes may use the matches: they came from this placement.
+    assert colmap.matched_database(project) is not None
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert "refining its camera placement with COLMAP" in notices
+
+    # Without refining, the plugin is the mapping stage again.
+    events.clear()
+    pipeline.run_sparse(project, tools, on_event=events.append)
+    assert [e.stage for e in events if isinstance(e, StageStarted)][:2] == ["mapping", "undistort"]
 
 
 def test_camera_placement_plugin_without_masks_says_so(

@@ -402,3 +402,12 @@ def test_photos_exposure_report(tmp_path: Path, capsys: pytest.CaptureFixture[st
     out = capsys.readouterr().out
     assert "3 photos" in out and "exposure: not in EXIF" in out
     assert "place the cameras to see how the photos off the usual exposure fared" in out
+
+
+def test_refine_poses_flag() -> None:
+    from ez2digitize import cli
+
+    args = cli._parser().parse_args(["run", "p", "--refine-poses"])
+    assert cli._settings(args, "balanced", "object").refine_poses
+    args = cli._parser().parse_args(["run", "p"])
+    assert not cli._settings(args, "balanced", "object").refine_poses

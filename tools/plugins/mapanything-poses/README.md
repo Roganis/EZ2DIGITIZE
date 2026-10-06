@@ -67,9 +67,13 @@ licenses before you can use the plugin. This folder holds only the glue
 - **The scale is MapAnything's estimate in metres,** and only an estimate.
   The log shows it, but the app still counts the model as unscaled: set
   the scale in the 3D view, or use the printed markers.
-- **No refinement.** Like VGGT, the cameras come straight from the network,
-  at about 518 px. They are less precise than COLMAP's refined ones, which
-  shows in the finest mesh detail.
+- **Turn on refinement for meshes.** Like VGGT, the cameras come straight
+  from the network, at about 518 px: less precise than COLMAP's, which
+  shows in the finest mesh detail. "Refine the plugin's camera placement
+  with COLMAP" (or `ez2d run --refine-poses`) has COLMAP match the photos
+  the plugin's cameras say overlap and refine everything at full
+  resolution: on the synthetic test scene, cameras 2° off came out within
+  0.1°, and a focal length 7% off within 0.1%.
 
 ## How it works
 

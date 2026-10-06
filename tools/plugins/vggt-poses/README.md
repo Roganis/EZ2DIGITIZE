@@ -50,6 +50,11 @@ before you can use the plugin. This folder holds only the glue
   them.
 - **The scale is arbitrary,** as with COLMAP: set it in the 3D view, or use
   the printed markers.
+- **Turn on refinement for meshes.** VGGT's cameras come straight from the
+  network, at 518 px: less precise than COLMAP's. "Refine the plugin's
+  camera placement with COLMAP" (or `ez2d run --refine-poses`) has COLMAP
+  match the photos VGGT's cameras say overlap and refine everything at
+  full resolution.
 
 ## How it works
 

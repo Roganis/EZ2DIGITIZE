@@ -422,10 +422,20 @@ fails, they can see which stage failed and why.
   focal length as input, which VGGT can't. The COLMAP writing is shared
   with the VGGT plugin (`feedforward_colmap.py`). Run against MapAnything's
   real code on the CPU with random weights; a GPU run with the real weights
-  waits for the reference machines. Next: a "refine with COLMAP" option
-  for any such plugin (match only the pairs the predicted poses suggest,
-  triangulate and bundle-adjust at full resolution), and passing ARCore
-  poses from the Android app as MapAnything inputs.
+  waits for the reference machines.
+  Refining any such plugin's placement with COLMAP is done
+  (`backends.colmap_refine`, `ez2d run --refine-poses`, a checkbox): the
+  plugin's poses choose the pairs to match, points are triangulated with
+  them held, photos with almost no points are dropped and placed again,
+  and COLMAP's mapper, continuing from that model, refines everything. A
+  single bundle adjustment after the triangulation made things worse
+  (2.9° median rotation error to 4.9°): with the poses held, too few
+  points survive to pull wrong cameras back. With the real COLMAP 4.2.1 on
+  the synthetic scene (32 photos), plugin poses 2° off with a focal length
+  7% too long came out 0.06° off (median, 0.2° worst) with the focal
+  length within 0.1%; 5° and 15% off, 0.06° median and 0.9° worst. A test
+  runs it on the Backends job. The real check, VGGT and MapAnything
+  refined on the Phase 1 datasets, waits for the reference machines.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
   Licenses checked: 2DGS and Gaussian Opacity Fields are under Inria's

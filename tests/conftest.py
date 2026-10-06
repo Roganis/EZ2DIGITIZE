@@ -51,25 +51,70 @@ if os.environ.get("FAKE_SLEEP") == cmd:
 if os.environ.get("FAKE_FAIL") == cmd:
     print("something went wrong", flush=True)
     sys.exit(1)
+def write_model(model, names):
+    # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
+    cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
+    (model / "cameras.bin").write_bytes(cameras)
+    images = struct.pack("<Q", len(names))
+    for image_id, name in enumerate(names, 1):
+        images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
+        images += name.encode() + b"\\0" + struct.pack("<Q", 0)
+    (model / "images.bin").write_bytes(images)
+
+def database_names():
+    import sqlite3
+    with sqlite3.connect(opt("--database_path")) as db:
+        return [n for (n,) in db.execute("SELECT name FROM images ORDER BY image_id")]
+
 if cmd == "feature_extractor":
-    # The "database" is the image list, so the mapper knows the names.
-    Path(opt("--database_path")).write_text(Path(opt("--image_list_path")).read_text())
+    # A database with COLMAP 4.2.1's tables: a SIMPLE_RADIAL camera (8x6) and
+    # its rig per capture folder, a frame per image.
+    import sqlite3
+    names = Path(opt("--image_list_path")).read_text().split()
+    with sqlite3.connect(opt("--database_path")) as db:
+        db.executescript(
+            "CREATE TABLE cameras (camera_id INTEGER PRIMARY KEY, model INTEGER, width INTEGER,"
+            " height INTEGER, params BLOB, prior_focal_length INTEGER);"
+            "CREATE TABLE rigs (rig_id INTEGER PRIMARY KEY, ref_sensor_id INTEGER,"
+            " ref_sensor_type INTEGER);"
+            "CREATE TABLE rig_sensors (rig_id INTEGER, sensor_id INTEGER, sensor_type INTEGER,"
+            " sensor_from_rig BLOB);"
+            "CREATE TABLE frames (frame_id INTEGER PRIMARY KEY, rig_id INTEGER);"
+            "CREATE TABLE frame_data (frame_id INTEGER, data_id INTEGER, sensor_id INTEGER,"
+            " sensor_type INTEGER);"
+            "CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT, camera_id INTEGER);"
+        )
+        cameras = {}
+        for image_id, name in enumerate(names, 1):
+            folder = name.split("/")[0]
+            if folder not in cameras:
+                cameras[folder] = len(cameras) + 1
+                params = struct.pack("<4d", 9.6, 4.0, 3.0, 0.0)
+                row = (cameras[folder], params)
+                db.execute("INSERT INTO cameras VALUES (?, 2, 8, 6, ?, 0)", row)
+                db.execute("INSERT INTO rigs VALUES (?, ?, 0)", (cameras[folder], cameras[folder]))
+            camera = cameras[folder]
+            db.execute("INSERT INTO images VALUES (?, ?, ?)", (image_id, name, camera))
+            db.execute("INSERT INTO frames VALUES (?, ?)", (image_id, camera))
+            db.execute("INSERT INTO frame_data VALUES (?, ?, ?, 0)", (image_id, image_id, camera))
     print("Processed file [1/1]")
+elif cmd in ("mapper", "global_mapper") and "--input_path" in args:
+    # Continuing from a model: every image of the database placed.
+    write_model(Path(opt("--output_path")), database_names())
 elif cmd in ("mapper", "global_mapper"):
-    names = Path(opt("--database_path")).read_text().split()
+    names = database_names()
     for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").replace("none", "").split(",")):
         if not n:
             continue
         model = Path(opt("--output_path")) / str(i)
         model.mkdir(parents=True)
-        # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
-        cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
-        (model / "cameras.bin").write_bytes(cameras)
-        images = struct.pack("<Q", int(n))
-        for image_id, name in enumerate(names[: int(n)], 1):
-            images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
-            images += name.encode() + b"\\0" + struct.pack("<Q", 0)
-        (model / "images.bin").write_bytes(images)
+        write_model(model, names[: int(n)])
+elif cmd in ("point_triangulator", "image_filterer"):
+    for model_file in Path(opt("--input_path")).glob("*.bin"):
+        (Path(opt("--output_path")) / model_file.name).write_bytes(model_file.read_bytes())
+elif cmd == "matches_importer":
+    pairs = Path(opt("--match_list_path")).read_text().splitlines()
+    print(f"matching {len(pairs)} pairs", flush=True)
 elif cmd == "image_undistorter":
     out = Path(opt("--output_path"))
     (out / "images").mkdir()
@@ -105,6 +150,16 @@ if os.environ.get("FAKE_FAIL") == tool:
 out = Path(args[args.index("-o") + 1])
 out.write_text("mvs")
 out.with_suffix(".ply").write_text("ply")
+if tool == "DensifyPointCloud":
+    # Three coloured points, binary like OpenMVS's dense cloud.
+    import struct
+    header = ("ply\\nformat binary_little_endian 1.0\\nelement vertex 3\\n"
+              "property float x\\nproperty float y\\nproperty float z\\n"
+              "property uchar red\\nproperty uchar green\\nproperty uchar blue\\n"
+              "end_header\\n")
+    body = b"".join(struct.pack("<3f3B", *v, 200, 100, 50)
+                    for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0)))
+    out.with_suffix(".ply").write_bytes(header.encode() + body)
 if tool in ("ReconstructMesh", "RefineMesh"):
     # A mesh header saying 1000 faces (what the texture step reads to simplify).
     out.with_suffix(".ply").write_text(

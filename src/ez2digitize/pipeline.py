@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ez2digitize import coverage, crop, markers, plugins, scale, sides, splat_mesh
-from ez2digitize.backends import brush, colmap, colmap_model, openmvs
+from ez2digitize.backends import brush, colmap, colmap_model, colmap_refine, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import download, photos
 from ez2digitize.core.capture import CaptureBundle, list_bundles
@@ -49,7 +49,13 @@ from ez2digitize.masks import has_masks
 from ez2digitize.motion import measured_downs
 from ez2digitize.subject import Subject
 
-SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
+# "poses", "triangulation" and "pose-check": a camera placement plugin's poses
+# refined by COLMAP (MeshSettings.refine_poses, see backends.colmap_refine).
+SPARSE_STAGES = (
+    "poses", "features", "matching", "triangulation", "pose-check", "mapping",
+    "undistort", "mask-undistort",
+)  # fmt: skip
+REFINE_POSE_STAGES = ("poses", "triangulation", "pose-check")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
 STAGES = SPARSE_STAGES + DENSE_STAGES
 SPLAT_STAGE = "splat"
@@ -117,6 +123,9 @@ class MeshSettings:
     splat_mesh: splat_mesh.SplatMeshOptions | None = None
     # A scene skips the advice that assumes photos all round an object.
     subject: Subject = "object"
+    # With a camera placement plugin: refine its poses with COLMAP (features,
+    # the pairs its poses suggest, triangulation, COLMAP's refinement).
+    refine_poses: bool = False
 
 
 # --- events --------------------------------------------------------------------
@@ -353,7 +362,8 @@ def run_splat(
         )
     with _exclusive():
         masked = settings.use_masks and has_masks(project)
-        stages = (*_sparse_stages(tools, masked=masked), SPLAT_STAGE)
+        refine_poses = settings.refine_poses
+        stages = (*_sparse_stages(tools, masked=masked, refine_poses=refine_poses), SPLAT_STAGE)
         if settings.splat_mesh is not None:
             stages = (*stages, SPLAT_MESH_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
@@ -456,7 +466,9 @@ def _sparse(
     for problem in sides.check(project, bundles, use_masks=settings.use_masks):
         run.emit(Notice(f"two-sided scan: {problem}"))
     sfm = tools.colmap
-    if tools.poses is not None:
+    if tools.poses is not None and settings.refine_poses:
+        mapping = _refined_mapping(project, tools, settings, bundles, masks, run, total)
+    elif tools.poses is not None:
         mapping = _plugin_mapping(project, tools, tools.poses, bundles, masks, run)
     else:
         mapping = _colmap_mapping(project, tools, settings, bundles, masks, run, total)
@@ -526,16 +538,68 @@ def _plugin_mapping(
     bundles: list[CaptureBundle],
     masks: Path | None,
     run: _Run,
+    *,
+    stage: str = "mapping",
 ) -> StageManifest:
     run.emit(Notice(f"placing the cameras with {plugins.describe(plugin)}"))
     if masks is not None and not plugin.with_masks:
         run.emit(Notice(f"{plugin.name} doesn't use masks; the dense cloud still does"))
     return run(
         _plugin_spec(
-            lambda p: plugins.pose_stage(p, project, bundles, sfm=tools.colmap, masks=masks),
+            lambda p: plugins.pose_stage(
+                p, project, bundles, sfm=tools.colmap, masks=masks, stage=stage
+            ),
             plugin,
         )
     )
+
+
+def _refined_mapping(
+    project: Project,
+    tools: Tools,
+    settings: MeshSettings,
+    bundles: list[CaptureBundle],
+    masks: Path | None,
+    run: _Run,
+    total: int,
+) -> StageManifest:
+    """The plugin's poses, refined by COLMAP (see backends.colmap_refine)."""
+    plugin = tools.poses
+    assert plugin is not None
+    poses = _plugin_mapping(project, tools, plugin, bundles, masks, run, stage="poses")
+    if colmap.best_model(project.stage_dir("poses") / "sparse") is None:
+        raise PipelineError(
+            f"{plugin.name} placed no cameras (or wrote no COLMAP model in sparse/0; see its log)"
+        )
+    run.emit(Notice("refining its camera placement with COLMAP"))
+    sfm = tools.colmap
+    features, kind, lightglue, groups = _features(project, tools, settings, bundles, masks, run)
+    options = replace(
+        settings.matching or colmap.MatchOptions(),
+        features=kind,
+        lightglue=lightglue,
+        threads=settings.features.threads,
+    )
+    try:
+        matching = run(
+            colmap_refine.match_pairs(
+                sfm, project, features, poses, options=options, camera_groups=groups or None
+            )
+        )
+        triangulation = run(colmap_refine.triangulate(sfm, project, matching, poses))
+        checked = run(colmap_refine.drop_weak(sfm, project, triangulation))
+        return run(
+            colmap_refine.refine(
+                sfm,
+                project,
+                checked,
+                matching,
+                total_images=total,
+                threads=settings.mapper.threads,
+            )
+        )
+    except BackendError as exc:
+        raise PipelineError(f"refining the camera placement: {exc}") from exc
 
 
 def _plugin_spec(build: Callable[[plugins.Plugin], StageSpec], plugin: plugins.Plugin) -> StageSpec:
@@ -555,6 +619,29 @@ def _colmap_mapping(
     total: int,
 ) -> StageManifest:
     """COLMAP's camera placement: features, matching, mapping."""
+    sfm = tools.colmap
+    features, kind, lightglue, groups = _features(project, tools, settings, bundles, masks, run)
+    matching_options = _matching(settings.matching, bundles, run, kind)
+    matching_options = replace(matching_options, features=kind, lightglue=lightglue)
+    matching = run(
+        colmap.match_features(
+            sfm, project, features, options=matching_options, camera_groups=groups or None
+        )
+    )
+    return run(
+        colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
+    )
+
+
+def _features(
+    project: Project,
+    tools: Tools,
+    settings: MeshSettings,
+    bundles: list[CaptureBundle],
+    masks: Path | None,
+    run: _Run,
+) -> tuple[StageManifest, colmap.FeatureKind, Path | None, dict[str, str]]:
+    """The features stage; with what kind of features, the LightGlue model and camera groups."""
     sfm = tools.colmap
     feature_options = settings.features
     lightglue = None
@@ -592,16 +679,7 @@ def _colmap_mapping(
     features = run(
         colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
     )
-    matching_options = _matching(settings.matching, bundles, run, feature_options.kind)
-    matching_options = replace(matching_options, features=feature_options.kind, lightglue=lightglue)
-    matching = run(
-        colmap.match_features(
-            sfm, project, features, options=matching_options, camera_groups=groups or None
-        )
-    )
-    return run(
-        colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
-    )
+    return features, feature_options.kind, lightglue, groups
 
 
 def _dense(
@@ -747,9 +825,11 @@ def _stem_clash(project: Project) -> str | None:
     return None
 
 
-def _sparse_stages(tools: Tools, *, masked: bool) -> tuple[str, ...]:
+def _sparse_stages(tools: Tools, *, masked: bool, refine_poses: bool = False) -> tuple[str, ...]:
     skip = set()
-    if tools.poses is not None:
+    if tools.poses is None or not refine_poses:
+        skip |= set(REFINE_POSE_STAGES)
+    if tools.poses is not None and not refine_poses:
         skip |= {"features", "matching"}  # the plugin is the mapping stage
     if not masked:
         skip.add("mask-undistort")
@@ -758,7 +838,7 @@ def _sparse_stages(tools: Tools, *, masked: bool) -> tuple[str, ...]:
 
 def _stages(settings: MeshSettings, tools: Tools, *, masked: bool) -> tuple[str, ...]:
     dense = tuple(s for s in DENSE_STAGES if settings.refine is not None or s != "refine")
-    return _sparse_stages(tools, masked=masked) + dense
+    return _sparse_stages(tools, masked=masked, refine_poses=settings.refine_poses) + dense
 
 
 # Up to this many images, every pair is matched, whatever the capture: it is

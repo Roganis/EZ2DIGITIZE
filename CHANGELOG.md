@@ -81,6 +81,9 @@ The first release.
   length and by the camera poses a phone's tracking wrote into a video
   (CAMM), with Apache-2.0 weights (or non-commercial ones).
 - Camera placement plugins get the known camera poses (`{priors}`).
+- "Refine the plugin's camera placement with COLMAP" (`ez2d run
+  --refine-poses`): a plugin's rough cameras made precise at full
+  resolution, matching only the photos its cameras say overlap.
 
 ### Packages
 

@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import diagnostics, masks, motion, presets, subject, video
+from ez2digitize import diagnostics, masks, motion, plugins, presets, subject, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -74,6 +74,9 @@ from ez2digitize.ui.watch_dialog import WatchFolderDialog
 STAGE_LABELS = {
     "features": "Find features",
     "matching": "Match photos",
+    "poses": "Place cameras (plugin)",
+    "triangulation": "Triangulate points",
+    "pose-check": "Check camera placement",
     "mapping": "Place cameras",
     "undistort": "Undistort photos",
     "mask-undistort": "Prepare masks",
@@ -222,6 +225,13 @@ class ProjectPage(QWidget):
         )
         self.use_masks = QCheckBox("Use masks")
         self.use_masks.setChecked(subject.of(project) == "object")
+        self.refine_poses = QCheckBox("Refine the plugin's camera placement with COLMAP")
+        self.refine_poses.setToolTip(
+            "With a camera placement plugin (Settings → Plugins): COLMAP then finds "
+            "features, matches the photos the plugin's cameras say overlap, and refines "
+            "the cameras at full resolution. Slower, but the dense cloud and mesh "
+            "need the precision"
+        )
         self.align = QCheckBox("Stand the model upright")
         self.align.setChecked(True)
         self.align.setToolTip(
@@ -244,6 +254,7 @@ class ProjectPage(QWidget):
         form.addRow("Mesh size:", self.mesh_size)
         form.addRow(self.use_masks)
         form.addRow(self.align)
+        form.addRow(self.refine_poses)
         form.addRow("Video frames:", self.video_frames)
         # Advanced: override the preset's dense detail and refinement, and see
         # the values a run will use.
@@ -458,6 +469,7 @@ class ProjectPage(QWidget):
         self.view_panel.set_locked(busy)
         self.other_side_button.setEnabled(not busy)
         self.use_masks.setEnabled(not busy and masks.has_masks(self.project))
+        self.refine_poses.setEnabled(not busy and plugins.chosen_id("poses") is not None)
         self.open_result_button.setVisible(self.last_result is not None)
         self.open_log_button.setVisible(
             self.last_failure is not None and self.last_failure.log is not None
@@ -514,6 +526,7 @@ class ProjectPage(QWidget):
             export_formats=tuple(self.export_formats.currentData()),
             use_masks=self.use_masks.isChecked(),
             align=self.align.isChecked(),
+            refine_poses=self.refine_poses.isChecked(),
         )
 
     def _show_values(self) -> None:

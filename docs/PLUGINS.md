@@ -154,6 +154,14 @@ This step replaces COLMAP's features, matching and mapping. It runs as the
 - **Then:** COLMAP undistorts the photos with this model, and the dense
   cloud, mesh, splats, coverage notes, crop box and scale all work on it.
   Photos the model leaves out count as not placed.
+- **Refined, if asked:** with "Refine the plugin's camera placement with
+  COLMAP" (`ez2d run --refine-poses`), the plugin runs as the `poses`
+  stage instead, and COLMAP takes its model as the start: features, then
+  matching of only the photos its cameras say overlap (each with its 20
+  nearest looking within 60° of the same way), triangulation with its
+  poses, and COLMAP's own refinement of cameras, focal length and points.
+  Photos it placed too far off to get points are placed again by COLMAP.
+  A rough but complete placement is all a plugin then needs to give.
 
 ### Splats (`provides = "splats"`)
 

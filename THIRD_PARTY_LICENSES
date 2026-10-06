@@ -117,6 +117,11 @@ backends/licenses/ (the copyright file of every library linked in), and the
 app shows this file under Help -> Licenses.
 
 COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
+                with code it compiles in: LSD (AGPL-3.0-or-later),
+                PoissonRecon (MIT) and VLFeat (BSD-2-Clause) from its own
+                tree, and PoseLib (BSD-3-Clause) and faiss 1.14.1 (MIT),
+                which its build fetches; their license texts are in
+                backends/licenses as colmap-<name>.txt
 OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
                 (depends on CGAL, parts of which are GPL-3.0+), with the
                 upstream fix in tools/backends/patches applied

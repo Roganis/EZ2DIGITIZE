@@ -172,6 +172,15 @@ fi
 log "licenses"
 cp colmap/LICENSE.txt "$PREFIX/licenses/colmap.txt" 2>/dev/null || cp colmap/COPYING.txt "$PREFIX/licenses/colmap.txt"
 cp openmvs/LICENSE "$PREFIX/licenses/openmvs.txt"
+# Code COLMAP compiles in that isn't a vcpkg port, so has no copyright file
+# below: from its own tree (LSD is AGPL-3.0; SiftGPU is only built with a GPU)
+# and fetched while configuring (FetchContent: PoseLib, faiss).
+for part in LSD PoissonRecon VLFeat; do
+  cp "colmap/src/thirdparty/$part/LICENSE" "$PREFIX/licenses/colmap-$part.txt"
+done
+for dep in poselib faiss; do
+  cp colmap-build/_deps/$dep-src/LICENSE "$PREFIX/licenses/colmap-$dep.txt"
+done
 for installed in colmap-vcpkg_installed openmvs-vcpkg_installed; do
   for copyright in "$WORK/$installed/$TRIPLET"/share/*/copyright; do
     port=$(basename "$(dirname "$copyright")")

@@ -57,6 +57,16 @@ def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyP
         openmvs.locate()
 
 
+def test_locate_reads_the_log_file(tmp_path: Path) -> None:
+    """OpenMVS on Windows prints to a console of its own: the version is in its log."""
+    from scripts import python_script
+
+    body = f"open('InterfaceCOLMAP-1.log', 'w').write({BANNER!r})\n"
+    for tool in TOOLS:
+        python_script(tmp_path / "bin" / tool, body)
+    assert openmvs.locate(tmp_path / "bin").version == "2.4.0"
+
+
 def test_import_colmap(project: Project) -> None:
     spec = openmvs.import_colmap(MVS, project, _manifest("undistort", "u1"))
     undistort = project.stage_dir("undistort")

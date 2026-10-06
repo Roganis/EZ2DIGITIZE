@@ -44,6 +44,10 @@ from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_inpu
 NAME = "openmvs"
 PINNED_VERSION = "2.4.0"
 ENV_VAR = "EZ2D_OPENMVS_DIR"
+# The log file every OpenMVS tool writes in its working folder (<tool>-<id>.log),
+# with the same lines it prints; on Windows it prints them to a console of its
+# own, so the app reads this file instead.
+LOG_FILES = "*.log"
 TOOLS = ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh", "RefineMesh", "TextureMesh")
 # Where distribution and source builds install the tools (not on PATH).
 SEARCH_DIRS = (
@@ -94,7 +98,9 @@ def locate(explicit_dir: Path | None = None) -> OpenMVS:
     if missing:
         raise BackendMissing(f"OpenMVS in {bin_dir} is incomplete: no {', '.join(missing)}")
     try:
-        text = run_quick([executable(bin_dir / "InterfaceCOLMAP") or bin_dir, "--help"])
+        text = run_quick(
+            [executable(bin_dir / "InterfaceCOLMAP") or bin_dir, "--help"], logs=LOG_FILES
+        )
     except ProcessStartError as exc:
         raise BackendMissing(f"OpenMVS in {bin_dir} can't be run: {exc}") from exc
     version = parse_version(text)
@@ -165,6 +171,7 @@ def import_colmap(
         inputs={"undistorted": stage_input(undistorted)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 
@@ -228,6 +235,7 @@ def densify(
         inputs=inputs,
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
         prepare=prepare,
     )
 
@@ -262,6 +270,7 @@ def reconstruct_mesh(
         inputs={"dense": stage_input(dense)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 
@@ -295,6 +304,7 @@ def refine_mesh(
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 
@@ -337,6 +347,7 @@ def texture_mesh(
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 

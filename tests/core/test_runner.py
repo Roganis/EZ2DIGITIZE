@@ -325,3 +325,42 @@ def test_log_file_is_current_while_running(tmp_path: Path) -> None:
         on_event=on_event,
     )
     assert seen_in_file == [True]
+
+
+def test_follow_reads_a_log_file_as_output(tmp_path: Path) -> None:
+    """A tool that writes only to a log file (OpenMVS on Windows), followed live."""
+    code = """
+        import time
+        with open("Tool-1.log", "w") as log:
+            for n in (1, 2):
+                log.write(f"step {n} of 2\\n"); log.flush(); time.sleep(0.3)
+            log.write("no newline at the end")
+    """
+    events: list[Event] = []
+
+    def parse(line: str) -> Progress | None:
+        match = re.match(r"step (\d) of 2", line)
+        return Progress("Working", int(match.group(1)) / 2) if match else None
+
+    result = run_process(
+        py(code),
+        log_path=tmp_path / "log.txt",
+        cwd=tmp_path,
+        on_event=events.append,
+        parse_line=parse,
+        follow="*.log",
+    )
+    assert result.ok
+    lines = [e.line for e in events if isinstance(e, Output)]
+    assert lines == ["step 1 of 2", "step 2 of 2", "no newline at the end"]
+    assert [e.fraction for e in events if isinstance(e, Progress)] == [0.5, 1.0]
+    assert "step 2 of 2" in (tmp_path / "log.txt").read_text()
+    assert result.tail[-1] == "no newline at the end"
+
+
+def test_run_quick_reads_log_files() -> None:
+    from ez2digitize.core.runner import run_quick
+
+    code = "open('App-7.log', 'w').write('OpenMVS x64 v2.4.0\\n')"
+    assert "v2.4.0" not in run_quick(py(code))
+    assert "OpenMVS x64 v2.4.0" in run_quick(py(code), logs="*.log")

@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 import platform
 import shutil
+import sys
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
@@ -84,6 +85,9 @@ class StageSpec:
     prepare: Callable[[Path], None] | None = None
     # Runs on the GPU: the manifest then records the GPU and its driver.
     gpu: bool = False
+    # Files the tool writes its log to in the stage folder (a pattern), read as
+    # its output on Windows, where OpenMVS prints to a console of its own.
+    log_files: str | None = None
 
     def resolved_backend(self) -> Backend:
         """The backend with its build: the hash of the executable that runs."""
@@ -238,6 +242,7 @@ def run_stage(
         parse_line=spec.parse_line,
         cancel=cancel,
         use_pty=spec.use_pty,
+        follow=spec.log_files if sys.platform == "win32" else None,
     )
     status: Status = "cancelled" if result.cancelled else "succeeded" if result.ok else "failed"
     manifest = StageManifest(

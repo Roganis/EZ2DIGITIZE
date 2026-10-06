@@ -125,6 +125,7 @@ def run_process(
     cancel: CancelToken | None = None,
     term_grace_s: float = 10.0,
     use_pty: bool = False,
+    follow: str | None = None,
 ) -> ProcessResult:
     """Run `argv` to completion (or cancellation) and return what happened.
 
@@ -134,6 +135,11 @@ def run_process(
     `use_pty` gives the command a pseudo-terminal instead of a pipe. Tools
     that write through C stdio (OpenMVS) buffer their output in blocks when
     it isn't a terminal, so without it their progress arrives only at exit.
+
+    `follow` is a file pattern in `cwd` (such as "*.log"): the lines written
+    to matching files are handled like output lines as they appear. For
+    tools whose output doesn't reach the pipe: OpenMVS on Windows writes to
+    a console of its own, and the same lines to a log file.
     """
     args = [str(a) for a in argv]
     if not args:
@@ -163,6 +169,7 @@ def run_process(
             os.close(child_out)
 
         lines: queue.Queue[str | None] = queue.Queue()
+        followed = _Follower(cwd or Path.cwd(), follow) if follow else None
         reader = threading.Thread(target=_pump, args=(read_fd, lines), daemon=True)
         reader.start()
         emit(Started(argv=args, pid=child.pid))
@@ -194,6 +201,9 @@ def run_process(
                     eof = True
                 else:
                     handle(line)
+            if followed is not None:
+                for new in followed.read():
+                    handle(new)
             if not exited:
                 now = time.monotonic()
                 if now >= next_sample:
@@ -222,6 +232,9 @@ def run_process(
                 break
             if rest is not None:
                 handle(rest)
+        if followed is not None:
+            for new in followed.read(final=True):
+                handle(new)
         wall = time.monotonic() - start
         exit_code = child.exit_code
         cpu_s, peak_rss_mb = child.usage()
@@ -401,13 +414,49 @@ def command_line(args: Sequence[str]) -> str:
     return subprocess.list2cmdline(args) if sys.platform == "win32" else shlex.join(args)
 
 
-def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
+class _Follower:
+    """New lines of the files matching `pattern` in `folder`, as they are written."""
+
+    def __init__(self, folder: Path, pattern: str) -> None:
+        self.folder = folder
+        self.pattern = pattern
+        self.offsets: dict[Path, int] = {}
+        self.partial: dict[Path, bytes] = {}
+
+    def read(self, *, final: bool = False) -> list[str]:
+        out: list[str] = []
+        for path in sorted(self.folder.glob(self.pattern)):
+            try:
+                with path.open("rb") as fh:
+                    fh.seek(self.offsets.get(path, 0))
+                    data = fh.read()
+            except OSError:
+                continue
+            if not data and not final:
+                continue
+            self.offsets[path] = self.offsets.get(path, 0) + len(data)
+            data = self.partial.pop(path, b"") + data
+            *complete, rest = data.split(b"\n")
+            if final and rest.strip():
+                complete.append(rest)
+            elif rest:
+                self.partial[path] = rest
+            out += [c.decode("utf-8", "replace").rstrip("\r") for c in complete]
+        return out
+
+
+def run_quick(
+    argv: Sequence[str | Path], *, timeout_s: float = 30.0, logs: str | None = None
+) -> str:
     """Run a short command (help, version) and return its combined output.
 
     For probing backends, not for stages: no log, no events. The exit code is
     ignored because many tools exit non-zero after printing help. Runs in a
     temporary folder because OpenMVS tools write a log file into the current
-    one. Raises ProcessStartError if the command can't be started or times out.
+    one. With `logs` (a file pattern), what the command wrote to matching files
+    there is returned too: OpenMVS on Windows prints to a console of its own,
+    and only its log file has the version. Raises ProcessStartError if the
+    command can't be started or times out.
     """
     args = [str(a) for a in argv]
     try:
@@ -425,11 +474,14 @@ def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
                 # From the windowed app, a console tool would flash a window.
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            written = ""
+            for log in sorted(Path(scratch).glob(logs)) if logs else []:
+                written += log.read_text(encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:
         raise ProcessStartError(f"{args[0]} did not answer within {timeout_s:.0f} s") from exc
     except OSError as exc:
         raise ProcessStartError(f"cannot start {args[0]}: {exc}") from exc
-    return done.stdout + done.stderr
+    return done.stdout + done.stderr + written
 
 
 def _pump(fd: int, lines: queue.Queue[str | None]) -> None:

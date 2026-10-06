@@ -44,10 +44,10 @@ jobs:
     env:
       # A short work path on Windows: vcpkg build trees pass the 260-character
       # limit under the workspace. The cache stays in the workspace either way.
-      EZ2D_BACKENDS_WORK: ${{ runner.os == 'Windows' && 'C:/ez2d' || '' }}
+      EZ2D_BACKENDS_WORK: ${{ matrix.os == 'windows-latest' && 'C:/ez2d' || '' }}
       VCPKG_BINARY_CACHE: ${{ github.workspace }}/build/backends/vcpkg-cache
-      PREFIX: ${{ runner.os == 'Windows' && 'C:/ez2d/prefix' || 'build/backends/prefix' }}
-      EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+      PREFIX: ${{ matrix.os == 'windows-latest' && 'C:/ez2d/prefix' || 'build/backends/prefix' }}
+      EXE: ${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
       - name: Long paths in git (Windows)
         if: runner.os == 'Windows'
@@ -121,6 +121,9 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          # Always there, so the artifact's layout (backends/...) is the same
+          # on every platform.
+          mkdir -p build/smoke-report
           B="uv run --group feasibility tools/feasibility/bench.py"
           $B report --results build/smoke --out build/smoke-report || true
           cat "$PREFIX/BUILDINFO.json" >> "$GITHUB_STEP_SUMMARY" || true
@@ -133,5 +136,5 @@ jobs:
           retention-days: 14
           path: |
             build/backends/ez2d-backends-*.tar.gz
-            ${{ env.PREFIX }}/BUILDINFO.json
+            build/backends/BUILDINFO-*.json
             build/smoke-report/

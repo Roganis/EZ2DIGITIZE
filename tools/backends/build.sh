@@ -230,4 +230,5 @@ TAR_OPTS=()
 # GNU tar would read "C:/..." as a remote host.
 [ "$OS" = windows ] && TAR_OPTS=(--force-local)
 tar ${TAR_OPTS[@]+"${TAR_OPTS[@]}"} -czf "$ARCHIVE" -C "$PREFIX" .
+cp "$PREFIX/BUILDINFO.json" "$REPO/build/backends/BUILDINFO-$OS-$ARCH.json"
 log "wrote $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"

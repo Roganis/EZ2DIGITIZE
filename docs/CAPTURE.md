@@ -40,6 +40,12 @@ photos.
 - **Don't zoom** during a set, and keep the same camera and lens. With a
   zoom lens, tape the ring. If a set mixes cameras or zoom settings, each
   is calibrated on its own automatically, but one per set is more accurate.
+- **Lock the exposure** where you can: manual mode on a camera, AE/AF lock
+  on a phone (press and hold on the object). Left to itself, the camera
+  brightens and darkens photos as the background changes. The photo checks
+  say when it moved by more than a stop, and `ez2d photos PROJECT
+  --exposure` shows by how much, and, after camera placement, whether
+  those photos were placed less often.
 - **Keep EXIF data** (copy the original files, don't export or resize):
   the focal length in it helps a lot.
 - **iPhone:** HEIC photos are fine: a JPEG copy of each is made on import

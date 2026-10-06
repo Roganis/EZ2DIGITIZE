@@ -385,3 +385,20 @@ def test_watch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(args) == 1
     assert "all 2 photo(s) are already in the project" in capsys.readouterr().err
     assert main(["watch", str(tmp_path / "scan"), str(tmp_path / "nowhere")]) == 1
+
+
+def test_photos_exposure_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from PIL import Image
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for n in range(3):
+        Image.new("RGB", (40, 30), (n * 60, 0, 0)).save(photos / f"{n}.jpg")
+    project = str(tmp_path / "p")
+    assert main(["new", project]) == 0
+    assert main(["import", project, str(photos)]) == 0
+    capsys.readouterr()
+    assert main(["photos", project, "--exposure"]) == 0
+    out = capsys.readouterr().out
+    assert "3 photos" in out and "exposure: not in EXIF" in out
+    assert "place the cameras to see how the photos off the usual exposure fared" in out

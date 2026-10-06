@@ -440,7 +440,14 @@ fails, they can see which stage failed and why.
 
   Before starting it, check the Phase 1 photo sets (EXIF focal lengths,
   exposure differences) to see how much the phone's automatic adjustments
-  actually hurt reconstruction.
+  actually hurt reconstruction. The tool for that check is done: photo
+  inspection reads shutter, aperture, ISO, compensation and white balance;
+  the photo checks warn when the exposure moved by more than a stop; and
+  `ez2d photos PROJECT --exposure` reports the changes per capture and,
+  after camera placement, how many of the photos off the usual exposure
+  were left unplaced or matched few others, against the rest. Running it on
+  the Phase 1 phone captures decides whether the companion app is worth
+  building; that waits for the maintainer's data.
 
 ## Testing and validation
 

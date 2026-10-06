@@ -199,6 +199,12 @@ def _parser() -> argparse.ArgumentParser:
         help="photos to leave out: file name, or <capture id>/<file name> if ambiguous",
     )
     checks.add_argument("--include", nargs="+", default=[], metavar="PHOTO", help="bring back")
+    checks.add_argument(
+        "--exposure",
+        action="store_true",
+        help="how the camera's exposure, ISO, focal length and white balance changed in "
+        "each capture, and (after camera placement) how the photos off it fared",
+    )
     checks.set_defaults(func=_cmd_photos)
 
     mask = sub.add_parser(
@@ -615,7 +621,49 @@ def _cmd_photos(args: argparse.Namespace) -> int:
             verb = "left out" if excluded else "brought back"
             print(f"{verb}: {', '.join(f'{bundle.id}/{n}' for n in names)}")
     _check_photos(project)
+    if args.exposure:
+        _print_exposure(project)
     return 0
+
+
+def _print_exposure(project: Project) -> None:
+    """The camera's automatic adjustments per capture, and what they cost."""
+    from ez2digitize import coverage
+    from ez2digitize.backends import colmap_model
+
+    bundles = list_bundles(project)
+    placed: set[str] | None = None
+    weak: list[str] = []
+    model = colmap.best_model(project.stage_dir("mapping") / "sparse")
+    if model is not None and load_manifest(project.stage_dir("mapping")) is not None:
+        try:
+            placed = set(colmap_model.read_images(model))
+            database = colmap.matched_database(project)
+            weak = coverage.weak_photos(database) if database else []
+        except (OSError, ValueError, BackendError):
+            placed = None
+    for found in photos.exposure_report(bundles, placed, weak):
+        print(f"capture {found.capture}: {found.photos} photos")
+        if found.spread_stops is None:
+            print("  exposure: not in EXIF")
+        else:
+            shutter = found.shutter_s or (0.0, 0.0)
+            iso = found.iso or (0.0, 0.0)
+            print(f"  exposure changed by {found.spread_stops:.1f} stops "
+                  f"(shutter 1/{1 / shutter[1]:.0f} to 1/{1 / shutter[0]:.0f} s, "
+                  f"ISO {iso[0]:.0f} to {iso[1]:.0f}); {len(found.off)} photos over "
+                  f"{photos.EXPOSURE_STOPS:g} stop off the usual")  # fmt: skip
+        focal = ", ".join(f"{f:g}" for f in found.focal_mm) or "not in EXIF"
+        print(f"  focal lengths (mm): {focal}")
+        print(f"  white balance: {', '.join(found.white_balance) or 'not in EXIF'}")
+        if found.unplaced is not None and found.weak is not None:
+            off, rest = len(found.off), found.photos - len(found.off)
+            print(f"  not placed: {found.unplaced[0]} of {off} off the usual exposure, "
+                  f"{found.unplaced[1]} of {rest} others")  # fmt: skip
+            print(f"  few matches: {found.weak[0]} of {off} off the usual exposure, "
+                  f"{found.weak[1]} of {rest} others")  # fmt: skip
+    if placed is None:
+        print("(place the cameras to see how the photos off the usual exposure fared)")
 
 
 def _resolve_photos(

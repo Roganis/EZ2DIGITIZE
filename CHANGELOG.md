@@ -24,7 +24,9 @@ The first release.
   that can.
 - Two-sided scans: turn the object over, mark the second side, and the app
   checks and reports how the sides joined.
-- Photo checks on import (blur, size, camera); leave photos out.
+- Photo checks on import (blur, size, camera, exposure changes); leave
+  photos out. `ez2d photos --exposure` shows how the camera's automatic
+  exposure varied and whether those photos were placed less often.
 - Videos import as their sharpest frames; iPhone HEIC photos as JPEG copies.
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all

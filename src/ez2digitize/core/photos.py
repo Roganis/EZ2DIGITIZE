@@ -15,10 +15,11 @@ on the subject, so photos are only compared with the rest of their set.
 
 from __future__ import annotations
 
+import math
 import statistics
 import warnings
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -33,7 +34,8 @@ PHOTO_KEY = "photo"
 # Bump when inspection changes; older results are then inspected again.
 # 2: EXIF orientation (for standing the reconstruction upright).
 # 3: whether it has a GPS position (for matching large outdoor sets).
-INSPECT_VERSION = 3
+# 4: exposure (shutter, aperture, ISO, compensation) and white balance mode.
+INSPECT_VERSION = 4
 SHARPNESS_SIZE = 1024
 
 # A photo this much less sharp than the median of its set is flagged. On a
@@ -47,6 +49,10 @@ MIN_PHOTOS = 20
 # set at 39 and 40 mm reconstructs fine).
 FOCAL_TOLERANCE = 0.05
 INSPECT_THREADS = 4
+# Auto exposure changing this much across a capture (shutter, aperture and
+# ISO together, in stops) shows up as uneven brightness: blotchy texture and
+# fewer matches between the brightest and darkest photos.
+EXPOSURE_STOPS = 1.0
 
 Level = Literal["error", "warning"]
 
@@ -65,6 +71,13 @@ class PhotoInfo:
     orientation: int = 1
     # Has an EXIF GPS position (latitude and longitude).
     gps: bool = False
+    # Exposure as the camera set it: shutter time (s), f-number, ISO,
+    # compensation (EV), and white balance ("auto" or "manual").
+    exposure_s: float | None = None
+    f_number: float | None = None
+    iso: float | None = None
+    exposure_bias: float | None = None
+    white_balance: str | None = None
     # Why the file can't be read as an image; the other fields are then empty.
     error: str | None = None
 
@@ -132,7 +145,40 @@ def inspect_photo(path: Path) -> PhotoInfo:
         sharpness=_sharpness(gray),
         orientation=_orientation(exif.get(ExifTags.Base.Orientation)),
         gps=ExifTags.GPS.GPSLatitude in gps and ExifTags.GPS.GPSLongitude in gps,
+        exposure_s=_exact(details.get(ExifTags.Base.ExposureTime)),
+        f_number=_number(details.get(ExifTags.Base.FNumber)),
+        iso=_number(_first(details.get(ExifTags.Base.ISOSpeedRatings))),
+        exposure_bias=_signed(details.get(ExifTags.Base.ExposureBiasValue)),
+        white_balance=_white_balance(details.get(ExifTags.Base.WhiteBalance)),
     )
+
+
+def _first(value: Any) -> Any:
+    """ISO may be stored as a tuple; its first value counts."""
+    return value[0] if isinstance(value, tuple) and value else value
+
+
+def _exact(value: Any) -> float | None:
+    """A positive number kept as is (shutter times go down to 1/8000 s)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return number if number > 0 else None
+
+
+def _signed(value: Any) -> float | None:
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _white_balance(value: Any) -> str | None:
+    """EXIF WhiteBalance: 0 automatic, 1 manual (locked)."""
+    if value == 0:
+        return "auto"
+    return "manual" if value == 1 else None
 
 
 def _orientation(value: Any) -> int:
@@ -348,6 +394,22 @@ def check_capture(
             "the most accurate result.",
         )
 
+    stops = exposure_stops(main)
+    if len(stops) >= 3:
+        median = statistics.median(stops.values())
+        spread = max(stops.values()) - min(stops.values())
+        off = [name for name, value in stops.items() if abs(value - median) > EXPOSURE_STOPS]
+        if spread > EXPOSURE_STOPS and off:
+            add(
+                "warning",
+                "exposure-changes",
+                f"The camera changed its exposure by up to {spread:.1f} stops across these "
+                f"photos; {_count(off, 'photo')} {_are(off)} over {EXPOSURE_STOPS:g} stop "
+                "brighter or darker than most. Uneven brightness makes the texture blotchy "
+                "and can weaken matching: lock the exposure (AE lock, or manual mode).",
+                off,
+            )
+
     scores = {name: info.sharpness for name, info in main.items() if info.sharpness}
     if len(scores) >= BLUR_MIN_SET:
         median = statistics.median(scores.values())
@@ -361,6 +423,88 @@ def check_capture(
                 blurry,
             )
     return findings
+
+
+def exposure_stops(infos: Mapping[str, PhotoInfo]) -> dict[str, float]:
+    """How much light each photo let in, in stops (log2 of time · ISO / f²).
+
+    Photos without shutter time or ISO in EXIF are left out; a missing
+    f-number counts as constant (phones have one aperture).
+    """
+    stops = {}
+    for name, info in infos.items():
+        if info.exposure_s and info.iso:
+            f_number = info.f_number or 1.0
+            stops[name] = math.log2(info.exposure_s * info.iso / (f_number * f_number))
+    return stops
+
+
+@dataclass(frozen=True)
+class CaptureExposure:
+    """How one capture's exposure varied, and what became of the photos off it."""
+
+    capture: str
+    photos: int
+    with_exposure: int
+    spread_stops: float | None  # max - min of exposure_stops
+    shutter_s: tuple[float, float] | None  # fastest, slowest
+    iso: tuple[float, float] | None
+    focal_mm: tuple[float, ...]  # the focal lengths seen
+    white_balance: tuple[str, ...]  # the modes seen
+    off: tuple[str, ...]  # over EXPOSURE_STOPS from the median
+    # With a camera placement: how many photos (off / the rest) were not
+    # placed, and how many matched few others.
+    unplaced: tuple[int, int] | None = None
+    weak: tuple[int, int] | None = None
+
+
+def exposure_report(
+    bundles: Sequence[CaptureBundle],
+    placed: Collection[str] | None = None,
+    weak: Collection[str] = (),
+) -> list[CaptureExposure]:
+    """Per capture: the exposure changes, and (given the placed photos' COLMAP
+    names) whether the photos far off the usual exposure fared worse."""
+    report = []
+    for bundle in bundles:
+        infos = {n: i for n, i in photo_infos(bundle).items() if i is not None and not i.error}
+        stops = exposure_stops(infos)
+        off: list[str] = []
+        if stops:
+            median = statistics.median(stops.values())
+            off = sorted(n for n, v in stops.items() if abs(v - median) > EXPOSURE_STOPS)
+        shutters = [i.exposure_s for i in infos.values() if i.exposure_s]
+        isos = [i.iso for i in infos.values() if i.iso]
+        unplaced = weak_counts = None
+        if placed is not None:
+            names = {n: f"{bundle.id}/{n}" for n in infos}
+            missing = {names[n] for n in names if names[n] not in placed}
+            unplaced = _split(names, set(off), missing)
+            weak_counts = _split(names, set(off), set(weak))
+        report.append(
+            CaptureExposure(
+                capture=bundle.id,
+                photos=len(infos),
+                with_exposure=len(stops),
+                spread_stops=round(max(stops.values()) - min(stops.values()), 2) if stops else None,
+                shutter_s=(min(shutters), max(shutters)) if shutters else None,
+                iso=(min(isos), max(isos)) if isos else None,
+                focal_mm=tuple(sorted({i.focal_mm for i in infos.values() if i.focal_mm})),
+                white_balance=tuple(
+                    sorted({i.white_balance for i in infos.values() if i.white_balance})
+                ),
+                off=tuple(off),
+                unplaced=unplaced,
+                weak=weak_counts,
+            )
+        )
+    return report
+
+
+def _split(names: Mapping[str, str], off: set[str], bad: set[str]) -> tuple[int, int]:
+    """How many photos in `bad` (COLMAP names) are off the usual exposure, and how many not."""
+    hits = [n for n, colmap_name in names.items() if colmap_name in bad]
+    return sum(n in off for n in hits), sum(n not in off for n in hits)
 
 
 def _duplicates(bundles: Sequence[CaptureBundle]) -> list[Finding]:

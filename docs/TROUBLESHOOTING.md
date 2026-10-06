@@ -60,7 +60,8 @@ logs and settings, never your photos. The logs do contain file paths.
 - **Part of the object is missing after using masks.** A mask cut it off.
   In the Masks tab, look at "To look at" first, then the rest: uncheck the
   photos whose red tint covers part of the object, and build again.
-- **Blotchy or striped texture.** Uneven light between photos, or blurry
+- **Blotchy or striped texture.** Uneven light or exposure between photos
+  (see the photo checks, and `ez2d photos PROJECT --exposure`), or blurry
   photos (see the photo checks). Development builds before the OpenMVS fix
   of October 2026 gave black blobs and coloured specks: update, and run the
   project again (the texture step re-runs by itself).

@@ -12,6 +12,19 @@ COLMAP_URL=https://github.com/colmap/colmap.git
 OPENMVS_URL=https://github.com/cdcseacave/openMVS.git
 VCPKG_URL=https://github.com/microsoft/vcpkg.git
 
+platform() {  # sets TRIPLET (vcpkg), OS, ARCH and EXE (".exe" on Windows)
+  EXE=
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)  TRIPLET=x64-linux-release;  OS=linux; ARCH=x86_64 ;;
+    Darwin-arm64)  TRIPLET=arm64-osx-release;  OS=macos; ARCH=arm64 ;;
+    # Everything static, the C runtime included (/MT): the binaries then need
+    # only Windows, plus MSVC's OpenMP runtime, which exists only as a DLL.
+    MINGW*-x86_64 | MSYS*-x86_64)
+      TRIPLET=x64-windows-static-release; OS=windows; ARCH=x86_64; EXE=.exe ;;
+    *) echo "unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
+  esac
+}
+
 fetch() {  # fetch <dir> <git url> <tag>
   if [ ! -d "$1" ]; then
     git clone --quiet --depth 1 --branch "$3" --recurse-submodules --shallow-submodules \
@@ -26,7 +39,31 @@ fetch_vcpkg() {  # fetch_vcpkg <dir>: the vcpkg release, with history for baseli
   fi
   git -C "$1" fetch --tags --quiet
   git -C "$1" -c advice.detachedHead=false checkout --quiet "$VCPKG_VERSION"
-  [ -x "$1/vcpkg" ] || "$1/bootstrap-vcpkg.sh" -disableMetrics
+  if [ -x "$1/vcpkg" ] || [ -x "$1/vcpkg.exe" ]; then
+    return
+  fi
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) cmd //c "$(cygpath -w "$1/bootstrap-vcpkg.bat")" -disableMetrics ;;
+    *) "$1/bootstrap-vcpkg.sh" -disableMetrics ;;
+  esac
+}
+
+# Python for the manifest edits below (Windows has no python3 by that name).
+PYTHON=${PYTHON:-$(command -v python3 || command -v python)}
+
+prepare_colmap() {  # prepare_colmap <checkout>: Windows only
+  # COLMAP 4.2.1 looks for GLEW at configure time even for a headless build
+  # (Linux and macOS satisfy it with a system package). On Windows it comes
+  # from vcpkg; it isn't linked with the GUI and GPU features off.
+  "$PYTHON" - "$1/vcpkg.json" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+manifest = json.load(open(path))
+names = [d if isinstance(d, str) else d["name"] for d in manifest["dependencies"]]
+if "glew" not in names:
+    manifest["dependencies"].append("glew")
+json.dump(manifest, open(path, "w"), indent=2)
+PYEOF
 }
 
 prepare_openmvs() {  # prepare_openmvs <checkout> <repo root>: patches and manifest
@@ -44,7 +81,7 @@ prepare_openmvs() {  # prepare_openmvs <checkout> <repo root>: patches and manif
   # for windows OpenMVS only opens in debug builds. Ask for OpenCV without
   # default features, keeping what OpenMVS uses: calib3d (stereo matching,
   # speckle filter, rectification) and the image formats it reads and writes.
-  python3 - "$1/vcpkg.json" <<'PYEOF'
+  "$PYTHON" - "$1/vcpkg.json" <<'PYEOF'
 import json, sys
 path = sys.argv[1]
 manifest = json.load(open(path))

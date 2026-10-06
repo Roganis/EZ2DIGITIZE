@@ -14,7 +14,7 @@ COLMAP uses the vcpkg baseline and port patches pinned in its own
 repository; OpenMVS has none, so it uses vcpkg release 2026.07.29.
 
 ```sh
-tools/backends/build.sh     # Linux x86_64 or macOS arm64
+tools/backends/build.sh     # Linux x86_64, macOS arm64 or Windows x64
 ```
 
 Output: `build/backends/ez2d-backends-<os>-<arch>.tar.gz` with `bin/`,
@@ -47,12 +47,26 @@ Prerequisites:
   copies it into the archive's `lib/` and points the binaries at it
   (`@executable_path/../lib`), so the archive doesn't need Homebrew; the
   build fails if any Homebrew path is left.
+- **Windows:** Visual Studio 2022 (or its Build Tools) with the C++
+  workload, and Git for Windows. Run the script from Git Bash with the MSVC
+  environment loaded (for example `vcvars64.bat`, then `bash`), and a short
+  work folder: `EZ2D_BACKENDS_WORK=C:/ez2d tools/backends/build.sh`, since
+  vcpkg's build trees easily pass Windows' 260-character path limit.
+  Everything is linked statically, the C runtime included (triplet
+  `x64-windows-static-release`). The exception is MSVC's OpenMP runtime,
+  which exists only as a DLL: `vcomp140.dll` is copied next to the binaries
+  from Visual Studio's redistributable folder. Any other DLL the binaries
+  need is copied too, from there or from vcpkg's output (the C++ runtime, if
+  `vcomp140.dll` needs it; LAPACK, which vcpkg builds with MinGW's gfortran
+  as DLLs even for a static triplet, with the GCC runtime). The build fails
+  if a binary still needs a DLL that isn't part of Windows. On Windows COLMAP's GLEW lookup is satisfied by adding
+  vcpkg's `glew` to its manifest; GLEW isn't linked.
 
 ## CI
 
 The [Backends workflow](../../.github/workflows/backends.yml) runs the build
-on Ubuntu 22.04 (for an old glibc baseline) and Apple Silicon macOS. It
-then runs the benchmark harness on the synthetic scene with the fresh
+on Ubuntu 22.04 (for an old glibc baseline), Apple Silicon macOS and
+Windows. It then runs the benchmark harness (POSIX only, so not on Windows) on the synthetic scene with the fresh
 binaries ([`backends-smoke.toml`](../feasibility/plans/backends-smoke.toml))
 and the app's own backend modules on the same scene
 (`tests/backends/test_real_pipeline.py`), and uploads the archives as

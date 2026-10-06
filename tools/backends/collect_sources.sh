@@ -28,11 +28,7 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 . "$REPO/tools/backends/pins.sh"
 WORK=${EZ2D_SOURCES_WORK:-$REPO/build/backend-sources}
 
-case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)  TRIPLET=x64-linux-release;  OS=linux; ARCH=x86_64 ;;
-  Darwin-arm64)  TRIPLET=arm64-osx-release;  OS=macos; ARCH=arm64 ;;
-  *) echo "unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
-esac
+platform  # TRIPLET, OS, ARCH
 
 log() { printf '\n=== %s\n' "$*"; }
 
@@ -50,6 +46,7 @@ log "vcpkg $VCPKG_VERSION"
 fetch_vcpkg vcpkg
 log "COLMAP $COLMAP_VERSION"
 fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
+[ "$OS" = windows ] && prepare_colmap colmap
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
 prepare_openmvs openmvs "$REPO"
@@ -93,7 +90,7 @@ fi
 # Port sources only: vcpkg downloads its own tools (cmake, ninja...) to the
 # same folder; they are listed in its vcpkg-tools.json.
 mkdir -p "$OUT/downloads"
-python3 - vcpkg/scripts/vcpkg-tools.json downloads "$OUT/downloads" <<'PYEOF'
+"$PYTHON" - vcpkg/scripts/vcpkg-tools.json downloads "$OUT/downloads" <<'PYEOF'
 import json, shutil, sys
 from pathlib import Path
 tools = {t.get("archive") for t in json.load(open(sys.argv[1]))["tools"]}
@@ -108,7 +105,8 @@ Source of the EZ2DIGITIZE backends ($OS $ARCH, vcpkg triplet $TRIPLET)
 COLMAP   $COLMAP_VERSION   colmap-$COLMAP_VERSION/      ($COLMAP_URL)
 OpenMVS  $OPENMVS_VERSION  openmvs-$OPENMVS_VERSION/    ($OPENMVS_URL)
          built with ez2digitize-backends/patches/ applied and the OpenCV
-         features set in ez2digitize-backends/pins.sh (prepare_openmvs)
+         features set in ez2digitize-backends/pins.sh (prepare_openmvs;
+         on Windows, prepare_colmap adds GLEW to COLMAP's manifest)
 vcpkg    $VCPKG_VERSION    vcpkg-$VCPKG_VERSION/        ($VCPKG_URL)
          COLMAP's manifest pins its own baseline; the port scripts of those
          versions are in vcpkg-versioned-ports/

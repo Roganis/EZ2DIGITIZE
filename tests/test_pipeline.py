@@ -3,7 +3,6 @@
 """Pipeline logic with fake backends that write the files the real ones do."""
 
 import os
-import sys
 import threading
 import time
 from pathlib import Path
@@ -29,8 +28,6 @@ from ez2digitize.pipeline import (
     StageStarted,
     Tools,
 )
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 
 
 @pytest.fixture

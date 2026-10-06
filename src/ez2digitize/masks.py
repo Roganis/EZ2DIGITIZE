@@ -112,6 +112,8 @@ def models_dir() -> Path:
         return Path(override)
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Caches"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     return base / "ez2digitize" / "models"

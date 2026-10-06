@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import shutil
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
@@ -21,8 +20,6 @@ from ez2digitize.video import (
     plan_frames,
     select_frames,
 )
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake tools")
 
 
 @pytest.fixture

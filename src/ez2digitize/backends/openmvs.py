@@ -32,6 +32,7 @@ from typing import Literal
 from ez2digitize.backends.common import (
     BackendError,
     BackendMissing,
+    executable,
     find_tool,
     result_parameters,
 )
@@ -68,7 +69,7 @@ class OpenMVS:
         return self.version == PINNED_VERSION
 
     def tool(self, name: str) -> Path:
-        return self.bin_dir / name
+        return executable(self.bin_dir / name) or self.bin_dir / name
 
 
 def parse_version(text: str) -> str | None:
@@ -93,7 +94,7 @@ def locate(explicit_dir: Path | None = None) -> OpenMVS:
     if missing:
         raise BackendMissing(f"OpenMVS in {bin_dir} is incomplete: no {', '.join(missing)}")
     try:
-        text = run_quick([bin_dir / "InterfaceCOLMAP", "--help"])
+        text = run_quick([executable(bin_dir / "InterfaceCOLMAP") or bin_dir, "--help"])
     except ProcessStartError as exc:
         raise BackendMissing(f"OpenMVS in {bin_dir} can't be run: {exc}") from exc
     version = parse_version(text)

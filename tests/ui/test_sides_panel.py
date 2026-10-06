@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The Both sides panel, and the project page's two-sided workflow."""
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,8 +15,6 @@ from ez2digitize.core.project import Project
 from ez2digitize.pipeline import Tools
 from ez2digitize.ui.project_page import ProjectPage
 from ez2digitize.ui.sides_panel import SidesPanel
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 
 
 def _folder(path: Path, *names: str) -> Path:

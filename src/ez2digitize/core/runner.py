@@ -4,7 +4,8 @@
 
 - Commands are argument lists, never a shell string.
 - Each process starts in its own process group (session), so cancelling
-  kills the whole tree: SIGTERM, then SIGKILL after a grace period.
+  kills the whole tree: SIGTERM, then SIGKILL after a grace period. On
+  Windows a Job Object holds the tree instead, and cancelling ends it.
 - stdout and stderr are merged, split into lines (at \n, \r\n and the lone
   \r of redrawn progress lines), written to a log file, and handed line by
   line to an optional parser that turns them into progress events. Tools that
@@ -12,8 +13,9 @@
 - Events are delivered on the calling thread, in order. A GUI calls
   `run_process` from a worker thread and forwards the events as signals.
 
-POSIX only for now (Linux, macOS); Windows will need a job object for the
-process tree and has no `wait4`.
+Platform differences live in `_PosixChild` and `_WindowsChild`: how the
+tree is killed and how its CPU time and peak memory are measured. Windows
+has no pseudo-terminals: `use_pty` falls back to a pipe there.
 """
 
 from __future__ import annotations
@@ -21,10 +23,8 @@ from __future__ import annotations
 import codecs
 import contextlib
 import os
-import pty
 import queue
 import re
-import resource
 import shlex
 import signal
 import subprocess
@@ -36,8 +36,15 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ez2digitize.core.files import utc_now
+
+if sys.platform == "win32":
+    from ez2digitize.core.winjob import Job
+else:
+    import pty
+    import resource
 
 TAIL_LINES = 40
 _POLL_S = 0.1
@@ -134,26 +141,18 @@ def run_process(
     emit = on_event or (lambda _event: None)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail: deque[str] = deque(maxlen=TAIL_LINES)
-    parent_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    child_type: type[_Child] = _WindowsChild if sys.platform == "win32" else _PosixChild
 
     with log_path.open("w", encoding="utf-8") as log:
-        log.write(f"$ {shlex.join(args)}\n\n")
+        log.write(f"$ {command_line(args)}\n\n")
         log.flush()
         started_at, start = utc_now(), time.monotonic()
-        if use_pty:
+        if use_pty and sys.platform != "win32":
             read_fd, child_out = pty.openpty()
         else:
             read_fd, child_out = os.pipe()
         try:
-            proc = subprocess.Popen(  # noqa: S603 - argument list, never a shell
-                args,
-                cwd=cwd,
-                env={**os.environ, **env} if env else None,
-                stdin=subprocess.DEVNULL,
-                stdout=child_out,
-                stderr=child_out,
-                start_new_session=True,
-            )
+            child = child_type(args, cwd=cwd, env=env, output=child_out)
         except OSError as exc:
             os.close(read_fd)
             log.write(f"cannot start {args[0]}: {exc}\n")
@@ -166,7 +165,7 @@ def run_process(
         lines: queue.Queue[str | None] = queue.Queue()
         reader = threading.Thread(target=_pump, args=(read_fd, lines), daemon=True)
         reader.start()
-        emit(Started(argv=args, pid=proc.pid))
+        emit(Started(argv=args, pid=child.pid))
 
         def handle(line: str) -> None:
             log.write(line + "\n")
@@ -180,11 +179,9 @@ def run_process(
             if parse_line is not None and (progress := parse_line(line)) is not None:
                 emit(progress)
 
-        status: int | None = None
-        rusage: resource.struct_rusage | None = None
+        exited = False
         cancelled = False
         eof = False
-        hwm_kb = 0
         next_sample = 0.0
         exited_at = 0.0
         while not eof:
@@ -197,31 +194,26 @@ def run_process(
                     eof = True
                 else:
                     handle(line)
-            if status is None:
+            if not exited:
                 now = time.monotonic()
                 if now >= next_sample:
-                    hwm_kb = max(hwm_kb, _vm_hwm_kb(proc.pid))
+                    child.sample()
                     next_sample = now + _MEMORY_SAMPLE_S
-                pid, wstatus, ru = os.wait4(proc.pid, os.WNOHANG)
-                if pid == proc.pid:
-                    status, rusage, exited_at = wstatus, ru, now
-                    # Popen must not try to reap the process again.
-                    proc.returncode = os.waitstatus_to_exitcode(wstatus)
+                if child.poll():
+                    exited, exited_at = True, now
                 elif cancel is not None and cancel.cancelled and not cancelled:
                     cancelled = True
-                    log.write("\n[cancelled, stopping the process group]\n")
+                    log.write("\n[cancelled, stopping the process and what it started]\n")
                     log.flush()
-                    status, rusage = _kill_group(proc.pid, term_grace_s)
-                    exited_at = time.monotonic()
-                    proc.returncode = os.waitstatus_to_exitcode(status)
+                    child.stop(term_grace_s)
+                    exited, exited_at = True, time.monotonic()
             elif time.monotonic() - exited_at > _DRAIN_S:
                 # The process is done but something it started still holds
                 # the output pipe open. A finished stage leaves nothing behind.
-                _signal_group(proc.pid, signal.SIGKILL)
+                child.kill_rest()
                 break
-        if status is None:  # EOF arrived first: the process closed stdout
-            _, status, rusage = os.wait4(proc.pid, 0)
-            proc.returncode = os.waitstatus_to_exitcode(status)
+        if not exited:  # EOF arrived first: the process closed stdout
+            child.wait()
         # Anything left in the queue after EOF or the drain timeout.
         while True:
             try:
@@ -231,10 +223,11 @@ def run_process(
             if rest is not None:
                 handle(rest)
         wall = time.monotonic() - start
-        exit_code = os.waitstatus_to_exitcode(status)
+        exit_code = child.exit_code
+        cpu_s, peak_rss_mb = child.usage()
+        child.close()
         log.write(f"\n[exit code {exit_code}{', cancelled' if cancelled else ''}]\n")
 
-    assert rusage is not None
     return ProcessResult(
         argv=args,
         exit_code=exit_code,
@@ -242,11 +235,173 @@ def run_process(
         started=started_at,
         finished=utc_now(),
         wall_s=round(wall, 3),
-        cpu_s=round(rusage.ru_utime + rusage.ru_stime, 3),
-        peak_rss_mb=_peak_rss_mb(rusage.ru_maxrss, parent_maxrss, hwm_kb),
+        cpu_s=round(cpu_s, 3),
+        peak_rss_mb=peak_rss_mb,
         log_path=log_path,
         tail=list(tail),
     )
+
+
+class _Child:
+    """A started backend process and the tree under it (platform part)."""
+
+    pid: int
+    exit_code: int
+
+    def __init__(
+        self, args: list[str], *, cwd: Path | None, env: Mapping[str, str] | None, output: int
+    ) -> None:
+        raise NotImplementedError
+
+    def poll(self) -> bool:
+        """True once the process has exited (then `exit_code` is set)."""
+        raise NotImplementedError
+
+    def wait(self) -> None:
+        raise NotImplementedError
+
+    def sample(self) -> None:
+        """Note the current memory use (where it can't be read at the end)."""
+
+    def stop(self, grace_s: float) -> None:
+        """Cancel: end the process and everything it started."""
+        raise NotImplementedError
+
+    def kill_rest(self) -> None:
+        """End whatever the (exited) process left running."""
+        raise NotImplementedError
+
+    def usage(self) -> tuple[float, float | None]:
+        """CPU seconds and peak memory in MB (None if unknown)."""
+        raise NotImplementedError
+
+    def close(self) -> None:
+        pass
+
+
+def _popen(
+    args: list[str],
+    cwd: Path | None,
+    env: Mapping[str, str] | None,
+    output: int,
+    *,
+    start_new_session: bool = False,
+    creationflags: int = 0,
+) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(  # noqa: S603 - argument list, never a shell
+        args,
+        cwd=cwd,
+        env={**os.environ, **env} if env else None,
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+        stderr=output,
+        start_new_session=start_new_session,
+        creationflags=creationflags,
+    )
+
+
+if sys.platform != "win32":
+
+    class _PosixChild(_Child):
+        """Its own session (process group), reaped with wait4 for its rusage."""
+
+        def __init__(
+            self, args: list[str], *, cwd: Path | None, env: Mapping[str, str] | None,
+            output: int,
+        ) -> None:  # fmt: skip
+            self.parent_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            self.proc = _popen(args, cwd, env, output, start_new_session=True)
+            self.pid = self.proc.pid
+            self.exit_code = 0
+            self.rusage: resource.struct_rusage | None = None
+            self.hwm_kb = 0
+
+        def _reaped(self, status: int, rusage: resource.struct_rusage) -> None:
+            self.rusage = rusage
+            self.exit_code = os.waitstatus_to_exitcode(status)
+            self.proc.returncode = self.exit_code  # Popen must not reap it again
+
+        def poll(self) -> bool:
+            pid, status, rusage = os.wait4(self.pid, os.WNOHANG)
+            if pid == self.pid:
+                self._reaped(status, rusage)
+                return True
+            return False
+
+        def wait(self) -> None:
+            _, status, rusage = os.wait4(self.pid, 0)
+            self._reaped(status, rusage)
+
+        def sample(self) -> None:
+            self.hwm_kb = max(self.hwm_kb, _vm_hwm_kb(self.pid))
+
+        def stop(self, grace_s: float) -> None:
+            self._reaped(*_kill_group(self.pid, grace_s))
+
+        def kill_rest(self) -> None:
+            _signal_group(self.pid, signal.SIGKILL)
+
+        def usage(self) -> tuple[float, float | None]:
+            if self.rusage is None:
+                return 0.0, None
+            cpu = self.rusage.ru_utime + self.rusage.ru_stime
+            return cpu, _peak_rss_mb(self.rusage.ru_maxrss, self.parent_maxrss, self.hwm_kb)
+
+    class _WindowsChild(_Child):  # only used on Windows
+        pass
+
+else:
+
+    class _WindowsChild(_Child):
+        """In a Job Object, which holds the tree and counts its CPU and memory."""
+
+        def __init__(
+            self, args: list[str], *, cwd: Path | None, env: Mapping[str, str] | None,
+            output: int,
+        ) -> None:  # fmt: skip
+            no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            self.proc = _popen(args, cwd, env, output, creationflags=no_window | group)
+            self.pid = self.proc.pid
+            self.exit_code = 0
+            try:
+                self.job: Job | None = Job(self.pid)
+            except OSError:
+                self.job = None  # still runs; cancelling ends the process only
+
+        def poll(self) -> bool:
+            code = self.proc.poll()
+            if code is None:
+                return False
+            self.exit_code = code
+            return True
+
+        def wait(self) -> None:
+            self.exit_code = self.proc.wait()
+
+        def stop(self, grace_s: float) -> None:
+            # Windows tools get no polite signal: end the tree at once.
+            if self.job is not None:
+                self.job.terminate()
+            else:
+                self.proc.kill()
+            self.wait()
+
+        def kill_rest(self) -> None:
+            if self.job is not None:
+                self.job.terminate()
+
+        def usage(self) -> tuple[float, float | None]:
+            return self.job.usage() if self.job is not None else (0.0, None)
+
+        def close(self) -> None:
+            if self.job is not None:
+                self.job.close()
+
+
+def command_line(args: Sequence[str]) -> str:
+    """The command as its platform's shell would take it (for logs)."""
+    return subprocess.list2cmdline(args) if sys.platform == "win32" else shlex.join(args)
 
 
 def run_quick(argv: Sequence[str | Path], *, timeout_s: float = 30.0) -> str:
@@ -331,7 +486,7 @@ class _LineSplitter:
         return parts
 
 
-def _kill_group(pid: int, term_grace_s: float) -> tuple[int, resource.struct_rusage]:
+def _kill_group(pid: int, term_grace_s: float) -> tuple[int, Any]:
     """SIGTERM the process group, SIGKILL it if the leader is still alive later."""
     for sig, grace in ((signal.SIGTERM, term_grace_s), (signal.SIGKILL, None)):
         _signal_group(pid, sig)

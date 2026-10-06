@@ -27,8 +27,9 @@ def available_memory() -> int:
     """Bytes of memory a new process can use without pushing the system into swap.
 
     Linux: MemAvailable, further capped by the cgroup's memory limit (systemd
-    user slices, containers). Elsewhere: half the physical memory, a
-    conservative stand-in (macOS doesn't report "available" simply).
+    user slices, containers). Windows: the available physical memory.
+    Elsewhere: half the physical memory, a conservative stand-in (macOS
+    doesn't report "available" simply).
     """
     if sys.platform.startswith("linux"):
         available = _meminfo_available()
@@ -36,6 +37,8 @@ def available_memory() -> int:
         candidates = [v for v in (available, limit) if v is not None]
         if candidates:
             return min(candidates)
+    if sys.platform == "win32":
+        return _windows_available() or 4 * GIB
     try:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (ValueError, OSError, AttributeError):
@@ -64,3 +67,29 @@ def _cgroup_headroom() -> int | None:
         return max(0, int(limit) - int((folder / "memory.current").read_text()))
     except (OSError, ValueError, IndexError):
         return None
+
+
+def _windows_available() -> int | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", wintypes.DWORD),
+            ("dwMemoryLoad", wintypes.DWORD),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = MemoryStatus()
+    status.dwLength = ctypes.sizeof(status)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    return int(status.ullAvailPhys)

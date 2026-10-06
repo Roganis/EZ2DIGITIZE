@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from pathlib import Path
 
 import pytest
@@ -57,7 +56,6 @@ def test_open_errors_are_shown(
     assert window.page is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 def test_closing_while_running_asks_and_cancels(
     qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

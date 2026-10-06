@@ -16,8 +16,6 @@ from ez2digitize.core.capture import CaptureBundle, CaptureError, import_files
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import CancelToken, Progress
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
-
 
 @pytest.fixture
 def project(tmp_path: Path) -> Project:

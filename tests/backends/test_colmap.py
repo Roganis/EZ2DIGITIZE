@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import sqlite3
 import struct
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -68,7 +67,6 @@ def test_parse_version(text: str, version: str | None) -> None:
     assert parse_version(text) == version
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch) -> None:
     exe = fake_tool(tmp_path / "colmap", "COLMAP 4.2.1 (Commit abc without CUDA)")
     found = colmap.locate(exe)
@@ -78,7 +76,6 @@ def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyP
     assert old.version == "3.9.1" and not old.supported
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate_errors(tmp_path: Path, fake_tool: FakeTool) -> None:
     with pytest.raises(BackendMissing, match="not found"):
         colmap.locate(tmp_path / "missing")

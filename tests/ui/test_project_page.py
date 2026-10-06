@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The project page driving the real pipeline with fake backends."""
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,8 +15,6 @@ from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.project import Project
 from ez2digitize.pipeline import Tools
 from ez2digitize.ui.project_page import ProjectPage
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 
 TIMEOUT_MS = 20_000
 

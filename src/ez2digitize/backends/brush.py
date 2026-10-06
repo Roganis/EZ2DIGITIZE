@@ -37,6 +37,7 @@ from pathlib import Path
 
 from ez2digitize.backends.colmap import MASK_SUFFIX, MASKS_OUT
 from ez2digitize.backends.common import BackendMissing, find_tool, result_parameters
+from ez2digitize.core.files import link
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
@@ -119,15 +120,15 @@ def train(
         images.mkdir()
         # Relative, so a moved project still works.
         up = Path("..") / ".." / ".."
-        (dataset / "sparse" / "0").symlink_to(up / source.name / "sparse")
+        link(up / source.name / "sparse", dataset / "sparse" / "0")
         for capture in sorted(p.name for p in (source / "images").iterdir() if p.is_dir()):
-            (images / capture).symlink_to(up / source.name / "images" / capture)
+            link(up / source.name / "images" / capture, images / capture)
         if warped is not None:
             (images / MASKS_DIR).mkdir()
             for mask in sorted((warped / MASKS_OUT).glob(f"*{MASK_SUFFIX}")):
                 stem = mask.name.removesuffix(MASK_SUFFIX)
-                link = images / MASKS_DIR / f"{stem}.png"
-                link.symlink_to(Path("..") / up / warped.name / MASKS_OUT / mask.name)
+                target = images / MASKS_DIR / f"{stem}.png"
+                link(Path("..") / up / warped.name / MASKS_OUT / mask.name, target)
 
     argv: list[str | Path] = [
         brush.path,

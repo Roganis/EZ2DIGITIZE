@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from scripts import python_script
 
 from ez2digitize.core.capture import import_files
 from ez2digitize.core.project import Project
@@ -21,8 +22,6 @@ from ez2digitize.core.stage import (
     stage_input,
     tree_input,
 )
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="runner is POSIX only")
 
 TOOL = Backend("fake-tool", "1.0.0")
 
@@ -100,10 +99,7 @@ def test_changes_invalidate(project: Project, changed: dict[str, Any]) -> None:
 
 def tool_script(path: Path, text: str) -> Path:
     """An executable script that writes `text` to out.txt."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!{sys.executable}\nopen('out.txt', 'w').write({text!r})\n")
-    path.chmod(0o755)
-    return path
+    return python_script(path, f"open('out.txt', 'w').write({text!r})\n")
 
 
 def script_spec(tool: Path) -> StageSpec:

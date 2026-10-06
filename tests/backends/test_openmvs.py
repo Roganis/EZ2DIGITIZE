@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -44,7 +43,6 @@ def test_parse_version() -> None:
     assert parse_version("nothing") is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch) -> None:
     for tool in TOOLS:
         fake_tool(tmp_path / "bin" / tool, BANNER)

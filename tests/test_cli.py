@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from pathlib import Path
 
 import pytest
+from scripts import printing_script
 
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.cli import main
@@ -106,13 +106,9 @@ def test_format_list_parsing() -> None:
 
 
 def _tool(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\necho '{text}'\n")
-    path.chmod(0o755)
-    return path
+    return printing_script(path, text)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_check(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

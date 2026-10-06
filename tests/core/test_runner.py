@@ -16,10 +16,11 @@ from ez2digitize.core.runner import (
     ProcessStartError,
     Progress,
     Started,
+    command_line,
     run_process,
 )
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="runner is POSIX only")
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
 
 def py(code: str) -> list[str]:
@@ -27,6 +28,17 @@ def py(code: str) -> list[str]:
 
 
 def _alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE, query
+        if not handle:
+            return False
+        try:
+            return bool(kernel32.WaitForSingleObject(handle, 0) == 0x102)  # WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -64,7 +76,7 @@ def test_success_logs_and_events(tmp_path: Path) -> None:
     assert sorted(lines) == ["one", "three", "two"]
     assert result.tail == lines
     text = log.read_text()
-    assert text.startswith(f"$ {sys.executable} -c ")
+    assert text.startswith(f"$ {command_line([sys.executable, '-c'])} ")
     assert "one\n" in text and "two\n" in text and text.endswith("[exit code 0]\n")
     assert result.wall_s > 0 and result.cpu_s >= 0
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", result.started)
@@ -75,6 +87,7 @@ def test_failure_exit_code(tmp_path: Path) -> None:
     assert result.exit_code == 3 and not result.ok
 
 
+@POSIX
 def test_killed_by_signal_reports_negative_code(tmp_path: Path) -> None:
     result = run_process(
         py("import os, signal; os.kill(os.getpid(), signal.SIGKILL)"),
@@ -149,11 +162,13 @@ def test_cancel_kills_whole_process_tree(tmp_path: Path) -> None:
     )
     assert time.monotonic() - started < 15
     assert result.cancelled and not result.ok
-    assert result.exit_code == -15  # SIGTERM
+    # POSIX: SIGTERM. Windows: the job is ended, exit code 1.
+    assert result.exit_code == (1 if sys.platform == "win32" else -15)
     assert _wait_dead(int(pid_file.read_text()))
     assert "[cancelled" in (tmp_path / "log.txt").read_text()
 
 
+@POSIX
 def test_cancel_escalates_to_sigkill(tmp_path: Path) -> None:
     cancel = CancelToken()
 
@@ -193,7 +208,7 @@ def test_leftover_child_holding_output_is_killed(tmp_path: Path) -> None:
     assert _wait_dead(int(pid_file.read_text()))
 
 
-@pytest.mark.skipif(sys.platform not in ("linux", "darwin"), reason="needs rusage")
+@pytest.mark.skipif(sys.platform not in ("linux", "darwin", "win32"), reason="no peak memory")
 def test_peak_rss_is_the_childs(tmp_path: Path) -> None:
     result = run_process(
         py("""
@@ -259,6 +274,7 @@ def test_line_splitter(chunks: list[bytes], lines: list[str]) -> None:
     assert out + splitter.close() == lines
 
 
+@POSIX
 def test_pty_delivers_buffered_output_while_running(tmp_path: Path) -> None:
     # Python, like C stdio, buffers stdout in blocks unless it is a terminal.
     code = """

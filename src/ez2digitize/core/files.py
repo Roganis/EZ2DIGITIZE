@@ -7,7 +7,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import struct
+import sys
 import tempfile
 import zlib
 from datetime import UTC, datetime
@@ -90,3 +92,29 @@ def write_uniform_png(path: Path, width: int, height: int, value: int) -> None:
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
     )
+
+
+def link(target: Path, link_path: Path) -> None:
+    """Make `link_path` point at `target` (relative to the link's folder, or absolute).
+
+    A relative symlink where possible, so a moved project still works. On
+    Windows, where symlinks need Developer Mode or admin rights, a folder
+    becomes a directory junction (absolute) and a file a hard link, or a
+    copy across drives.
+    """
+    try:
+        link_path.symlink_to(target)
+        return
+    except (OSError, NotImplementedError):
+        if sys.platform != "win32":
+            raise
+    resolved = (link_path.parent / target).resolve()
+    if resolved.is_dir():
+        import _winapi
+
+        _winapi.CreateJunction(str(resolved), str(link_path))
+        return
+    try:
+        os.link(resolved, link_path)
+    except OSError:
+        shutil.copyfile(resolved, link_path)

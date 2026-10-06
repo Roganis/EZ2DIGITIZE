@@ -10,8 +10,6 @@ from ez2digitize.backends.common import bundled_bin_dir, find_tool
 
 FakeTool = Callable[[Path, str], Path]
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
-
 
 @pytest.fixture
 def dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_tool: FakeTool) -> dict[str, Path]:

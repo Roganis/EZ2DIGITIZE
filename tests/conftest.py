@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from scripts import python_script
 
 from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.colmap import Colmap
@@ -72,7 +73,7 @@ elif cmd == "image_undistorter_standalone":
 FAKE_OPENMVS = """
 import os, sys
 from pathlib import Path
-tool = Path(sys.argv[0]).name
+tool = Path(sys.argv[0]).stem  # Windows runs the .py next to a .cmd
 args = sys.argv[1:]
 print(f"fake {tool}", flush=True)
 if os.environ.get("FAKE_FAIL") == tool:
@@ -186,10 +187,7 @@ for n, job in enumerate(jobs, 1):
 
 
 def _script(path: Path, body: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!{sys.executable}\n{body}")
-    path.chmod(0o755)
-    return path
+    return python_script(path, body)
 
 
 @pytest.fixture

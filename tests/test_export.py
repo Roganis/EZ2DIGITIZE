@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from ez2digitize.core.project import Project
 from ez2digitize.export import ExportError, _file_stem, export_mesh
 from ez2digitize.pipeline import MeshSettings, Tools
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 NOW = datetime(2026, 10, 5, 18, 0, 0)
 
 

@@ -79,7 +79,7 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 [tool.mypy]
 strict = true
 files = ["src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging", "tools/viewer"]
-mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging"
+mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]

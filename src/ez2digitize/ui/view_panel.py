@@ -6,40 +6,47 @@ The viewer (ui.viewer, a QtWebEngine page) starts only when the tab is
 first shown: it costs a Chromium process. Meshes converted for it are
 cached in a temporary folder that goes away with the panel.
 
-With the camera placement or the dense cloud on screen, the crop box can
-be set (see ez2digitize.crop): ticking "Crop box" starts from a box around
-most of the sparse points; dragging its handles in the view, or turning
-it, saves it to the project, and the next build keeps only what is inside.
+On the camera placement and the dense cloud, tools next to the view's
+name work on it, one at a time, each with one row of controls:
 
-On the same views the scale is set (see ez2digitize.scale): "Pick two
-points", click them, type their real distance, "Set scale"; exports then
-come out in millimetres and metres.
+- Coverage (camera placement only, see coverage.rings): the cameras' rings
+  around the object with their gaps, the cameras that matched few photos
+  or were placed far off, and a summary.
+- Crop box (see ez2digitize.crop): "Use a crop box" starts from a box
+  around most of the sparse points; dragging its handles in the view, or
+  turning it, saves it to the project, and the next build keeps only what
+  is inside. A box that is set shows with every tool; only this one drags it.
+- Scale (see ez2digitize.scale): "Pick two points", click them, type their
+  real distance, "Set scale"; exports then come out in millimetres and
+  metres.
+- Upright (see ez2digitize.upright): which way is up comes from the
+  photos; "Level" (three points on the surface the object stands on), the
+  tip buttons (quarter turns) and "Turn" correct it, "Automatic" goes back
+  to the estimate. The view reloads stood up the new way.
 
-And the orientation (see ez2digitize.upright): which way is up comes from
-the photos; "Level" (three points on the surface the object stands on),
-the tip buttons (quarter turns) and "Turn" correct it, "Automatic" goes
-back to the estimate. The view reloads stood up the new way.
-
-The camera placement also shows its coverage (see coverage.rings): the
-cameras' rings around the object with their gaps, and the cameras that
-matched few photos or were placed far off, with a summary above the view.
+What a tool draws (rings, the scale's points) shows only while it is
+chosen, and leaving a tool stops its point picking.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTemporaryDir, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -52,6 +59,13 @@ from ez2digitize.ui.viewer import ViewerWidget
 # The views drawn in the reconstruction's frame, where the box belongs (the
 # exported mesh has been moved onto the ground).
 CROP_VIEWS = ("cameras", "dense")
+# The tools: their button and the views they work on, in order.
+TOOLS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "coverage": ("Coverage", ("cameras",)),
+    "crop": ("Crop box", CROP_VIEWS),
+    "scale": ("Scale", CROP_VIEWS),
+    "upright": ("Upright", CROP_VIEWS),
+}
 CROP_HINT = "Drag the yellow handles to move the box's faces. The next build keeps what is inside."
 PICK_HINT = "Click two points whose real distance you know (the ends of the object, say)."
 LEVEL_HINT = "Click three points, far apart, on the surface the object stands on."
@@ -67,6 +81,7 @@ class ViewPanel(QWidget):
         self._locked = False
         self._syncing = False
         self._coverage_of: tuple[views.View, str] | None = None  # (view, summary), cached
+        self._wanted_tool = "coverage"  # the user's choice; another if the view lacks it
 
         self.choice = QComboBox()
         self.choice.currentIndexChanged.connect(lambda _i: self._show_chosen())
@@ -74,12 +89,23 @@ class ViewPanel(QWidget):
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.placeholder = QLabel("Build a mesh or splats to see them here.")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tools: dict[str, QPushButton] = {}
+        self._tool_group = QButtonGroup(self)
+        self._tool_group.setExclusive(True)
         row = QHBoxLayout()
         row.addWidget(QLabel("Show:"))
         row.addWidget(self.choice)
+        row.addSpacing(12)
+        for name, (label, _views) in TOOLS.items():
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.toggled.connect(partial(self._on_tool_toggled, name))
+            self._tool_group.addButton(button)
+            self.tools[name] = button
+            row.addWidget(button)
         row.addWidget(self.status, 1)
 
-        self.use_crop = QCheckBox("Crop box")
+        self.use_crop = QCheckBox("Use a crop box")
         self.use_crop.setToolTip(
             "Keep only what is inside a box in the dense reconstruction (and so the mesh). "
             "Without one, OpenMVS picks the region itself, often with some of the table."
@@ -105,7 +131,6 @@ class ViewPanel(QWidget):
         crop_layout.addWidget(self.yaw)
         crop_layout.addWidget(self.fit)
         crop_layout.addWidget(self.crop_hint, 1)
-        self.crop_row.hide()
 
         self._picked: tuple[Vector, Vector] | None = None  # upright frame, not saved yet
         self.pick = QPushButton("Pick two points")
@@ -128,14 +153,12 @@ class ViewPanel(QWidget):
         self.scale_row = QWidget()
         scale_layout = QHBoxLayout(self.scale_row)
         scale_layout.setContentsMargins(0, 0, 0, 0)
-        scale_layout.addWidget(QLabel("Scale:"))
         scale_layout.addWidget(self.pick)
         scale_layout.addWidget(QLabel("Real distance:"))
         scale_layout.addWidget(self.distance)
         scale_layout.addWidget(self.set_scale)
         scale_layout.addWidget(self.clear_scale)
         scale_layout.addWidget(self.scale_hint, 1)
-        self.scale_row.hide()
 
         self.level = QPushButton("Level: pick 3 points")
         self.level.setCheckable(True)
@@ -168,7 +191,6 @@ class ViewPanel(QWidget):
         self.orient_row = QWidget()
         orient_layout = QHBoxLayout(self.orient_row)
         orient_layout.setContentsMargins(0, 0, 0, 0)
-        orient_layout.addWidget(QLabel("Upright:"))
         orient_layout.addWidget(self.level)
         orient_layout.addWidget(self.tip_forward)
         orient_layout.addWidget(self.tip_sideways)
@@ -176,32 +198,36 @@ class ViewPanel(QWidget):
         orient_layout.addWidget(self.turn)
         orient_layout.addWidget(self.automatic_up)
         orient_layout.addWidget(self.orient_hint, 1)
-        self.orient_row.hide()
 
-        self.show_coverage = QCheckBox("Coverage")
-        self.show_coverage.setChecked(True)
-        self.show_coverage.setToolTip(
-            "Rings of cameras around the object: orange and red where photos are missing"
-        )
-        self.show_coverage.toggled.connect(self._on_coverage_toggled)
         self.coverage_summary = QLabel()
         self.coverage_summary.setWordWrap(True)
+        self.coverage_summary.setToolTip(
+            "Rings of cameras around the object: orange and red where photos are missing"
+        )
         self.coverage_row = QWidget()
         coverage_layout = QHBoxLayout(self.coverage_row)
         coverage_layout.setContentsMargins(0, 0, 0, 0)
-        coverage_layout.addWidget(self.show_coverage)
         coverage_layout.addWidget(self.coverage_summary, 1)
-        self.coverage_row.hide()
+
+        # One row of controls: the chosen tool's.
+        self.tool_rows = {
+            "coverage": self.coverage_row,
+            "crop": self.crop_row,
+            "scale": self.scale_row,
+            "upright": self.orient_row,
+        }
+        self.tool_pages = QStackedWidget()
+        self.tool_pages.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        for page in self.tool_rows.values():
+            self.tool_pages.addWidget(page)
+        self.tool_pages.hide()
 
         self.body = QVBoxLayout()
         self.body.addWidget(self.placeholder, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(row)
-        layout.addWidget(self.coverage_row)
-        layout.addWidget(self.crop_row)
-        layout.addWidget(self.scale_row)
-        layout.addWidget(self.orient_row)
+        layout.addWidget(self.tool_pages)
         layout.addLayout(self.body, 1)
 
     def refresh(self, prefer: views.ViewKey | None = None) -> None:
@@ -238,6 +264,37 @@ class ViewPanel(QWidget):
         key = self.choice.currentData()
         return next((v for v in self.available if v.key == key), None)
 
+    @property
+    def tool(self) -> str | None:
+        """The tool in use: the one chosen if the view has it, else its first; None if none."""
+        view = self._chosen()
+        usable = [t for t, (_label, keys) in TOOLS.items() if view and view.key in keys]
+        if not usable:
+            return None
+        return self._wanted_tool if self._wanted_tool in usable else usable[0]
+
+    def choose_tool(self, name: str) -> None:
+        self.tools[name].setChecked(True)
+
+    def _on_tool_toggled(self, name: str, on: bool) -> None:
+        if on and name != self._wanted_tool:
+            self._wanted_tool = name
+            self._sync_crop()
+
+    def _sync_tools(self) -> None:
+        """The buttons of the view's tools, and the chosen one's row."""
+        view = self._chosen()
+        tool = self.tool
+        for name, button in self.tools.items():
+            button.setVisible(view is not None and view.key in TOOLS[name][1])
+            if name == tool and not button.isChecked():
+                button.blockSignals(True)
+                button.setChecked(True)
+                button.blockSignals(False)
+        self.tool_pages.setVisible(tool is not None)
+        if tool is not None:
+            self.tool_pages.setCurrentWidget(self.tool_rows[tool])
+
     def _show_chosen(self) -> None:
         view = self._chosen()
         self._sync_crop()
@@ -262,7 +319,6 @@ class ViewPanel(QWidget):
             self.viewer.crop_changed.connect(self._on_crop_dragged)
             self.viewer.measured.connect(self._on_measured)
             self.viewer.level_picked.connect(self._on_level_picked)
-            self.viewer.set_coverage(self.show_coverage.isChecked())
             self.body.addWidget(self.viewer, 1)
             self._sync_crop()
         return self.viewer
@@ -277,10 +333,10 @@ class ViewPanel(QWidget):
     # --- the crop box -----------------------------------------------------------
 
     def _sync_crop(self) -> None:
-        """Show the crop controls and the box for the view on screen."""
+        """Show the tools, the crop controls and the box for the view on screen."""
+        self._sync_tools()
         view = self._chosen()
         here = view is not None and view.key in CROP_VIEWS
-        self.crop_row.setVisible(here)
         box = crop.current(self.project)
         upright_box = crop.to_upright(box, views.upright_rotation(self.project)) if box else None
         self._syncing = True
@@ -300,8 +356,9 @@ class ViewPanel(QWidget):
         else:
             self.crop_hint.setText("")
         if self.viewer is not None:
+            # Shown with every tool (it changes what is built); dragged with its own.
             shown = upright_box.to_dict() if (here and upright_box) else None
-            self.viewer.set_crop_box(shown, editable=editable)
+            self.viewer.set_crop_box(shown, editable=editable and self.tool == "crop")
         self._sync_scale()
         self._sync_orientation()
         self._sync_coverage()
@@ -357,14 +414,13 @@ class ViewPanel(QWidget):
         """Show the scale controls, and the scale's points, for the view on screen."""
         view = self._chosen()
         here = view is not None and view.key in CROP_VIEWS
-        self.scale_row.setVisible(here)
         editable = here and not self._locked and crop.camera_run(self.project) is not None
         current = scale.current(self.project)
         self.pick.setEnabled(editable)
         self.distance.setEnabled(editable)
         self.set_scale.setEnabled(editable and (self._picked is not None or current is not None))
         self.clear_scale.setEnabled(editable and scale.stored(self.project) is not None)
-        if not editable and self.pick.isChecked():
+        if (not editable or self.tool != "scale") and self.pick.isChecked():
             self.pick.setChecked(False)
         upright = views.upright_rotation(self.project)
         points: tuple[Vector, Vector] | None = None
@@ -384,15 +440,10 @@ class ViewPanel(QWidget):
         elif not self.pick.isChecked():
             self.scale_hint.setText("Not set: exports are in arbitrary units.")
         if self.viewer is not None:
-            shown = [list(p) for p in points] if (here and points) else None
+            shown = [list(p) for p in points] if (points and self.tool == "scale") else None
             self.viewer.set_measure(shown, label)
 
     def _on_pick_toggled(self, on: bool) -> None:
-        if on and self.level.isChecked():  # one picking at a time
-            self.level.blockSignals(True)
-            self.level.setChecked(False)
-            self.level.blockSignals(False)
-            self._sync_orientation()
         if self.viewer is None:
             return
         self.viewer.set_measuring(on)
@@ -446,37 +497,32 @@ class ViewPanel(QWidget):
 
     def _sync_coverage(self) -> None:
         view = self._chosen()
-        here = view is not None and view.key == "cameras"
-        self.coverage_row.setVisible(here)
-        if view is None or not here:
+        if self.viewer is not None:
+            self.viewer.set_coverage(self.tool == "coverage")
+        if view is None or view.key != "cameras":
             return
         if self._coverage_of is None or self._coverage_of[0] != view:
             rings, weak = views.camera_coverage(view)
             if rings is not None:
                 summary = coverage.describe(rings, len(weak))
             elif view.upright is None:
-                summary = "Which way is up is unknown, so no rings: level the model below."
+                summary = "Which way is up is unknown, so no rings: level the model (Upright)."
             else:
                 summary = "Too few cameras, or a camera that stood still: no rings."
             self._coverage_of = (view, summary)
         self.coverage_summary.setText(self._coverage_of[1])
-
-    def _on_coverage_toggled(self, on: bool) -> None:
-        if self.viewer is not None:
-            self.viewer.set_coverage(on)
 
     # --- the orientation --------------------------------------------------------
 
     def _sync_orientation(self) -> None:
         view = self._chosen()
         here = view is not None and view.key in CROP_VIEWS
-        self.orient_row.setVisible(here)
         editable = here and not self._locked and crop.camera_run(self.project) is not None
         for widget in (self.level, self.tip_forward, self.tip_sideways, self.turn):
             widget.setEnabled(editable)
         manual = upright.current(self.project)
         self.automatic_up.setEnabled(editable and upright.stored(self.project) is not None)
-        if not editable and self.level.isChecked():
+        if (not editable or self.tool != "upright") and self.level.isChecked():
             self.level.setChecked(False)
         if not self._turn_timer.isActive():
             self.turn.blockSignals(True)
@@ -524,10 +570,6 @@ class ViewPanel(QWidget):
             self._orient(upright.turned(start, self.turn.value()))
 
     def _on_level_toggled(self, on: bool) -> None:
-        if on and self.pick.isChecked():  # one picking at a time
-            self.pick.blockSignals(True)
-            self.pick.setChecked(False)
-            self.pick.blockSignals(False)
         if self.viewer is not None:
             self.viewer.set_picking(3 if on else 0, "level")
         self._sync_orientation()

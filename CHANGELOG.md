@@ -29,13 +29,14 @@ The first release.
 
 ### The 3D view
 
-- Camera placement, dense cloud, textured mesh and splats in the app.
-- Coverage on the camera rings: where photos are missing, and the photos
-  that matched few others.
-- A crop box: the dense cloud and mesh keep only what is inside.
-- Real-world scale from two picked points and their measured distance.
-- Which way is up: from how the photos were held, or set by hand (level on
-  three points, tip, turn).
+- Camera placement, dense cloud, textured mesh and splats in the app, with
+  four tools on the camera placement and the dense cloud, one at a time:
+  - Coverage on the camera rings: where photos are missing, and the photos
+    that matched few others.
+  - A crop box: the dense cloud and mesh keep only what is inside.
+  - Real-world scale from two picked points and their measured distance.
+  - Upright: which way is up comes from how the photos were held, or is
+    set by hand (level on three points, tip, turn).
 
 ### Exports
 

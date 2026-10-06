@@ -44,16 +44,20 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    simplifies the result for the web or a slicer.
 6. Press **Build mesh**. The steps list shows progress; the Log tab shows
    the tools' output. On a recent desktop, 60 photos take about 15 minutes
-   at Balanced. To keep the table out of the model, press **Place cameras**
-   first: the 3D view opens on the camera placement, where **Crop box**
-   puts a box around the object; drag its yellow handles to fit, then
-   Build mesh. For a model at its real size, measure two points on the
-   object (its height, say) and, in the same view, press **Pick two
-   points**, click them, type the distance and press **Set scale**. If the
-   model lies tilted, **Level: pick 3 points** on the mat stands it up.
-   The camera placement also shows where photos are missing: a ring per
-   height, gaps shaded orange (red when a whole side is missing), and
-   cameras that matched few others in orange; take more photos there.
+   at Balanced. Better: press **Place cameras** first. The 3D view opens on
+   the camera placement, with four tools next to the view's name:
+   - **Coverage** shows where photos are missing: a ring per height, gaps
+     shaded orange (red when a whole side is missing), and cameras that
+     matched few others in orange. Take more photos there.
+   - **Crop box** keeps the table out of the model: **Use a crop box**
+     puts a box around the object; drag its yellow handles to fit.
+   - **Scale** gives the model its real size: measure two points on the
+     object (its height, say), press **Pick two points**, click them, type
+     the distance and press **Set scale**.
+   - **Upright**: if the model lies tilted, **Level: pick 3 points** on the
+     mat stands it up.
+
+   Then Build mesh.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),

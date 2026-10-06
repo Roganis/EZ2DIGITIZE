@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The 3D view panel's crop box and scale controls (the viewer itself: test_viewer.py)."""
+"""The 3D view panel's tools: coverage, crop box, scale, upright (the viewer: test_viewer.py)."""
 
 import struct
 from pathlib import Path
@@ -51,7 +51,8 @@ def test_crop_controls(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="cameras")
-    assert not panel.crop_row.isHidden()
+    panel.choose_tool("crop")
+    assert panel.tool == "crop" and panel.tool_pages.currentWidget() is panel.crop_row
     assert not panel.use_crop.isChecked() and not panel.yaw.isEnabled()
 
     panel.use_crop.setChecked(True)  # starts from the sparse points
@@ -78,22 +79,39 @@ def test_crop_controls(qtbot: QtBot, project: Project) -> None:
     assert crop.stored(project) is None
 
 
-def test_no_crop_controls_for_the_mesh(qtbot: QtBot, project: Project) -> None:
+def test_tools_per_view(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="mesh")  # not there: falls back to the first view, cameras
     assert panel.choice.currentData() == "cameras"
+    assert [n for n, b in panel.tools.items() if not b.isHidden()] == [
+        "coverage", "crop", "scale", "upright",
+    ]  # fmt: skip
+    assert panel.tool == "coverage" and panel.tools["coverage"].isChecked()
+    assert not panel.tool_pages.isHidden()
+
+    # The dense cloud has no coverage: the first tool it has, until the cameras again.
+    _succeed(project, "densify", "d1")
+    (project.stage_dir("densify") / "scene_dense.ply").write_bytes(b"ply\n")
+    panel.refresh(prefer="dense")
+    assert panel.tools["coverage"].isHidden() and panel.tool == "crop"
+    assert panel.tool_pages.currentWidget() is panel.crop_row
+    panel.refresh(prefer="cameras")
+    assert panel.tool == "coverage"
+
+    # Nothing to work on: no tools.
     panel.choice.clear()
     panel._sync_crop()
-    assert panel.crop_row.isHidden()
-    assert panel.scale_row.isHidden()
+    assert panel.tool is None and panel.tool_pages.isHidden()
+    assert all(b.isHidden() for b in panel.tools.values())
 
 
 def test_scale_controls(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="cameras")
-    assert not panel.scale_row.isHidden() and panel.pick.isEnabled()
+    panel.choose_tool("scale")
+    assert panel.tool_pages.currentWidget() is panel.scale_row and panel.pick.isEnabled()
     assert not panel.set_scale.isEnabled() and "Not set" in panel.scale_hint.text()
 
     # The viewer reports two picked points (upright frame), 1 unit apart.
@@ -126,7 +144,8 @@ def test_orientation_controls(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="cameras")
-    assert not panel.orient_row.isHidden() and panel.level.isEnabled()
+    panel.choose_tool("upright")
+    assert panel.tool_pages.currentWidget() is panel.orient_row and panel.level.isEnabled()
     assert "From how the photos were held" in panel.orient_hint.text()
     assert not panel.automatic_up.isEnabled()
     before = views.upright_rotation(project)
@@ -164,22 +183,24 @@ def test_orientation_controls(qtbot: QtBot, project: Project) -> None:
     assert upright.stored(project) is None and views.upright_rotation(project) == before
 
 
-def test_one_picking_at_a_time(qtbot: QtBot, project: Project) -> None:
+def test_leaving_a_tool_stops_its_picking(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="cameras")
-    panel.level.setChecked(True)
+    panel.choose_tool("scale")
     panel.pick.setChecked(True)
-    assert not panel.level.isChecked()
-    panel.level.setChecked(True)
+    panel.choose_tool("upright")
     assert not panel.pick.isChecked()
+    panel.level.setChecked(True)
+    panel.choose_tool("crop")
+    assert not panel.level.isChecked()
 
 
-def test_coverage_row(qtbot: QtBot, project: Project) -> None:
+def test_coverage_tool(qtbot: QtBot, project: Project) -> None:
     panel = ViewPanel(project)
     qtbot.addWidget(panel)
     panel.refresh(prefer="cameras")
-    assert not panel.coverage_row.isHidden()
+    assert panel.tool == "coverage" and panel.tool_pages.currentWidget() is panel.coverage_row
     assert "Too few cameras" in panel.coverage_summary.text()  # one camera
 
     # A low ring all round and a high one half way.
@@ -191,9 +212,3 @@ def test_coverage_row(qtbot: QtBot, project: Project) -> None:
     # (Up comes from the photos, tilted a little by the half ring.)
     assert text.startswith("Photos by height: 24 at ") and ", 12 at " in text
     assert "Gaps in the rings" in text
-
-    panel.show_coverage.setChecked(False)  # remembered for the viewer
-    _succeed(project, "densify", "d1")
-    (project.stage_dir("densify") / "scene_dense.ply").write_bytes(b"ply\n")
-    panel.refresh(prefer="dense")
-    assert panel.coverage_row.isHidden()

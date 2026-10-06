@@ -48,8 +48,8 @@ logs and settings, never your photos. The logs do contain file paths.
   few others or were placed far off.
 - **The table or mat is part of the model.** Expected without masks; the
   export keeps everything the photos saw. Make masks (Masks tab), or set a
-  crop box (3D view, camera placement or dense cloud: Crop box), and build
-  again.
+  crop box (3D view, camera placement or dense cloud: the Crop box tool),
+  and build again.
 - **"The crop box was drawn on an earlier camera placement".** The cameras
   were placed again (new photos, other settings), which changes the
   coordinates; set the box again in the 3D view.
@@ -63,18 +63,18 @@ logs and settings, never your photos. The logs do contain file paths.
 - **The model lies on its side, or is tilted.** The upright estimate comes
   from how the photos were held; if the photos were taken at all angles it
   can't tell and keeps the reconstruction's own frame. Correct it in the 3D
-  view (camera placement or dense cloud): **Level: pick 3 points** and click
-  three points far apart on the mat or the surface the object stands on;
-  or **Tip forward** / **Tip sideways** by quarter turns. **Turn** sets
-  which way it faces, **Automatic** goes back to the estimate. Export
-  again afterwards. (The "Stand the model upright" setting turns all of
-  this off.)
+  view (camera placement or dense cloud, the Upright tool): **Level: pick 3
+  points** and click three points far apart on the mat or the surface the
+  object stands on; or **Tip forward** / **Tip sideways** by quarter turns.
+  **Turn** sets which way it faces, **Automatic** goes back to the estimate.
+  Export again afterwards. (The "Stand the model upright" setting turns all
+  of this off.)
 - **Wrong size.** Photos alone don't give the size: set the scale in the 3D
-  view (camera placement or dense cloud: Pick two points, then their real
-  distance) and export again. STL and 3MF are then in millimetres, OBJ and
-  GLB in metres (some programs assume other units on import: a model 1000
-  times too small or large is that). Measure a long distance: an error of
-  half a millimetre over 10 mm is 5 % of the size.
+  view (camera placement or dense cloud, the Scale tool: Pick two points,
+  then their real distance) and export again. STL and 3MF are then in
+  millimetres, OBJ and GLB in metres (some programs assume other units on
+  import: a model 1000 times too small or large is that). Measure a long
+  distance: an error of half a millimetre over 10 mm is 5 % of the size.
 - **"The scale was set on an earlier camera placement".** As with the crop
   box: the cameras were placed again, so pick the two points again.
 

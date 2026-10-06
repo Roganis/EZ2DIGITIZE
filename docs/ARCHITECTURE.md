@@ -386,6 +386,11 @@ the 3D view tab is first shown.
   page loads: stage outputs as they are, the sparse model as a PLY plus a
   JSON of cameras, the mesh as the export's GLB (or OpenMVS's PLY converted
   into a cached GLB).
+- The 3D view tab (`ui/view_panel.py`) puts tools next to the view's
+  name on the camera placement and the dense cloud, one at a time with one
+  row of controls: coverage (camera placement only), crop box, scale and
+  upright. What a tool draws shows while it is chosen; a crop box that is
+  set always shows, and only the crop tool drags it.
 - The page and files are served through an `ez2d://` scheme registered
   before the QApplication exists (`viewer.prepare()`); every other request
   is blocked. Python calls `ez2d.show(spec)`; the page answers with console

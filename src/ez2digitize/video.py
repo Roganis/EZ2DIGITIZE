@@ -19,7 +19,8 @@ fast the camera was turning (`metadata["motion"]`); `source_info["motion"]`
 says where it came from. With a gyroscope, the windows are cut by the angle
 the camera turned rather than by time (`frame_progress`): a walk around an
 object gets its frames evenly round it however the pace changed, and
-fewer frames come from pauses. Part of the spacing stays by time, so a
+fewer frames come from pauses. Within each window, candidates shot while
+the camera turned fast are passed over (`steady`). Part of the spacing stays by time, so a
 stretch of sideways movement without turning still gets frames; a camera
 that hardly turned at all (a turntable) is spaced by time alone.
 """
@@ -65,6 +66,10 @@ CANDIDATES_DIR = ".candidates"
 # tripod, or a turntable, turns only by shaking).
 TIME_SHARE = 0.25
 MIN_ANGLE_DEG = 90.0
+# Within a window, candidates turning faster than FAST_RATIO times the slowest
+# one, plus FAST_MARGIN_DEG_S (so hand tremor doesn't count), are passed over.
+FAST_RATIO = 1.5
+FAST_MARGIN_DEG_S = 10.0
 
 
 class VideoImportCancelled(Exception):
@@ -110,6 +115,7 @@ def select_frames(
     plan: FramePlan,
     progress: Sequence[float] | None = None,
     windows: int = 0,
+    turning: Sequence[float | None] | None = None,
 ) -> list[int]:
     """Index of the sharpest candidate in each window, in time order.
 
@@ -117,8 +123,14 @@ def select_frames(
     1 / rate seconds long. With `progress` (frame_progress), the video is
     cut into `windows` equal steps of it instead. Unreadable candidates
     (None) are skipped.
+
+    With `turning` (degrees a second at each candidate, from the
+    gyroscope), candidates turning fast for their window are passed over
+    first (`steady`): the sharpness score also depends on what the frame
+    shows, so a busy, blurred frame can outscore a crisp, plain one, while
+    the gyroscope measures the cause of blur itself.
     """
-    best: dict[int, int] = {}
+    groups: dict[int, list[int]] = {}
     for index, score in enumerate(scores):
         if score is None:
             continue
@@ -126,10 +138,22 @@ def select_frames(
             window = min(math.floor(progress[index] * windows), windows - 1)
         else:
             window = math.floor(index * plan.rate / plan.candidate_rate + 1e-9)
-        current = best.get(window)
-        if current is None or score > (scores[current] or 0.0):
-            best[window] = index
-    return [best[window] for window in sorted(best)]
+        groups.setdefault(window, []).append(index)
+    chosen = []
+    for window in sorted(groups):
+        group = steady(groups[window], turning) if turning is not None else groups[window]
+        chosen.append(max(group, key=lambda i: scores[i] or 0.0))
+    return chosen
+
+
+def steady(group: list[int], turning: Sequence[float | None]) -> list[int]:
+    """The candidates of a window not turning much faster than its slowest."""
+    rates = [turning[i] for i in group]
+    known = [r for r in rates if r is not None]
+    if not known:
+        return group
+    limit = min(known) * FAST_RATIO + FAST_MARGIN_DEG_S
+    return [i for i, rate in zip(group, rates, strict=True) if rate is None or rate <= limit]
 
 
 def import_video(
@@ -204,7 +228,11 @@ def import_video(
         angles = motion.angle_travelled(times) if motion is not None else None
         progress = frame_progress(angles, times, info.duration_s) if angles else None
         windows = max(1, round(info.duration_s * plan.rate))
-        chosen = select_frames(scores, plan, progress, windows)
+        turning = [motion.turn_at(t) for t in times] if motion is not None else None
+        chosen = select_frames(scores, plan, progress, windows, turning)
+        if turning is not None and any(r is not None for r in turning):
+            by_score = select_frames(scores, plan, progress, windows)
+            source_info["fast_passed_over"] = len(set(by_score) - set(chosen))
         if angles:
             turned = round(angles[-1] - angles[0], 1)
             source_info["spacing"] = {"by": "angle" if progress else "time", "turned_deg": turned}

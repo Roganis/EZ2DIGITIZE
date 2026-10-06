@@ -64,7 +64,8 @@ import and notes gravity's direction for every frame, so the model is
 stood upright by measurement rather than by guessing how the camera was
 held, which goes wrong when you shoot steeply from above or below. The
 frames are also spaced by how far the camera turned rather than by time,
-so slowing down or pausing on one side doesn't crowd the frames there.
+so slowing down or pausing on one side doesn't crowd the frames there,
+and frames taken while the camera swung fast are left out.
 The import says when a video has such data.
 
 ## Turntables

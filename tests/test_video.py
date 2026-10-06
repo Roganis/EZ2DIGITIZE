@@ -22,6 +22,7 @@ from ez2digitize.video import (
     import_video,
     plan_frames,
     select_frames,
+    steady,
 )
 
 
@@ -82,6 +83,23 @@ def test_select_by_progress() -> None:
     assert select_frames(scores, plan, progress, windows=4) == [0, 1, 3, 6]
 
 
+def test_steady() -> None:
+    # The slowest turns at 20°/s: up to 20 * 1.5 + 10 = 40°/s is steady enough.
+    assert steady([0, 1, 2, 3], [20.0, 40.0, 41.0, None]) == [0, 1, 3]
+    assert steady([0, 1], [None, None]) == [0, 1]  # no gyroscope there
+    # Tremor-level differences don't count.
+    assert steady([0, 1], [0.5, 9.0]) == [0, 1]
+
+
+def test_fast_turning_candidates_are_passed_over() -> None:
+    plan = FramePlan(1.0, 4.0)
+    scores = [1.0, 5.0, 2.0, 1.0, 1.0, 1.0, 1.0, 3.0]
+    turning = [10.0, 80.0, 12.0, 11.0, 30.0, 30.0, 30.0, 30.0]
+    # Window 0: the sharpest-scoring candidate was turning fast; window 1 is even.
+    assert select_frames(scores, plan) == [1, 7]
+    assert select_frames(scores, plan, turning=turning) == [2, 7]
+
+
 def test_frames_follow_the_turning(project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg) -> None:
     """Turning for the first 5 s of 10, then still: most frames come from the turning."""
     clip = tmp_path / "VID_0002.mp4"
@@ -96,6 +114,7 @@ def test_frames_follow_the_turning(project: Project, tmp_path: Path, fake_ffmpeg
         "by": "angle",
         "turned_deg": pytest.approx(286.5, abs=1),
     }
+    assert bundle.source_info["fast_passed_over"] == 0  # the fake's sharp frames turn alike
     assert sum(t < 5 for t in times) >= 15 and len(times) <= 20
     assert times == sorted(times)
 

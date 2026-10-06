@@ -510,8 +510,13 @@ fails, they can see which stage failed and why.
   the HERO6 room pan, COLMAP placed all 60 frames either way, in four
   pieces (largest 29 frames by angle, 32 by time), so that clip shows no
   gain; an object walked around is the case it is for, still to measure.
-  Not done yet: dropping frames shot while turning fast (sharpness already
-  picks against blur), a real CAMM file (none at hand; the tests build them
+  Frames shot while turning fast are passed over too (video.steady):
+  within each window, candidates turning more than 1.5 times the slowest
+  one plus 10°/s give way before sharpness decides, since the sharpness
+  score also rises with how busy the frame is. On GoPro's samples that
+  overrules sharpness in 5 of 40 windows on the HERO5 clip, 2 on the
+  HERO6 (where the gyroscope's pick is visibly crisper) and none on the
+  HERO7. Not done yet: a real CAMM file (none at hand; the tests build them
   from the specification), and GoPro's in-camera stabilisation (HyperSmooth turns
   the image against the body, so the accelerometer's gravity is off by
   that turn; the MAX's and HERO8's fused gravity vector, used when

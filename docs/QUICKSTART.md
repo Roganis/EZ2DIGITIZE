@@ -44,6 +44,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    object (its height, say) and, in the same view, press **Pick two
    points**, click them, type the distance and press **Set scale**. If the
    model lies tilted, **Level: pick 3 points** on the mat stands it up.
+   The camera placement also shows where photos are missing: a ring per
+   height, gaps shaded orange (red when a whole side is missing), and
+   cameras that matched few others in orange; take more photos there.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),

@@ -16,6 +16,7 @@
     #hud { left: 8px; top: 8px; }
     #help { left: 8px; bottom: 8px; color: #bdc1c6; }
     #measure { display: none; transform: translate(-50%, -150%); color: #81c995; }
+    .gap { transform: translate(-50%, -50%); }
   </style>
   <script type="importmap">
     {
@@ -30,6 +31,7 @@
 <body>
   <div id="hud" class="overlay">Nothing to show yet</div>
   <div id="measure" class="overlay"></div>
+  <div id="coverage"></div>
   <div id="help" class="overlay">Drag: turn · Right-drag: move · Wheel: zoom · Double-click: reset</div>
   <script type="module" src="./viewer.js"></script>
 </body>

@@ -42,7 +42,10 @@ logs and settings, never your photos. The logs do contain file paths.
 - **Only part of the object, or a lump of background.** Look at the notes
   in the log after camera placement: "only N of M images were placed", "the
   photos split into separate groups", "no photos from about 120° of the way
-  around", "the camera hardly moved". Each points to the capture.
+  around", "the camera hardly moved". Each points to the capture. The 3D
+  view's camera placement shows the same on the rings of cameras: shaded
+  gaps where photos are missing, and orange or red cameras that matched
+  few others or were placed far off.
 - **The table or mat is part of the model.** Expected without masks; the
   export keeps everything the photos saw. Make masks (Masks tab), or set a
   crop box (3D view, camera placement or dense cloud: Crop box), and build

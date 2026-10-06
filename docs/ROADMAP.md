@@ -314,8 +314,8 @@ fails, they can see which stage failed and why.
   frustum per photo), dense cloud, textured mesh (the upright GLB export,
   or OpenMVS's PLY converted) and splats, all stood upright; a finished
   build opens in it. The crop box and the scale are set in it (Phases 2
-  and 4), and so is the orientation. Next on top of it: coverage on the camera
-  rings.
+  and 4), and so is the orientation, and the camera placement shows the
+  coverage rings (below).
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
   what to do with shiny objects (matte spray, cross-polarization). Written
@@ -326,7 +326,10 @@ fails, they can see which stage failed and why.
   `ez2digitize.coverage` reports gaps around the object (over 90°), photos
   all from one height, photos placed far from the rest, photos not placed,
   and the overlap estimate: photos with verified matches to fewer than two
-  others (notices in the log). Showing them on the rings needs the viewer; shiny/transparent
+  others (notices in the log). The 3D view shows them on the camera
+  placement (`coverage.rings`): a ring per height, its gaps from 35° shaded
+  and labelled (red over 90°), cameras with few matches orange and
+  misplaced ones red, with a summary above the view. Shiny/transparent
   subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
   The coverage check spots a camera that didn't move (all views within

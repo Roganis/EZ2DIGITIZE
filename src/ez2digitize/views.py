@@ -6,7 +6,9 @@ Headless: the Qt side (ui.viewer) serves these files to the web page and
 tells it which `View` to draw. A view is one result of the pipeline:
 
 - `cameras`: the camera placement, COLMAP's sparse points and a frustum
-  per photo (both generated from the mapping stage's binary model),
+  per photo (both generated from the mapping stage's binary model), with
+  the coverage rings (see coverage.rings) and the photos that matched
+  few others,
 - `dense`: OpenMVS's dense point cloud,
 - `mesh`: the textured mesh, as the GLB the export wrote for the current
   texture run, else converted from OpenMVS's PLY into a cached GLB,
@@ -21,15 +23,18 @@ or the photos don't say which way is up.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
+import sqlite3
 import struct
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize import upright
-from ez2digitize.backends import brush
+from ez2digitize import coverage, upright
+from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
 from ez2digitize.core.files import FormatError, read_json_object
@@ -66,6 +71,8 @@ class View:
     source: Path
     upright: Matrix | None
     finished: str = ""
+    # The cameras view: COLMAP's database, for the photos with few matches.
+    database: Path | None = None
 
     @property
     def label(self) -> str:
@@ -107,6 +114,7 @@ def available(project: Project) -> list[View]:
             project.stage_dir("undistort") / "sparse",
             up,
             undistorted.finished,
+            project.stage_dir("matching") / colmap.DATABASE,
         )
     return [views[k] for k in ORDER if k in views]
 
@@ -125,7 +133,8 @@ def files(view: View, cache: Path) -> dict[str, Path | bytes]:
             return {"model": view.source / brush.SPLAT_FILE}
         if view.key == "dense":
             return {"model": view.source / "scene_dense.ply"}
-        points, cameras = sparse_scene(view.source)
+        rings, weak = camera_coverage(view)
+        points, cameras = sparse_scene(view.source, rings, weak)
         return {"model": points, "cameras": cameras}
     except (OSError, BackendError, MeshFormatError, FormatError) as exc:
         raise ViewError(f"{view.label} can't be shown: {exc}") from exc
@@ -167,11 +176,32 @@ def read_points(model_dir: Path) -> tuple[list[tuple[float, float, float]], byte
     return positions, bytes(colors)
 
 
-def sparse_scene(model_dir: Path) -> tuple[bytes, bytes]:
+def camera_coverage(view: View) -> tuple[coverage.RingLayout | None, list[str]]:
+    """The cameras view's rings and its photos with few matches (advice: never fails)."""
+    if view.key != "cameras":
+        return None, []
+    try:
+        rings = coverage.rings(view.source, view.upright)
+    except (OSError, ValueError, BackendError):
+        rings = None
+    weak: list[str] = []
+    if view.database is not None and view.database.is_file():
+        with contextlib.suppress(OSError, sqlite3.Error):
+            weak = coverage.weak_photos(view.database)
+    return rings, weak
+
+
+def sparse_scene(
+    model_dir: Path,
+    rings: coverage.RingLayout | None = None,
+    weak: Collection[str] = (),
+) -> tuple[bytes, bytes]:
     """The sparse points as a PLY and the cameras as JSON, for the page.
 
     Each camera: its centre, its rotation (camera to world, rows), the
-    vertical field of view and aspect ratio of its image, and its name.
+    vertical field of view and aspect ratio of its image, its name, and a
+    `flag` if it was misplaced far off ("far") or matched few others
+    ("weak"). `coverage`: the rings (upright frame), or null.
     """
     positions, colors = read_points(model_dir)
     header = (
@@ -205,7 +235,12 @@ def sparse_scene(model_dir: Path) -> tuple[bytes, bytes]:
                 "aspect": round(camera.width / camera.height, 4),
             }
         )
-    return header + bytes(body), json.dumps({"cameras": shown}).encode()
+        if rings is not None and name in rings.far:
+            shown[-1]["flag"] = "far"
+        elif name in weak:
+            shown[-1]["flag"] = "weak"
+    data = {"cameras": shown, "coverage": rings.to_dict() if rings is not None else None}
+    return header + bytes(body), json.dumps(data).encode()
 
 
 # --- helpers ----------------------------------------------------------------------

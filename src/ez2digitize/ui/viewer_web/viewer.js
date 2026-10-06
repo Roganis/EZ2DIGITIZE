@@ -30,7 +30,7 @@ try {
   const nothing = () => {};
   window.ez2d = {
     show: nothing, clear: nothing, setCropBox: nothing, frameCropBox: nothing,
-    setPicking: nothing, setMeasuring: nothing, setMeasure: nothing,
+    setPicking: nothing, setMeasuring: nothing, setMeasure: nothing, setCoverage: nothing,
   };
   report("ready", { webgl: false, gpu: null, error: String(err && err.message ? err.message : err) });
   throw err;
@@ -176,6 +176,9 @@ async function loadSplat(spec) {
   return { object: splats, box: null, count: splats.packedSplats?.numSplats ?? 0, unit: "splats" };
 }
 
+// Camera colours: placed well, matched few other photos, placed far off.
+const CAMERA_COLORS = { ok: 0x8ab4f8, weak: 0xfcad70, far: 0xf28b82 };
+
 // The sparse points and a small pyramid per camera, pointing where it looked.
 async function loadCameras(spec, matrix) {
   const [geometry, data] = await Promise.all([
@@ -195,8 +198,9 @@ async function loadCameras(spec, matrix) {
     .map((c) => new THREE.Vector3(...c.centre).applyMatrix4(matrix).distanceTo(centre))
     .sort((a, b) => a - b);
   const depth = (distances[Math.floor(distances.length / 2)] || 1) * 0.1;
-  const lines = [];
+  const lines = { ok: [], weak: [], far: [] };
   for (const cam of data.cameras) {
+    const own = lines[cam.flag] ?? lines.ok;
     const h = depth * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     const w = h * cam.aspect;
     // Camera coordinates: x right, y down, z forward (COLMAP).
@@ -209,17 +213,21 @@ async function loadCameras(spec, matrix) {
     ];
     const world = corners.map(toWorld);
     for (let i = 0; i < 4; i++) {
-      lines.push(...cam.centre, ...world[i], ...world[i], ...world[(i + 1) % 4]);
+      own.push(...cam.centre, ...world[i], ...world[i], ...world[(i + 1) % 4]);
     }
     // The top edge's midpoint, raised: which way is up in the photo.
     const top = toWorld([0, -h * 1.4, depth]);
-    lines.push(...world[0], ...top, ...top, ...world[1]);
+    own.push(...world[0], ...top, ...top, ...world[1]);
   }
-  const frustums = new THREE.BufferGeometry();
-  frustums.setAttribute("position", new THREE.Float32BufferAttribute(lines, 3));
-  group.add(new THREE.LineSegments(frustums, new THREE.LineBasicMaterial({ color: 0x8ab4f8 })));
+  for (const [flag, segments] of Object.entries(lines)) {
+    if (!segments.length) continue;
+    const frustums = new THREE.BufferGeometry();
+    frustums.setAttribute("position", new THREE.Float32BufferAttribute(segments, 3));
+    const material = new THREE.LineBasicMaterial({ color: CAMERA_COLORS[flag] });
+    group.add(new THREE.LineSegments(frustums, material));
+  }
   const unit = `points, ${data.cameras.length} cameras`;
-  return { object: group, box, count: positions.count, unit };
+  return { object: group, box, count: positions.count, unit, coverage: data.coverage ?? null };
 }
 
 const LOADERS = { glb: loadGlb, points: loadPoints, splat: loadSplat, cameras: loadCameras };
@@ -237,6 +245,7 @@ async function show(spec) {
   clear();
   content = loaded.object;
   upright.add(content);
+  layoutCoverage(loaded.coverage ?? null);
   upright.updateMatrixWorld(true);
   const box = loaded.box ?? new THREE.Box3().setFromObject(upright, true);
   if (spec.kind === "splat" && loaded.box === null) {
@@ -247,6 +256,106 @@ async function show(spec) {
   const loadMs = Math.round(performance.now() - t0);
   hud.textContent = `${spec.label}: ${loaded.count.toLocaleString()} ${loaded.unit}`;
   report("loaded", { kind: spec.kind, count: loaded.count, unit: loaded.unit, load_ms: loadMs });
+}
+
+// --- Coverage: the camera rings --------------------------------------------------
+//
+// On the camera placement, the cameras grouped into rings by height
+// (ez2digitize.coverage.rings, upright frame): each ring a circle at its
+// cameras' height and distance from the object, its gaps shaded and
+// labelled, orange, or red when wider than `max_gap`. A point at azimuth a
+// is (cos a, 0, -sin a) from the centre.
+
+const coverageGroup = new THREE.Group();
+scene.add(coverageGroup);
+const coverageLabels = document.getElementById("coverage");
+const RING_COLORS = { covered: 0x81c995, gap: 0xfcad70, wide: 0xf28b82 };
+let coverageOn = true;
+let gapLabels = []; // [{element, position}]
+
+function clearCoverage() {
+  for (const child of [...coverageGroup.children]) {
+    coverageGroup.remove(child);
+    child.geometry.dispose();
+    child.material.dispose();
+  }
+  coverageLabels.replaceChildren();
+  gapLabels = [];
+}
+
+function layoutCoverage(coverage) {
+  clearCoverage();
+  if (!coverage) return;
+  const centre = new THREE.Vector3(...coverage.centre);
+  const at = (ring, degrees) => {
+    const a = THREE.MathUtils.degToRad(degrees);
+    return new THREE.Vector3(
+      centre.x + ring.radius * Math.cos(a),
+      centre.y + ring.height,
+      centre.z - ring.radius * Math.sin(a),
+    );
+  };
+  const inGap = (ring, degrees) => ring.gaps.find((gap) => {
+    const from = (degrees - gap.start + 360) % 360;
+    return from < gap.degrees;
+  });
+  const colour = new THREE.Color();
+  for (const ring of coverage.rings) {
+    // The circle in 2° pieces, each coloured by whether it lies in a gap.
+    const positions = [];
+    const colours = [];
+    for (let d = 0; d < 360; d += 2) {
+      const gap = inGap(ring, d + 1);
+      colour.set(!gap ? RING_COLORS.covered : gap.degrees > coverage.max_gap ? RING_COLORS.wide : RING_COLORS.gap);
+      positions.push(...at(ring, d).toArray(), ...at(ring, d + 2).toArray());
+      colours.push(...colour.toArray(), ...colour.toArray());
+    }
+    const circle = new THREE.BufferGeometry();
+    circle.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    circle.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3));
+    coverageGroup.add(new THREE.LineSegments(circle, new THREE.LineBasicMaterial({ vertexColors: true })));
+    for (const gap of ring.gaps) {
+      const color = gap.degrees > coverage.max_gap ? RING_COLORS.wide : RING_COLORS.gap;
+      const wedge = new THREE.Mesh(
+        new THREE.CircleGeometry(
+          ring.radius,
+          Math.max(2, Math.ceil(gap.degrees / 4)),
+          THREE.MathUtils.degToRad(gap.start),
+          THREE.MathUtils.degToRad(gap.degrees),
+        ),
+        new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false,
+        }),
+      );
+      wedge.rotation.x = -Math.PI / 2; // the circle's plane (XY) onto the ground plane
+      wedge.position.set(centre.x, centre.y + ring.height, centre.z);
+      coverageGroup.add(wedge);
+      const element = document.createElement("div");
+      element.className = "overlay gap";
+      element.style.color = `#${new THREE.Color(color).getHexString()}`;
+      element.textContent = `${Math.round(gap.degrees)}° gap`;
+      coverageLabels.appendChild(element);
+      gapLabels.push({ element, position: at(ring, gap.start + gap.degrees / 2) });
+    }
+  }
+  setCoverage(coverageOn);
+}
+
+function setCoverage(on) {
+  coverageOn = on;
+  coverageGroup.visible = on;
+  coverageLabels.style.display = on ? "block" : "none";
+}
+
+function placeGapLabels() {
+  if (!coverageOn || !gapLabels.length) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  for (const { element, position } of gapLabels) {
+    const p = position.clone().project(camera);
+    element.style.display = p.z > 1 ? "none" : "block"; // behind the view
+    element.style.left = `${rect.left + ((p.x + 1) / 2) * rect.width}px`;
+    element.style.top = `${rect.top + ((1 - p.y) / 2) * rect.height}px`;
+  }
 }
 
 // --- The crop box -------------------------------------------------------------
@@ -507,6 +616,12 @@ function setMeasuring(on) {
 }
 
 window.ez2d = {
+  // Show or hide the coverage rings of the camera placement.
+  setCoverage,
+  // The gaps' labels as shown, for tests.
+  gapLabels() {
+    return gapLabels.map(({ element }) => element.textContent);
+  },
   // Pick points (see above); setPicking(0) or setMeasuring(false) stops.
   setPicking,
   setMeasuring,
@@ -556,6 +671,7 @@ window.ez2d = {
   clear() {
     showing++;
     clear();
+    clearCoverage();
     setPicking(0);
     picks = [];
     layoutMeasure();
@@ -571,6 +687,7 @@ renderer.setAnimationLoop(() => {
   scaleMarkers();
   renderer.render(scene, camera);
   placeMeasureLabel();
+  placeGapLabels();
 });
 
 const gl = renderer.getContext();

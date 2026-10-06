@@ -6,12 +6,15 @@ import hashlib
 import json
 import struct
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from models import ring, write_images
 from pytestqt.qtbot import QtBot
 
 from ez2digitize import views
+from ez2digitize.orientation import rotation_between
 from ez2digitize.ui import viewer
 
 REPO = Path(__file__).parents[2]
@@ -171,4 +174,38 @@ def test_picking_two_points(qtbot: QtBot, tmp_path: Path) -> None:
     with qtbot.waitSignal(widget.level_picked, timeout=TIMEOUT_MS) as picked:
         call(click([0.0, 0.0, 4.0]))
     assert picked.args is not None and len(picked.args[0]["points"]) == 3
+    assert errors == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_coverage_rings(qtbot: QtBot, tmp_path: Path) -> None:
+    view = _camera_view(tmp_path)
+    # A low ring all round, a high one half way: one gap, on the high ring.
+    write_images(view.source / "images.bin", ring(24, 10) + ring(12, 45, span=180))
+    flip = rotation_between((0.0, -1.0, 0.0), (0.0, 1.0, 0.0))  # these photos: up is -y
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    errors: list[str] = []
+    widget.failed.connect(errors.append)
+    widget.show_view(replace(view, upright=flip))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    qtbot.wait(200)
+    assert json.loads(str(call("JSON.stringify(ez2d.gapLabels())"))) == ["195° gap"]
+    shown = "document.getElementById('coverage').style.display"
+    assert call(shown) == "block"
+    widget.set_coverage(False)
+    assert call(shown) == "none"
+    widget.clear()
+    assert json.loads(str(call("JSON.stringify(ez2d.gapLabels())"))) == []
     assert errors == []

@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import contextlib
 import json
+import sqlite3
 import struct
 from pathlib import Path
 
 import pytest
+from models import ring, write_images
 from PIL import Image
 
 from ez2digitize import views
@@ -95,6 +98,36 @@ def test_camera_placement(project: Project, tmp_path: Path) -> None:
 
     spec = views.spec(view, {"model": "ez2d://data/x/model.ply"})
     assert spec["kind"] == "cameras" and spec["upright"] == [list(r) for r in view.upright]
+
+
+def test_camera_placement_coverage(project: Project, tmp_path: Path) -> None:
+    undistort = _succeed(project, "undistort", "u1")
+    _sparse_model(undistort / "sparse")
+    # 24 photos on a low ring all round, 12 on a high one half way round.
+    write_images(undistort / "sparse" / "images.bin", ring(24, 10) + ring(12, 45, span=180))
+    matching = project.stage_dir("matching")
+    matching.mkdir(parents=True)
+    with contextlib.closing(sqlite3.connect(matching / "database.db")) as db, db:
+        db.execute("CREATE TABLE images (image_id INTEGER, name TEXT)")
+        db.execute(
+            "CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, config INTEGER)"
+        )
+        db.executemany("INSERT INTO images VALUES (?, ?)", [(1, "c/001.jpg"), (2, "c/002.jpg")])
+    [view] = views.available(project)
+    rings, weak = views.camera_coverage(view)
+    assert rings is not None and [r.cameras for r in rings.rings] == [24, 12]
+    assert weak == ["c/001.jpg", "c/002.jpg"]  # no matches recorded at all
+
+    data = json.loads(views.files(view, tmp_path)["cameras"])  # type: ignore[arg-type]
+    flags = {c["name"]: c.get("flag") for c in data["cameras"]}
+    assert flags["c/001.jpg"] == "weak" and flags["c/003.jpg"] is None
+    low, high = data["coverage"]["rings"]
+    # (Up comes from the photos here, tilted a little by the half ring: not exactly 195°.)
+    assert low["gaps"] == [] and high["gaps"][0]["degrees"] > 180
+
+    # Without an up direction there are no rings; the cameras still show.
+    data = json.loads(views.sparse_scene(view.source)[1])
+    assert data["coverage"] is None and len(data["cameras"]) == 36
 
 
 def test_all_results_best_first(project: Project, tmp_path: Path) -> None:

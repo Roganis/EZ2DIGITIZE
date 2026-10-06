@@ -130,6 +130,17 @@ photos, and a camera that didn't move (all views within 10° of their mean;
 scale-free, unlike positions). On the skull: 23° largest gap, heights from
 -28° to 44°; two video frames misplaced.
 
+`rings` lays the same out for the 3D view, in the upright frame of
+`upright.rotation` (so a corrected orientation moves the rings with the
+model): the cameras sorted by height angle and split where it jumps by more
+than 12° (fewer than 4 cameras at a height join the nearest ring: strays,
+not a ring), each ring at its cameras' median height and distance, and its
+gaps from 35° (two or three photos missing at 10-15° steps). `views` adds
+it to the camera placement's JSON with a flag per camera, "far" (misplaced)
+or "weak" (`weak_photos`, from the matching database); the page draws each
+ring as a circle with its gaps shaded and labelled, orange, red over 90°,
+and colours the flagged cameras. `describe` is the summary above the view.
+
 ## Photo checks (`core/photos.py`)
 
 Each photo is inspected once, on import or when a project from an older

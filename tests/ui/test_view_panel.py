@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 
 import pytest
+from models import ring, write_images
 from pytestqt.qtbot import QtBot
 
 from ez2digitize import crop, scale, upright, views
@@ -172,3 +173,27 @@ def test_one_picking_at_a_time(qtbot: QtBot, project: Project) -> None:
     assert not panel.level.isChecked()
     panel.level.setChecked(True)
     assert not panel.pick.isChecked()
+
+
+def test_coverage_row(qtbot: QtBot, project: Project) -> None:
+    panel = ViewPanel(project)
+    qtbot.addWidget(panel)
+    panel.refresh(prefer="cameras")
+    assert not panel.coverage_row.isHidden()
+    assert "Too few cameras" in panel.coverage_summary.text()  # one camera
+
+    # A low ring all round and a high one half way.
+    model = project.stage_dir("undistort") / "sparse"
+    write_images(model / "images.bin", ring(24, 10) + ring(12, 45, span=180))
+    _succeed(project, "undistort", "u2")  # a new placement: a new view
+    panel.refresh(prefer="cameras")
+    text = panel.coverage_summary.text()
+    # (Up comes from the photos, tilted a little by the half ring.)
+    assert text.startswith("Photos by height: 24 at ") and ", 12 at " in text
+    assert "Gaps in the rings" in text
+
+    panel.show_coverage.setChecked(False)  # remembered for the viewer
+    _succeed(project, "densify", "d1")
+    (project.stage_dir("densify") / "scene_dense.ply").write_bytes(b"ply\n")
+    panel.refresh(prefer="dense")
+    assert panel.coverage_row.isHidden()

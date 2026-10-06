@@ -203,6 +203,7 @@ class ViewerWidget(QWidget):
         self._pending: views.View | None = None
         self._crop: tuple[dict[str, Any] | None, bool] = (None, False)
         self._measure: tuple[list[list[float]] | None, str] = (None, "")
+        self._coverage = True
         self.message = QLabel()
         self.message.setWordWrap(True)
         layout = QStackedLayout(self)
@@ -280,6 +281,12 @@ class ViewerWidget(QWidget):
         if AVAILABLE and self.is_ready:
             self.page.runJavaScript(f"ez2d.setMeasure({json.dumps(points)}, {json.dumps(label)})")
 
+    def set_coverage(self, on: bool) -> None:
+        """Show or hide the camera placement's coverage rings."""
+        self._coverage = on
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript(f"ez2d.setCoverage({json.dumps(on)})")
+
     def frame_crop_box(self) -> None:
         if AVAILABLE and self.is_ready:
             self.page.runJavaScript("ez2d.frameCropBox()")
@@ -299,6 +306,8 @@ class ViewerWidget(QWidget):
                 self.set_crop_box(self._crop[0], editable=self._crop[1])
             if self._measure[0] is not None:
                 self.set_measure(*self._measure)
+            if not self._coverage:
+                self.set_coverage(False)
             if event.get("webgl") is False:
                 self.failed.emit(
                     "The 3D view needs WebGL, which this graphics driver doesn't offer "

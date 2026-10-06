@@ -19,6 +19,10 @@ And the orientation (see ez2digitize.upright): which way is up comes from
 the photos; "Level" (three points on the surface the object stands on),
 the tip buttons (quarter turns) and "Turn" correct it, "Automatic" goes
 back to the estimate. The view reloads stood up the new way.
+
+The camera placement also shows its coverage (see coverage.rings): the
+cameras' rings around the object with their gaps, and the cameras that
+matched few photos or were placed far off, with a summary above the view.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import crop, scale, upright, views
+from ez2digitize import coverage, crop, scale, upright, views
 from ez2digitize.core.project import Project
 from ez2digitize.orientation import IDENTITY, Vector
 from ez2digitize.ui.viewer import ViewerWidget
@@ -62,6 +66,7 @@ class ViewPanel(QWidget):
         self._cache = QTemporaryDir()
         self._locked = False
         self._syncing = False
+        self._coverage_of: tuple[views.View, str] | None = None  # (view, summary), cached
 
         self.choice = QComboBox()
         self.choice.currentIndexChanged.connect(lambda _i: self._show_chosen())
@@ -173,11 +178,27 @@ class ViewPanel(QWidget):
         orient_layout.addWidget(self.orient_hint, 1)
         self.orient_row.hide()
 
+        self.show_coverage = QCheckBox("Coverage")
+        self.show_coverage.setChecked(True)
+        self.show_coverage.setToolTip(
+            "Rings of cameras around the object: orange and red where photos are missing"
+        )
+        self.show_coverage.toggled.connect(self._on_coverage_toggled)
+        self.coverage_summary = QLabel()
+        self.coverage_summary.setWordWrap(True)
+        self.coverage_row = QWidget()
+        coverage_layout = QHBoxLayout(self.coverage_row)
+        coverage_layout.setContentsMargins(0, 0, 0, 0)
+        coverage_layout.addWidget(self.show_coverage)
+        coverage_layout.addWidget(self.coverage_summary, 1)
+        self.coverage_row.hide()
+
         self.body = QVBoxLayout()
         self.body.addWidget(self.placeholder, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(row)
+        layout.addWidget(self.coverage_row)
         layout.addWidget(self.crop_row)
         layout.addWidget(self.scale_row)
         layout.addWidget(self.orient_row)
@@ -241,6 +262,7 @@ class ViewPanel(QWidget):
             self.viewer.crop_changed.connect(self._on_crop_dragged)
             self.viewer.measured.connect(self._on_measured)
             self.viewer.level_picked.connect(self._on_level_picked)
+            self.viewer.set_coverage(self.show_coverage.isChecked())
             self.body.addWidget(self.viewer, 1)
             self._sync_crop()
         return self.viewer
@@ -282,6 +304,7 @@ class ViewPanel(QWidget):
             self.viewer.set_crop_box(shown, editable=editable)
         self._sync_scale()
         self._sync_orientation()
+        self._sync_coverage()
 
     def _save(self, upright_box: crop.UprightBox | None) -> None:
         run = crop.camera_run(self.project)
@@ -418,6 +441,29 @@ class ViewPanel(QWidget):
         self._picked = None
         scale.save(self.project, None)
         self._sync_scale()
+
+    # --- coverage ---------------------------------------------------------------
+
+    def _sync_coverage(self) -> None:
+        view = self._chosen()
+        here = view is not None and view.key == "cameras"
+        self.coverage_row.setVisible(here)
+        if view is None or not here:
+            return
+        if self._coverage_of is None or self._coverage_of[0] != view:
+            rings, weak = views.camera_coverage(view)
+            if rings is not None:
+                summary = coverage.describe(rings, len(weak))
+            elif view.upright is None:
+                summary = "Which way is up is unknown, so no rings: level the model below."
+            else:
+                summary = "Too few cameras, or a camera that stood still: no rings."
+            self._coverage_of = (view, summary)
+        self.coverage_summary.setText(self._coverage_of[1])
+
+    def _on_coverage_toggled(self, on: bool) -> None:
+        if self.viewer is not None:
+            self.viewer.set_coverage(on)
 
     # --- the orientation --------------------------------------------------------
 

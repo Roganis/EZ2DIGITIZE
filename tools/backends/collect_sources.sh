@@ -44,6 +44,7 @@ mkdir -p "$VCPKG_DOWNLOADS" "$X_VCPKG_REGISTRIES_CACHE"
 
 log "vcpkg $VCPKG_VERSION"
 fetch_vcpkg vcpkg
+prefetch_sources "$VCPKG_DOWNLOADS"
 log "COLMAP $COLMAP_VERSION"
 fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
 [ "$OS" = windows ] && prepare_colmap colmap

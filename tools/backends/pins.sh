@@ -48,6 +48,37 @@ fetch_vcpkg() {  # fetch_vcpkg <dir>: the vcpkg release, with history for baseli
   esac
 }
 
+# Sources whose upstream servers are unreliable from CI runners: GNU's
+# ftpmirror/ftp.gnu.org timed out from GitHub's macOS runners (October 2026),
+# and gmplib.org with them. vcpkg uses a file already in its downloads folder
+# when its SHA512 matches the port's, so these are fetched from another
+# mirror first. Name, mirror URL, the pinned vcpkg port's SHA512.
+MIRRORED_SOURCES=(
+  "gmp-6.3.0.tar.xz https://mirrors.kernel.org/gnu/gmp/gmp-6.3.0.tar.xz e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df5219538eb003e4b5343f989aaa00f96321559063ed8c8f29fd2"
+  "mpfr-4.2.2.tar.xz https://mirrors.kernel.org/gnu/mpfr/mpfr-4.2.2.tar.xz eb9e7f51b5385fb349cc4fba3a45ffdf0dd53be6dfc74932dc01258158a10514667960c530c47dd9dfc5aa18be2bd94859d80499844c5713710581e6ac6259a9"
+)
+
+prefetch_sources() {  # prefetch_sources <vcpkg downloads dir>
+  mkdir -p "$1"
+  local entry name url sha got
+  for entry in "${MIRRORED_SOURCES[@]}"; do
+    read -r name url sha <<<"$entry"
+    [ -f "$1/$name" ] && continue
+    if curl -sSLf --retry 3 -m 300 -o "$1/$name.part" "$url"; then
+      got=$( (sha512sum "$1/$name.part" 2>/dev/null || shasum -a 512 "$1/$name.part") | cut -d' ' -f1)
+      if [ "$got" = "$sha" ]; then
+        mv "$1/$name.part" "$1/$name"
+        echo "prefetched $name"
+        continue
+      fi
+      echo "warning: $name from $url has another hash; vcpkg downloads it itself" >&2
+    else
+      echo "warning: could not prefetch $name; vcpkg downloads it itself" >&2
+    fi
+    rm -f "$1/$name.part"
+  done
+}
+
 # Python for the manifest edits below (Windows has no python3 by that name).
 PYTHON=${PYTHON:-$(command -v python3 || command -v python)}
 

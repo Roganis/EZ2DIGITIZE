@@ -51,6 +51,7 @@ export VCPKG_DEFAULT_TRIPLET=$TRIPLET VCPKG_DEFAULT_HOST_TRIPLET=$TRIPLET
 
 log "vcpkg $VCPKG_VERSION"
 fetch_vcpkg vcpkg
+prefetch_sources "${VCPKG_DOWNLOADS:-$VCPKG_ROOT/downloads}"
 
 # Apple's compiler has no OpenMP; use Homebrew's libomp and ship it in lib/
 # (rewritten below), so the archive doesn't depend on Homebrew.

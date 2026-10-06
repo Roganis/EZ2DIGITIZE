@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Camera placement with MapAnything (Meta, 2025): every camera predicted in
+# one pass, no feature matching, using the photos' focal lengths from EXIF
+# and the poses a video's motion track recorded, when there are any.
+# Install it, then run install_mapanything.py in its folder once (README.md).
+api = 1
+id = "mapanything-poses"
+name = "MapAnything camera placement"
+version = "1.0.0"
+provides = "poses"
+description = "Cameras and depth predicted by MapAnything in one pass, helped by the EXIF focal length; needs a GPU and its own Python environment."
+homepage = "https://github.com/facebookresearch/map-anything"
+command = [
+    "bin/run",
+    "--images", "{captures}",
+    "--image-list", "{image_list}",
+    "--output", "{output}",
+    "--priors", "{priors}",
+]
+gpu = true
+
+[progress]
+pattern = 'step (\d+) of (\d+)'
+message = "Placing the cameras (MapAnything)"
+
+[[license]]
+covers = "plugin code"
+spdx = "GPL-3.0-or-later"
+file = "LICENSE.txt"
+
+[[license]]
+covers = "MapAnything code"
+spdx = "Apache-2.0"
+file = "MapAnything-LICENSE.txt"
+
+[[license]]
+covers = "model weights, map-anything-apache (install_mapanything.py --weights apache)"
+spdx = "Apache-2.0"
+file = "MapAnything-LICENSE.txt"
+
+[[license]]
+covers = "model weights, map-anything (install_mapanything.py --weights research)"
+spdx = "CC-BY-NC-4.0"
+file = "CC-BY-NC-4.0.txt"

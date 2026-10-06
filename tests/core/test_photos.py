@@ -232,3 +232,76 @@ def test_camera_groups(project: Project, tmp_path: Path) -> None:
     for entry in bundle.files:
         entry.metadata[PHOTO_KEY] = CANON.to_dict()
     assert camera_groups([bundle]) == {}
+
+
+def test_inspect_finds_gps(tmp_path: Path) -> None:
+    path = write_photo(tmp_path / "outdoors.jpg")
+    with Image.open(path) as image:
+        tags = image.getexif()
+        tags.get_ifd(ExifTags.IFD.GPSInfo).update(
+            {
+                ExifTags.GPS.GPSLatitudeRef: "N",
+                ExifTags.GPS.GPSLatitude: (48.0, 51.0, 30.0),
+                ExifTags.GPS.GPSLongitudeRef: "E",
+                ExifTags.GPS.GPSLongitude: (2.0, 17.0, 40.0),
+            }
+        )
+        image.save(tmp_path / "tagged.jpg", exif=tags)
+    assert photos.inspect_photo(tmp_path / "tagged.jpg").gps
+    assert not photos.inspect_photo(path).gps
+
+
+def test_inspect_reads_exposure(tmp_path: Path) -> None:
+    exposure: dict[int, object] = {
+        ExifTags.Base.ExposureTime: 1 / 2000,
+        ExifTags.Base.FNumber: 1.8,
+        ExifTags.Base.ISOSpeedRatings: 400,
+        ExifTags.Base.ExposureBiasValue: -0.7,
+        ExifTags.Base.WhiteBalance: 1,
+    }
+    info = photos.inspect_photo(write_photo(tmp_path / "a.jpg", details=exposure))
+    assert info.exposure_s == pytest.approx(1 / 2000)  # not rounded away
+    assert (info.f_number, info.iso, info.exposure_bias) == (1.8, 400.0, -0.7)
+    assert info.white_balance == "manual"
+    plain = photos.inspect_photo(write_photo(tmp_path / "b.jpg"))
+    assert plain.exposure_s is None and plain.white_balance is None
+
+
+def _exposures(*shutters: float) -> dict[str, PhotoInfo]:
+    return {
+        f"{n:02}.jpg": replace(CANON, exposure_s=t, f_number=8.0, iso=100.0)
+        for n, t in enumerate(shutters)
+    }
+
+
+def test_exposure_changes_are_reported() -> None:
+    steady = _exposures(*[1 / 100] * 8, 1 / 125)  # a third of a stop: fine
+    assert check_capture("c", steady) == []
+    drifting = _exposures(*[1 / 100] * 8, 1 / 400, 1 / 25)  # two stops either way
+    (finding,) = check_capture("c", drifting)
+    assert finding.code == "exposure-changes" and finding.files == ("08.jpg", "09.jpg")
+    assert "up to 4.0 stops" in finding.message and "lock the exposure" in finding.message
+    stops = photos.exposure_stops(drifting)
+    assert stops["09.jpg"] - stops["00.jpg"] == pytest.approx(2.0)
+
+
+def test_exposure_report(project: Project, tmp_path: Path) -> None:
+    files = [write_photo(tmp_path / f"{n}.jpg", seed=n) for n in range(5)]
+    bundle = import_files(project, files, source="folder")
+    for n, entry in enumerate(bundle.files):
+        info = replace(
+            CANON, exposure_s=1 / 100 if n < 4 else 1 / 800, iso=100.0, white_balance="auto"
+        )
+        entry.metadata[photos.PHOTO_KEY] = info.to_dict()
+    bundle.save()
+    names = sorted(f.name for f in bundle.files)
+    placed = {f"{bundle.id}/{n}" for n in names[:3]}  # 3.jpg and 4.jpg not placed
+    weak = [f"{bundle.id}/{names[0]}"]
+    (report,) = photos.exposure_report(list_bundles(project), placed, weak)
+    assert report.photos == 5 and report.with_exposure == 5
+    assert report.spread_stops == 3.0 and report.off == ("4.jpg",)
+    assert report.shutter_s == (1 / 800, 1 / 100) and report.white_balance == ("auto",)
+    assert report.unplaced == (1, 1)  # the dark one, and one of the four others
+    assert report.weak == (0, 1)
+    (bare,) = photos.exposure_report(list_bundles(project))
+    assert bare.unplaced is None

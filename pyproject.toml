@@ -11,6 +11,7 @@ dependencies = [
     "onnxruntime>=1.20",
     "pillow>=11.0",
     "pillow-heif>=1.0",
+    "pupil-apriltags>=1.0.4.post11",
     "PySide6>=6.8",
     "segno>=1.6",
 ]
@@ -78,15 +79,31 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging", "tools/viewer"]
-mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging"
+files = [
+    "src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging", "tools/viewer",
+    "tools/plugins",
+]
+mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging:tools/plugins/vggt-poses:tools/plugins/mapanything-poses"
 explicit_package_bases = true
+# The plugins share feedforward_colmap.py as identical copies (checked by
+# tests/test_mapanything_plugin.py); type check one of them.
+exclude = ["tools/plugins/mapanything-poses/feedforward_colmap\\.py$"]
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "pytestqt.*", "rembg.*", "scipy.*"]
+module = [
+    "onnxruntime.*", "pupil_apriltags.*", "pytestqt.*", "rembg.*", "scipy.*",
+    # the VGGT and MapAnything plugins' own environments (tools/plugins)
+    "torch.*", "vggt.*", "mapanything.*", "uniception.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools/feasibility"]
+pythonpath = [
+    "tools/feasibility", "tools/packaging", "tools/plugins/vggt-poses",
+    "tools/plugins/mapanything-poses",
+]
 qt_api = "pyside6"
+# A test stuck this long prints every thread's stack, so a hang in CI shows
+# where it is.
+faulthandler_timeout = 120

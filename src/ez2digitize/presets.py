@@ -7,6 +7,12 @@ options override single values on top (`mesh_settings(..., level=0)`).
 `describe` lists the values that differ between presets in words, for the
 advanced panel and the CLI.
 
+The subject (`pipeline.Subject`) adjusts a preset: a room or an outdoor
+scene uses no masks (they cut an object out of its background) and keeps
+weakly supported surfaces such as plain walls when meshing. Matching adapts
+to the number of photos by itself (pipeline._matching). A project keeps its
+subject in its settings (see ez2digitize.subject).
+
 Reference timings, 63 photos of a skull on the RX 7900 GRE desktop (CPU
 only): balanced about 15 minutes, of which densify 8 and refine (high only)
 4. Fast reads a quarter of the pixels in every step.
@@ -17,8 +23,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal, get_args
 
+from ez2digitize import subject as subjects
 from ez2digitize.backends import brush, colmap, openmvs
 from ez2digitize.pipeline import MeshSettings
+from ez2digitize.splat_mesh import SplatMeshOptions
+from ez2digitize.subject import Subject
 
 Quality = Literal["fast", "balanced", "high"]
 QUALITIES: tuple[Quality, ...] = get_args(Quality)
@@ -31,6 +40,21 @@ HINTS: dict[Quality, str] = {
     "high": "Full-size photos for the surface, then refined against the photos. "
     "Several times slower and needs much more memory.",
 }
+
+FEATURE_LABELS: dict[colmap.FeatureKind, str] = {
+    "sift": "SIFT",
+    "aliked": "ALIKED + LightGlue (learned)",
+}
+FEATURE_HINTS: dict[colmap.FeatureKind, str] = {
+    "sift": "COLMAP's classic features: fast on the CPU, reliable on textured objects.",
+    "aliked": "Learned features matched with LightGlue: they hold up better on weak "
+    "texture and large changes of viewpoint, but are slower on the CPU. The models "
+    "(49 MB) are downloaded on first use.",
+}
+
+# Poisson octree depth of the mesh from the splats: finest detail is the
+# model's size / 2^depth.
+SPLAT_MESH_DEPTH: dict[Quality, int] = {"fast": 9, "balanced": 10, "high": 11}
 
 _PRESETS: dict[Quality, MeshSettings] = {
     "fast": MeshSettings(
@@ -61,6 +85,9 @@ def mesh_settings(
     max_image_size: int | None = None,
     faces: int | None = None,
     steps: int | None = None,
+    subject: Subject = subjects.DEFAULT,
+    features: colmap.FeatureKind | None = None,
+    splat_mesh: bool = False,
 ) -> MeshSettings:
     """The preset's settings with single values overridden.
 
@@ -70,6 +97,18 @@ def mesh_settings(
     simplifies the mesh to about that many faces before texturing.
     """
     settings = _PRESETS[quality]
+    if subject == "scene":
+        settings = replace(
+            settings,
+            subject=subject,
+            use_masks=False,
+            mesh=replace(settings.mesh, free_space_support=True),
+        )
+    if features is not None:
+        settings = replace(settings, features=replace(settings.features, kind=features))
+    if splat_mesh:
+        options = SplatMeshOptions(depth=SPLAT_MESH_DEPTH[quality])
+        settings = replace(settings, splat_mesh=options)
     if faces is not None:
         settings = replace(settings, texture=replace(settings.texture, target_faces=faces))
     if steps is not None:
@@ -98,8 +137,15 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
 
     refine = settings.refine
     return [
+        ("Subject", subjects.LABELS[settings.subject]),
+        ("Features", FEATURE_LABELS[settings.features.kind]),
         ("Photo size for features", f"up to {settings.features.max_image_size} px"),
-        ("Features per photo", f"up to {settings.features.max_num_features}"),
+        (
+            "Features per photo",
+            f"up to {colmap.aliked_features(settings.features)}"
+            if settings.features.kind == "aliked"
+            else f"up to {settings.features.max_num_features}",
+        ),
         (
             "Dense point cloud",
             f"{size(settings.densify.resolution_level)} photos, "
@@ -118,6 +164,12 @@ def describe(settings: MeshSettings) -> list[tuple[str, str]]:
             "Splats",
             f"{settings.splat.total_steps:,} steps, photos up to "
             f"{settings.splat.max_resolution} px",
+        ),
+        (
+            "Mesh from the splats",
+            "no"
+            if settings.splat_mesh is None
+            else f"yes, detail down to 1/{2**settings.splat_mesh.depth:,} of its size",
         ),
     ]
 

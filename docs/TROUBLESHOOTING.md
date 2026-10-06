@@ -31,6 +31,10 @@ logs and settings, never your photos. The logs do contain file paths.
 | No dense points / No mesh could be built | Usually wrong camera positions: check how many photos were placed (log), try a lower detail level, check the masks don't hide the object. |
 | The tool crashed / needs a newer processor | A bug: please report it with Export Diagnostics. |
 
+- **"This COLMAP can't use learned features".** The COLMAP in use was built
+  without ONNX Runtime. Choose SIFT under Advanced → Features, or use the
+  COLMAP that comes with the app (`ez2d check` says whether it has it).
+
 ## The result looks wrong
 
 - **"The two sides did not join".** Only one side made it into the model.
@@ -42,23 +46,45 @@ logs and settings, never your photos. The logs do contain file paths.
 - **Only part of the object, or a lump of background.** Look at the notes
   in the log after camera placement: "only N of M images were placed", "the
   photos split into separate groups", "no photos from about 120° of the way
-  around", "the camera hardly moved". Each points to the capture.
+  around", "the camera hardly moved". Each points to the capture. The 3D
+  view's camera placement shows the same on the rings of cameras: shaded
+  gaps where photos are missing, and orange or red cameras that matched
+  few others or were placed far off.
 - **The table or mat is part of the model.** Expected without masks; the
-  export keeps everything the photos saw. Make masks (Masks tab) and build
-  again; cropping in the app comes with the viewer.
+  export keeps everything the photos saw. Make masks (Masks tab), or set a
+  crop box (3D view, camera placement or dense cloud: the Crop box tool),
+  and build again.
+- **"The crop box was drawn on an earlier camera placement".** The cameras
+  were placed again (new photos, other settings), which changes the
+  coordinates; set the box again in the 3D view.
 - **Part of the object is missing after using masks.** A mask cut it off.
   In the Masks tab, look at "To look at" first, then the rest: uncheck the
   photos whose red tint covers part of the object, and build again.
-- **Blotchy or striped texture.** Uneven light between photos, or blurry
+- **Blotchy or striped texture.** Uneven light or exposure between photos
+  (see the photo checks, and `ez2d photos PROJECT --exposure`), or blurry
   photos (see the photo checks). Development builds before the OpenMVS fix
   of October 2026 gave black blobs and coloured specks: update, and run the
   project again (the texture step re-runs by itself).
-- **The model lies on its side.** The upright estimate comes from how the
-  photos were held; if the photos were taken at all angles it can't tell
-  and keeps the reconstruction's own frame (the "Stand the model upright"
-  setting turns this off entirely). Turn it in your 3D program.
-- **Wrong size.** Models have no real-world scale yet; scale them in your
-  slicer or 3D program by a known measurement.
+- **The model lies on its side, or is tilted.** The upright estimate comes
+  from how the photos were held; if the photos were taken at all angles it
+  can't tell and keeps the reconstruction's own frame. Correct it in the 3D
+  view (camera placement or dense cloud, the Upright tool): **Level: pick 3
+  points** and click three points far apart on the mat or the surface the
+  object stands on; or **Tip forward** / **Tip sideways** by quarter turns.
+  **Turn** sets which way it faces, **Automatic** goes back to the estimate.
+  Export again afterwards. (The "Stand the model upright" setting turns all
+  of this off.)
+- **Wrong size.** Photos alone don't give the size: photograph the object on
+  the printed marker sheet (see the capture guide), or set the scale in the
+  3D view (camera placement or dense cloud, the Scale tool: Pick two points,
+  then their real distance) and export again. STL and 3MF are then in
+  millimetres, OBJ and GLB in metres (some programs assume other units on
+  import: a model 1000 times too small or large is that). Measure a long
+  distance: an error of half a millimetre over 10 mm is 5 % of the size. If
+  the scale came from the markers, check the printed size: measure a black
+  square and give that as the marker size (Scale tool), then From markers.
+- **"The scale was set on an earlier camera placement".** As with the crop
+  box: the cameras were placed again, so pick the two points again.
 
 ## The 3D view
 
@@ -74,7 +100,9 @@ logs and settings, never your photos. The logs do contain file paths.
 ## Video, phone and splats
 
 - **"Importing a video needs FFmpeg".** Install FFmpeg 5 or newer, or set
-  its location in Settings → Reconstruction tools.
+  its location in Settings → Reconstruction tools. If FFmpeg is installed
+  and the message says "no FFmpeg version", it shows what FFmpeg printed
+  instead: run `ffmpeg -version` in a terminal to check it works there.
 - **The phone can't open the page.** Phone and computer must be on the
   same network (not a guest network that isolates devices), and the
   computer's firewall must allow incoming connections to the app while the

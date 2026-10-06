@@ -7,8 +7,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import struct
+import sys
 import tempfile
+import time
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,10 +56,29 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        tmp.replace(path)
+        replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+# Windows refuses to rename over a file another thread or program has open
+# ("Access is denied"): a reader, or another writer's rename in progress. The
+# photo checks and the pipeline both save capture.json, so retry for a while.
+REPLACE_TRIES = 50
+REPLACE_WAIT_S = 0.05
+
+
+def replace(source: Path, target: Path) -> None:
+    """`source.replace(target)`, retried on Windows while the target is busy."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT_S)
 
 
 def sha256_file(path: Path) -> str:
@@ -90,3 +112,29 @@ def write_uniform_png(path: Path, width: int, height: int, value: int) -> None:
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
     )
+
+
+def link(target: Path, link_path: Path) -> None:
+    """Make `link_path` point at `target` (relative to the link's folder, or absolute).
+
+    A relative symlink where possible, so a moved project still works. On
+    Windows, where symlinks need Developer Mode or admin rights, a folder
+    becomes a directory junction (absolute) and a file a hard link, or a
+    copy across drives.
+    """
+    try:
+        link_path.symlink_to(target)
+        return
+    except (OSError, NotImplementedError):
+        if sys.platform != "win32":
+            raise
+    resolved = (link_path.parent / target).resolve()
+    if resolved.is_dir():
+        import _winapi
+
+        _winapi.CreateJunction(str(resolved), str(link_path))
+        return
+    try:
+        os.link(resolved, link_path)
+    except OSError:
+        shutil.copyfile(resolved, link_path)

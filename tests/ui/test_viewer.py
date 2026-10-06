@@ -6,12 +6,15 @@ import hashlib
 import json
 import struct
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from models import ring, write_images
 from pytestqt.qtbot import QtBot
 
 from ez2digitize import views
+from ez2digitize.orientation import rotation_between
 from ez2digitize.ui import viewer
 
 REPO = Path(__file__).parents[2]
@@ -80,3 +83,129 @@ def test_page_shows_a_view(qtbot: QtBot, tmp_path: Path) -> None:
     event = loaded.args[0]
     assert event["kind"] == "cameras" and event["count"] == 2
     assert event["unit"] == "points, 1 cameras"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_dragging_a_crop_box_face(qtbot: QtBot, tmp_path: Path) -> None:
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    widget.show_view(_camera_view(tmp_path))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+    box = {"centre": [0.0, 0.0, 4.5], "half_size": [0.5, 0.5, 0.5], "yaw": 0.0}
+    widget.set_crop_box(box)
+    widget.frame_crop_box()
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    qtbot.wait(300)  # a frame or two with the new camera
+    # Arrays don't cross into Python as they are: JSON.
+    x, y = json.loads(str(call("JSON.stringify(ez2d.handleOnScreen(0, 1))")))  # the +X face
+    events = (
+        f"const c = document.querySelector('canvas');"
+        f"const ev = (type, x) => c.dispatchEvent(new PointerEvent(type, {{clientX: x, "
+        f"clientY: {y}, button: 0, pointerId: 1, bubbles: true}}));"
+        f"ev('pointerdown', {x}); ev('pointermove', {x} + 60); ev('pointerup', {x} + 60); 1"
+    )
+    with qtbot.waitSignal(widget.crop_changed, timeout=TIMEOUT_MS) as changed:
+        call(events)
+    assert changed.args is not None
+    moved = changed.args[0]
+    # The +X face moved out; the -X face stayed: the box grew and its centre followed.
+    assert moved["half_size"][0] > 0.55
+    assert moved["centre"][0] - moved["half_size"][0] == pytest.approx(-0.5, abs=1e-3)
+    assert moved["half_size"][1:] == [0.5, 0.5] and moved["centre"][1:] == [0.0, 4.5]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_picking_two_points(qtbot: QtBot, tmp_path: Path) -> None:
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    errors: list[str] = []
+    widget.failed.connect(errors.append)
+    widget.show_view(_camera_view(tmp_path))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    def click(point: list[float]) -> str:
+        x, y = json.loads(str(call(f"JSON.stringify(ez2d.pointOnScreen({point}))")))
+        return (
+            "(() => { const c = document.querySelector('canvas');"
+            "for (const type of ['pointerdown', 'pointerup']) c.dispatchEvent(new PointerEvent("
+            f"type, {{clientX: {x}, clientY: {y}, button: 0, pointerId: 1, bubbles: true}}));"
+            "return 1; })()"
+        )
+
+    widget.set_measuring(True)
+    qtbot.wait(300)
+    call(click([0.0, 0.0, 4.0]))  # the two sparse points
+    with qtbot.waitSignal(widget.measured, timeout=TIMEOUT_MS) as measured:
+        call(click([0.0, 0.0, 5.0]))
+    assert measured.args is not None
+    first, second = measured.args[0]["points"]
+    assert first == pytest.approx([0.0, 0.0, 4.0], abs=1e-4)
+    assert second == pytest.approx([0.0, 0.0, 5.0], abs=1e-4)
+    # Measuring ends after two: a further click picks nothing.
+    widget.set_measure([first, second], "25 mm")
+    label = call("document.getElementById('measure').textContent")
+    assert label == "25 mm"
+
+    # Three points to level: reported as "level", the measured pair hidden meanwhile.
+    widget.set_picking(3, "level")
+    qtbot.wait(100)
+    call(click([0.0, 0.0, 4.0]))
+    call(click([0.0, 0.0, 5.0]))
+    with qtbot.waitSignal(widget.level_picked, timeout=TIMEOUT_MS) as picked:
+        call(click([0.0, 0.0, 4.0]))
+    assert picked.args is not None and len(picked.args[0]["points"]) == 3
+    assert errors == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_coverage_rings(qtbot: QtBot, tmp_path: Path) -> None:
+    view = _camera_view(tmp_path)
+    # A low ring all round, a high one half way: one gap, on the high ring.
+    write_images(view.source / "images.bin", ring(24, 10) + ring(12, 45, span=180))
+    flip = rotation_between((0.0, -1.0, 0.0), (0.0, 1.0, 0.0))  # these photos: up is -y
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    errors: list[str] = []
+    widget.failed.connect(errors.append)
+    widget.show_view(replace(view, upright=flip))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    qtbot.wait(200)
+    assert json.loads(str(call("JSON.stringify(ez2d.gapLabels())"))) == ["195° gap"]
+    shown = "document.getElementById('coverage').style.display"
+    assert call(shown) == "block"
+    widget.set_coverage(False)
+    assert call(shown) == "none"
+    widget.clear()
+    assert json.loads(str(call("JSON.stringify(ez2d.gapLabels())"))) == []
+    assert errors == []

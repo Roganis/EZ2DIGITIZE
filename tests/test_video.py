@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import shutil
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
 import pytest
+from mp4_files import TrackSpec, camm, write_mp4
 
+from ez2digitize import motion
 from ez2digitize.backends import ffmpeg
 from ez2digitize.backends.ffmpeg import FFmpeg, VideoInfo
 from ez2digitize.core import photos
@@ -17,12 +18,12 @@ from ez2digitize.core.runner import CancelToken, Event, Progress
 from ez2digitize.video import (
     FramePlan,
     VideoImportCancelled,
+    frame_progress,
     import_video,
     plan_frames,
     select_frames,
+    steady,
 )
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake tools")
 
 
 @pytest.fixture
@@ -64,6 +65,60 @@ def test_select_when_candidates_are_capped() -> None:
     assert len(chosen) == 10 and chosen == sorted(chosen)
 
 
+def test_frame_progress() -> None:
+    times = [0.0, 1.0, 2.0, 3.0, 4.0]
+    # Turned 300° in the first two seconds, then held still.
+    progress = frame_progress([0, 150, 300, 300, 300], times, 4.0)
+    assert progress == pytest.approx([0, 0.375 + 0.0625, 0.75 + 0.125, 0.75 + 0.1875, 1.0])
+    # A camera that hardly turned (a turntable): spaced by time.
+    assert frame_progress([0, 10, 20, 30, 40], times, 4.0) is None
+    assert frame_progress([], [], 4.0) is None
+
+
+def test_select_by_progress() -> None:
+    plan = FramePlan(1.0, 4.0)
+    # Eight candidates; the first four cover three quarters of the progress.
+    progress = [0.0, 0.25, 0.5, 0.74, 0.8, 0.85, 0.9, 0.95]
+    scores = [1.0, 2.0, 1.0, 2.0, 1.0, 1.0, 3.0, 1.0]
+    assert select_frames(scores, plan, progress, windows=4) == [0, 1, 3, 6]
+
+
+def test_steady() -> None:
+    # The slowest turns at 20°/s: up to 20 * 1.5 + 10 = 40°/s is steady enough.
+    assert steady([0, 1, 2, 3], [20.0, 40.0, 41.0, None]) == [0, 1, 3]
+    assert steady([0, 1], [None, None]) == [0, 1]  # no gyroscope there
+    # Tremor-level differences don't count.
+    assert steady([0, 1], [0.5, 9.0]) == [0, 1]
+
+
+def test_fast_turning_candidates_are_passed_over() -> None:
+    plan = FramePlan(1.0, 4.0)
+    scores = [1.0, 5.0, 2.0, 1.0, 1.0, 1.0, 1.0, 3.0]
+    turning = [10.0, 80.0, 12.0, 11.0, 30.0, 30.0, 30.0, 30.0]
+    # Window 0: the sharpest-scoring candidate was turning fast; window 1 is even.
+    assert select_frames(scores, plan) == [1, 7]
+    assert select_frames(scores, plan, turning=turning) == [2, 7]
+
+
+def test_frames_follow_the_turning(project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg) -> None:
+    """Turning for the first 5 s of 10, then still: most frames come from the turning."""
+    clip = tmp_path / "VID_0002.mp4"
+    readings = []
+    for i in range(1000):  # 10 ms apart
+        turning = 1.0 if i < 500 else 0.0
+        readings += [camm(3, 0.0, -9.81, 0.0), camm(2, 0.0, turning, 0.0)]
+    write_mp4(clip, [TrackSpec("meta", "camm", 1000, [(r, 5) for r in readings])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    times = [f.metadata["video"]["time_s"] for f in bundle.files if f.kind == "image"]
+    assert bundle.source_info["spacing"] == {
+        "by": "angle",
+        "turned_deg": pytest.approx(286.5, abs=1),
+    }
+    assert bundle.source_info["fast_passed_over"] == 0  # the fake's sharp frames turn alike
+    assert sum(t < 5 for t in times) >= 15 and len(times) <= 20
+    assert times == sorted(times)
+
+
 def test_import_keeps_the_sharp_frames(project: Project, clip: Path, fake_ffmpeg: FFmpeg) -> None:
     events: list[Event] = []
     bundle = import_video(project, clip, fake_ffmpeg, frames=20, on_event=events.append)
@@ -90,6 +145,42 @@ def test_import_keeps_the_sharp_frames(project: Project, clip: Path, fake_ffmpeg
     assert CaptureBundle.load(bundle.root).to_dict() == bundle.to_dict()
     messages = {e.message for e in events if isinstance(e, Progress)}
     assert messages == {"Extracting frames", "Choosing the sharpest frames"}
+
+
+def test_import_records_the_motion_track(
+    project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg
+) -> None:
+    """A video with a CAMM track: each kept frame notes gravity and the turning rate."""
+    clip = tmp_path / "VID_0001.mp4"
+    readings = [camm(3, 0.0, -9.81, 0.0), camm(2, 0.0, 0.5, 0.0)] * 3000  # 10 ms apart
+    write_mp4(clip, [TrackSpec("meta", "camm", 1000, [(r, 10) for r in readings])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    assert bundle.source_info["motion"] == {
+        "format": "camm",
+        "device": "",
+        "gravity": "accelerometer",
+        "gravity_samples": 3000,
+        "gyro_samples": 3000,
+        "pose_samples": 0,
+    }
+    frames = [f for f in bundle.files if f.kind == "image"]
+    assert all(f.metadata["motion"]["down"] == [0, 1, 0] for f in frames)
+    assert frames[0].metadata["motion"]["turn_deg_s"] == pytest.approx(28.65, abs=0.01)
+    downs = motion.measured_downs([bundle])
+    assert downs[f"{bundle.id}/frame_0001.jpg"] == (0, 1, 0) and len(downs) == 20
+    bundle.set_excluded(["frame_0001.jpg"])
+    assert len(motion.measured_downs([bundle])) == 19  # only the photos in use
+
+
+def test_unreadable_motion_track_is_noted(
+    project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg
+) -> None:
+    clip = tmp_path / "GX010001.MP4"
+    broken = b"DEVC\0\x04\xff\xff" + b"\0" * 8
+    write_mp4(clip, [TrackSpec("meta", "gpmd", 1000, [(broken, 1000)])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    assert "unreadable motion track" in bundle.source_info["motion"]["error"]
+    assert all("motion" not in f.metadata for f in bundle.files)
 
 
 def test_video_frames_get_no_focal_length_warning(

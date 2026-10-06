@@ -12,6 +12,17 @@ Frames are not sampled uniformly: video from a moving phone has motion
 blur that comes and goes. The video is cut into as many windows as frames
 wanted; FFmpeg extracts CANDIDATES_PER_FRAME frames per window, and the
 sharpest of each (by the photo checks' score) is kept.
+
+Videos that carry a motion track (GoPro's GPMF, Google's CAMM; see
+ez2digitize.motion) also give each frame the direction of gravity and how
+fast the camera was turning (`metadata["motion"]`); `source_info["motion"]`
+says where it came from. With a gyroscope, the windows are cut by the angle
+the camera turned rather than by time (`frame_progress`): a walk around an
+object gets its frames evenly round it however the pace changed, and
+fewer frames come from pauses. Within each window, candidates shot while
+the camera turned fast are passed over (`steady`). Part of the spacing stays by time, so a
+stretch of sideways movement without turning still gets frames; a camera
+that hardly turned at all (a turntable) is spaced by time alone.
 """
 
 from __future__ import annotations
@@ -41,6 +52,7 @@ from ez2digitize.core.photos import INSPECT_THREADS, measure_sharpness
 from ez2digitize.core.project import Project
 from ez2digitize.core.resources import cpu_threads
 from ez2digitize.core.runner import CancelToken, EventHandler, Progress, run_process
+from ez2digitize.motion import MOTION_KEY, MotionError, MotionTrack, frame_motion, read_motion
 
 # About right for an object filmed all around in 30 s to 2 min.
 DEFAULT_FRAMES = 100
@@ -49,6 +61,15 @@ CANDIDATES_PER_FRAME = 4
 MAX_FRAMES_PER_S = 5.0
 VIDEO_KEY = "video"
 CANDIDATES_DIR = ".candidates"
+# Spacing by angle: the share of each frame's position that is still by time,
+# and the turning below which a video is spaced by time alone (a camera on a
+# tripod, or a turntable, turns only by shaking).
+TIME_SHARE = 0.25
+MIN_ANGLE_DEG = 90.0
+# Within a window, candidates turning faster than FAST_RATIO times the slowest
+# one, plus FAST_MARGIN_DEG_S (so hand tremor doesn't count), are passed over.
+FAST_RATIO = 1.5
+FAST_MARGIN_DEG_S = 10.0
 
 
 class VideoImportCancelled(Exception):
@@ -69,21 +90,70 @@ def plan_frames(info: VideoInfo, frames: int) -> FramePlan:
     return FramePlan(rate, min(rate * CANDIDATES_PER_FRAME, info.frame_rate))
 
 
-def select_frames(scores: Sequence[float | None], plan: FramePlan) -> list[int]:
+def frame_progress(
+    angles: Sequence[float], times: Sequence[float], duration_s: float
+) -> list[float] | None:
+    """Each candidate's position along the video, 0 to 1, mostly by angle turned.
+
+    `angles`: degrees turned since the start at each candidate's time
+    (motion.MotionTrack.angle_travelled). None if the camera turned less
+    than MIN_ANGLE_DEG in all: then time is the better guide.
+    """
+    if not angles:
+        return None
+    start, total = angles[0], angles[-1] - angles[0]
+    if total < MIN_ANGLE_DEG or duration_s <= 0:
+        return None
+    return [
+        (1 - TIME_SHARE) * (angle - start) / total + TIME_SHARE * min(t / duration_s, 1.0)
+        for angle, t in zip(angles, times, strict=True)
+    ]
+
+
+def select_frames(
+    scores: Sequence[float | None],
+    plan: FramePlan,
+    progress: Sequence[float] | None = None,
+    windows: int = 0,
+    turning: Sequence[float | None] | None = None,
+) -> list[int]:
     """Index of the sharpest candidate in each window, in time order.
 
     Candidate i was taken at i / candidate_rate seconds; windows are
-    1 / rate seconds long. Unreadable candidates (None) are skipped.
+    1 / rate seconds long. With `progress` (frame_progress), the video is
+    cut into `windows` equal steps of it instead. Unreadable candidates
+    (None) are skipped.
+
+    With `turning` (degrees a second at each candidate, from the
+    gyroscope), candidates turning fast for their window are passed over
+    first (`steady`): the sharpness score also depends on what the frame
+    shows, so a busy, blurred frame can outscore a crisp, plain one, while
+    the gyroscope measures the cause of blur itself.
     """
-    best: dict[int, int] = {}
+    groups: dict[int, list[int]] = {}
     for index, score in enumerate(scores):
         if score is None:
             continue
-        window = math.floor(index * plan.rate / plan.candidate_rate + 1e-9)
-        current = best.get(window)
-        if current is None or score > (scores[current] or 0.0):
-            best[window] = index
-    return [best[window] for window in sorted(best)]
+        if progress is not None:
+            window = min(math.floor(progress[index] * windows), windows - 1)
+        else:
+            window = math.floor(index * plan.rate / plan.candidate_rate + 1e-9)
+        groups.setdefault(window, []).append(index)
+    chosen = []
+    for window in sorted(groups):
+        group = steady(groups[window], turning) if turning is not None else groups[window]
+        chosen.append(max(group, key=lambda i: scores[i] or 0.0))
+    return chosen
+
+
+def steady(group: list[int], turning: Sequence[float | None]) -> list[int]:
+    """The candidates of a window not turning much faster than its slowest."""
+    rates = [turning[i] for i in group]
+    known = [r for r in rates if r is not None]
+    if not known:
+        return group
+    limit = min(known) * FAST_RATIO + FAST_MARGIN_DEG_S
+    return [i for i, rate in zip(group, rates, strict=True) if rate is None or rate <= limit]
 
 
 def import_video(
@@ -111,6 +181,12 @@ def import_video(
         raise CaptureError(str(exc)) from exc
     plan = plan_frames(info, frames)
     emit = on_event or (lambda _event: None)
+    motion: MotionTrack | None = None
+    motion_error = None
+    try:
+        motion = read_motion(video, info.rotation)
+    except MotionError as exc:
+        motion_error = str(exc)  # recorded; the frames are still worth having
     source_info: dict[str, Any] = {
         "video": video.name,
         "ffmpeg": ffmpeg.version,
@@ -118,6 +194,10 @@ def import_video(
         "frame_rate": round(plan.rate, 4),
         "candidate_rate": round(plan.candidate_rate, 4),
     }
+    if motion is not None:
+        source_info[MOTION_KEY] = motion.summary()
+    elif motion_error is not None:
+        source_info[MOTION_KEY] = {"error": motion_error}
 
     def fill(staging: Path) -> list[CaptureFile]:
         original = copy_into(staging, video, set())
@@ -144,7 +224,18 @@ def import_video(
             raise CaptureError(f"FFmpeg extracted no frames from {video.name}")
 
         scores = _score(candidates, emit, cancel)
-        chosen = select_frames(scores, plan)
+        times = [i / plan.candidate_rate for i in range(len(candidates))]
+        angles = motion.angle_travelled(times) if motion is not None else None
+        progress = frame_progress(angles, times, info.duration_s) if angles else None
+        windows = max(1, round(info.duration_s * plan.rate))
+        turning = [motion.turn_at(t) for t in times] if motion is not None else None
+        chosen = select_frames(scores, plan, progress, windows, turning)
+        if turning is not None and any(r is not None for r in turning):
+            by_score = select_frames(scores, plan, progress, windows)
+            source_info["fast_passed_over"] = len(set(by_score) - set(chosen))
+        if angles:
+            turned = round(angles[-1] - angles[0], 1)
+            source_info["spacing"] = {"by": "angle" if progress else "time", "turned_deg": turned}
         if not chosen:
             raise CaptureError(f"none of the frames extracted from {video.name} can be read")
         files = [original]
@@ -160,6 +251,8 @@ def import_video(
                 "time_s": time_s,
                 "sharpness": scores[index],
             }
+            if motion is not None and (entry := frame_motion(motion, time_s)):
+                frame.metadata[MOTION_KEY] = entry
             files.append(frame)
         shutil.rmtree(work)
         source_info["candidates"] = len(candidates)

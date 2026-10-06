@@ -172,6 +172,14 @@ def test_colmap_on_synthetic_scene(tmp_path: Path) -> None:
     assert again.started == record.started
 
 
+def test_synthetic_photos_carry_their_focal_length(tmp_path: Path) -> None:
+    """As a camera's photos do: COLMAP's prior is the 35 mm focal / 35 * the longer side."""
+    synthetic.generate(tmp_path, views_per_ring=1, width=160, height=120)
+    with Image.open(tmp_path / "images" / "view_000.jpg") as photo:
+        focal_35mm = photo.getexif().get_ifd(0x8769)[0xA405]
+    assert focal_35mm / 35 * 160 == pytest.approx(0.9 * 160, rel=0.02)
+
+
 def test_eval_psnr_against_held_out_photos(tmp_path: Path) -> None:
     rng = np.random.default_rng(1)
     photo = (rng.random((40, 60, 3)) * 255).astype(np.uint8)

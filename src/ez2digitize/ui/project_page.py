@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import diagnostics, masks, presets, video
+from ez2digitize import diagnostics, masks, motion, plugins, presets, subject, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -53,11 +54,14 @@ from ez2digitize.pipeline import (
     MeshResult,
     MeshSettings,
     PipelineFunction,
+    SparseResult,
     SplatResult,
     Tools,
     run_mesh,
+    run_sparse,
     run_splat,
 )
+from ez2digitize.plugins import PluginError
 from ez2digitize.ui.masks_panel import MasksPanel
 from ez2digitize.ui.phone_upload import PhoneUploadDialog
 from ez2digitize.ui.photo_checks import PhotoChecks
@@ -65,10 +69,14 @@ from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 from ez2digitize.ui.sides_panel import SidesPanel
 from ez2digitize.ui.video_import import VideoImporter
 from ez2digitize.ui.view_panel import ViewPanel
+from ez2digitize.ui.watch_dialog import WatchFolderDialog
 
 STAGE_LABELS = {
     "features": "Find features",
     "matching": "Match photos",
+    "poses": "Place cameras (plugin)",
+    "triangulation": "Triangulate points",
+    "pose-check": "Check camera placement",
     "mapping": "Place cameras",
     "undistort": "Undistort photos",
     "mask-undistort": "Prepare masks",
@@ -78,6 +86,7 @@ STAGE_LABELS = {
     "refine": "Refine mesh",
     "texture": "Texture mesh",
     "splat": "Train splats",
+    "splat-mesh": "Mesh from splats",
 }
 
 # Detail -> OpenMVS resolution level (each level halves the image size).
@@ -145,8 +154,14 @@ class ProjectPage(QWidget):
         self.import_video_button = QPushButton("Import video…")
         self.import_video_button.clicked.connect(self.choose_video_to_import)
         self.phone_button = QPushButton("From phone…")
-        self.phone_button.setToolTip("Send photos from a phone over Wi-Fi (scan a QR code)")
-        self.phone_button.clicked.connect(self.add_from_phone)
+        self.phone_button.setToolTip(
+            "Send photos from a phone over Wi-Fi (scan a QR code), or take them from the "
+            "folder a phone syncs to"
+        )
+        phone_menu = QMenu(self.phone_button)
+        phone_menu.addAction("Over Wi-Fi (QR code)…", self.add_from_phone)
+        phone_menu.addAction("From a synced folder…", self.add_from_synced_folder)
+        self.phone_button.setMenu(phone_menu)
         self.other_side_button = QPushButton("Other side…")
         self.other_side_button.setToolTip(
             "Scan the underside too: import photos taken with the object turned over"
@@ -170,6 +185,13 @@ class ProjectPage(QWidget):
                 self.quality.count() - 1, presets.HINTS[quality], Qt.ItemDataRole.ToolTipRole
             )
         self.quality.setCurrentIndex(presets.QUALITIES.index(presets.parse_quality(project.preset)))
+        self.subject = QComboBox()
+        for name in subject.SUBJECTS:
+            self.subject.addItem(subject.LABELS[name], name)
+            self.subject.setItemData(
+                self.subject.count() - 1, subject.HINTS[name], Qt.ItemDataRole.ToolTipRole
+            )
+        self.subject.setCurrentIndex(subject.SUBJECTS.index(subject.of(project)))
         self.detail = QComboBox()
         for label, level in DETAIL_LEVELS:
             self.detail.addItem(label, level)
@@ -182,6 +204,18 @@ class ProjectPage(QWidget):
             "file for viewers and the web"
         )
         self.refine = QCheckBox("Refine the mesh (slow, sharper detail)")
+        self.splat_mesh = QCheckBox("and a mesh from them")
+        self.splat_mesh.setToolTip(
+            "After training, also a surface through the splats (Poisson, on the CPU), with "
+            "vertex colours. A second opinion next to the textured mesh: it can do better "
+            "on thin or shiny parts, with softer colour."
+        )
+        self.features = QComboBox()
+        for kind, label in presets.FEATURE_LABELS.items():
+            self.features.addItem(label, kind)
+            self.features.setItemData(
+                self.features.count() - 1, presets.FEATURE_HINTS[kind], Qt.ItemDataRole.ToolTipRole
+            )
         self.mesh_size = QComboBox()
         for label, faces in MESH_SIZES:
             self.mesh_size.addItem(label, faces)
@@ -190,7 +224,14 @@ class ProjectPage(QWidget):
             "slicers; the texture keeps its detail"
         )
         self.use_masks = QCheckBox("Use masks")
-        self.use_masks.setChecked(True)
+        self.use_masks.setChecked(subject.of(project) == "object")
+        self.refine_poses = QCheckBox("Refine the plugin's camera placement with COLMAP")
+        self.refine_poses.setToolTip(
+            "With a camera placement plugin (Settings → Plugins): COLMAP then finds "
+            "features, matches the photos the plugin's cameras say overlap, and refines "
+            "the cameras at full resolution. Slower, but the dense cloud and mesh "
+            "need the precision"
+        )
         self.align = QCheckBox("Stand the model upright")
         self.align.setChecked(True)
         self.align.setToolTip(
@@ -207,11 +248,13 @@ class ProjectPage(QWidget):
         )
         settings_box = QGroupBox("Settings")
         form = QFormLayout(settings_box)
+        form.addRow("Subject:", self.subject)
         form.addRow("Quality:", self.quality)
         form.addRow("Save as:", self.export_formats)
         form.addRow("Mesh size:", self.mesh_size)
         form.addRow(self.use_masks)
         form.addRow(self.align)
+        form.addRow(self.refine_poses)
         form.addRow("Video frames:", self.video_frames)
         # Advanced: override the preset's dense detail and refinement, and see
         # the values a run will use.
@@ -221,21 +264,31 @@ class ProjectPage(QWidget):
         advanced_form = QFormLayout(self.advanced)
         advanced_form.addRow("Detail:", self.detail)
         advanced_form.addRow(self.refine)
+        advanced_form.addRow("Features:", self.features)
         self.values = QLabel()
         self.values.setWordWrap(True)
         self.values.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         advanced_form.addRow(self.values)
         form.addRow(self.advanced)
         self.quality.currentIndexChanged.connect(self._show_values)
+        self.subject.currentIndexChanged.connect(self._on_subject_changed)
         self.advanced.toggled.connect(self._show_values)
         self.detail.currentIndexChanged.connect(self._show_values)
         self.refine.toggled.connect(self._show_values)
+        self.features.currentIndexChanged.connect(self._show_values)
+        self.splat_mesh.toggled.connect(self._show_values)
         self.mesh_size.currentIndexChanged.connect(self._show_values)
         self._show_values()
 
+        self.place_button = QPushButton("Place cameras")
+        self.place_button.setToolTip(
+            "Only place the cameras, then look at them in the 3D view and set the crop box "
+            "before building the mesh"
+        )
+        self.place_button.clicked.connect(lambda: self.start_run(run_sparse))
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
-        self.run_button.clicked.connect(self.start_run)
+        self.run_button.clicked.connect(lambda: self.start_run(run_mesh))
         self.splat_button = QPushButton("Build splats")
         self.splat_button.setToolTip(
             "Gaussian splats with Brush, on the GPU: a photo-real view of the object, "
@@ -251,8 +304,10 @@ class ProjectPage(QWidget):
         self.status = QLabel("Ready")
         self.status.setWordWrap(True)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.place_button)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.splat_button)
+        buttons.addWidget(self.splat_mesh)
         buttons.addWidget(self.cancel_button)
         buttons.addStretch(1)
 
@@ -395,13 +450,15 @@ class ProjectPage(QWidget):
         busy = running or importing or masking
         has_photos = any(b.images for b in list_bundles(self.project))
         self.run_button.setEnabled(not busy and has_photos)
+        self.place_button.setEnabled(not busy and has_photos)
         self.splat_button.setEnabled(not busy and has_photos)
+        self.splat_mesh.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
         self.import_video_button.setEnabled(not busy)
         self.phone_button.setEnabled(not busy)
         busy_widgets = (
-            self.quality, self.advanced, self.export_formats, self.mesh_size,
+            self.subject, self.quality, self.advanced, self.export_formats, self.mesh_size,
             self.video_frames, self.align,
         )  # fmt: skip
         for widget in busy_widgets:
@@ -409,8 +466,10 @@ class ProjectPage(QWidget):
         self.photo_checks.set_locked(busy)
         self.masks_panel.set_locked(running or importing)
         self.sides_panel.set_locked(busy)
+        self.view_panel.set_locked(busy)
         self.other_side_button.setEnabled(not busy)
         self.use_masks.setEnabled(not busy and masks.has_masks(self.project))
+        self.refine_poses.setEnabled(not busy and plugins.chosen_id("poses") is not None)
         self.open_result_button.setVisible(self.last_result is not None)
         self.open_log_button.setVisible(
             self.last_failure is not None and self.last_failure.log is not None
@@ -431,6 +490,17 @@ class ProjectPage(QWidget):
     def chosen_quality(self) -> presets.Quality:
         return presets.parse_quality(str(self.quality.currentData()))
 
+    @property
+    def chosen_subject(self) -> subject.Subject:
+        return subject.parse(self.subject.currentData())
+
+    def _on_subject_changed(self) -> None:
+        """Stored at once; masks follow it (an object's are the point, a scene has none)."""
+        subject.store(self.project, self.chosen_subject)
+        self.use_masks.setChecked(self.chosen_subject == "object")
+        self.view_panel.refresh()
+        self._show_values()
+
     def settings(self) -> MeshSettings:
         """The preset, with the advanced panel's values if it is switched on."""
         faces = int(self.mesh_size.currentData()) or None
@@ -440,14 +510,23 @@ class ProjectPage(QWidget):
                 level=int(self.detail.currentData()),
                 refine=self.refine.isChecked(),
                 faces=faces,
+                subject=self.chosen_subject,
+                features=self.features.currentData(),
+                splat_mesh=self.splat_mesh.isChecked(),
             )
         else:
-            settings = presets.mesh_settings(self.chosen_quality, faces=faces)
+            settings = presets.mesh_settings(
+                self.chosen_quality,
+                faces=faces,
+                subject=self.chosen_subject,
+                splat_mesh=self.splat_mesh.isChecked(),
+            )
         return replace(
             settings,
             export_formats=tuple(self.export_formats.currentData()),
             use_masks=self.use_masks.isChecked(),
             align=self.align.isChecked(),
+            refine_poses=self.refine_poses.isChecked(),
         )
 
     def _show_values(self) -> None:
@@ -464,6 +543,7 @@ class ProjectPage(QWidget):
         rows = presets.describe(self.settings())
         self.values.setText("\n".join(f"{label}: {value}" for label, value in rows))
         self.quality.setToolTip(presets.HINTS[self.chosen_quality])
+        self.subject.setToolTip(subject.HINTS[self.chosen_subject])
 
     def choose_folder_to_import(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Import a folder of photos")
@@ -505,6 +585,16 @@ class ProjectPage(QWidget):
             self.tabs.setCurrentWidget(self.photo_checks)
             self.project_changed.emit()
 
+    def add_from_synced_folder(self) -> None:
+        dialog = WatchFolderDialog(self.project, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.bundle is not None:
+            self.status.setText(
+                f"Imported {len(dialog.bundle.files)} files from the synced folder."
+            )
+            self.refresh()
+            self.tabs.setCurrentWidget(self.photo_checks)
+            self.project_changed.emit()
+
     def choose_video_to_import(self) -> None:
         patterns = " ".join(f"*{suffix}" for suffix in sorted(VIDEO_SUFFIXES))
         path, _ = QFileDialog.getOpenFileName(
@@ -536,6 +626,9 @@ class ProjectPage(QWidget):
     def start_run(self, function: PipelineFunction = run_mesh) -> None:
         try:
             tools = self.tools_factory()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Plugin can't be used", str(exc))
+            return
         except BackendError as exc:
             QMessageBox.warning(
                 self,
@@ -564,7 +657,7 @@ class ProjectPage(QWidget):
         self._stage_items.clear()
         self.overall.setValue(0)
         self.status.setText("Starting…")
-        if function is run_splat and tools.brush is None:
+        if function is run_splat and tools.brush is None and tools.splats is None:
             QMessageBox.warning(
                 self,
                 "Brush not found",
@@ -575,7 +668,7 @@ class ProjectPage(QWidget):
             ("COLMAP", tools.colmap, colmap.PINNED_VERSION),
             ("OpenMVS", tools.openmvs, openmvs.PINNED_VERSION),
         ]
-        if function is run_splat and tools.brush is not None:
+        if function is run_splat and tools.brush is not None and tools.splats is None:
             checked.append(("Brush", tools.brush, brush.PINNED_VERSION))
         for name, tool, pinned in checked:
             if not tool.supported:
@@ -647,6 +740,8 @@ class ProjectPage(QWidget):
                 "version": tools.openmvs.version,
                 "path": str(tools.openmvs.bin_dir),
             }
+            for plugin in tools.used_plugins():
+                report[f"{plugin.slot}_plugin"] = {"id": plugin.id, "version": plugin.version}
         try:
             tool = self.ffmpeg_factory()
         except BackendError as exc:
@@ -671,10 +766,12 @@ class ProjectPage(QWidget):
     def _on_video_imported(self, bundle: CaptureBundle) -> None:
         info = bundle.source_info
         self.overall.setValue(1000)
-        self.status.setText(
+        text = (
             f"Imported {info.get('frames')} frames from {info.get('video')}, the sharpest of "
             f"{info.get('candidates')}."
         )
+        described = motion.describe(info)
+        self.status.setText(f"{text} {described}" if described else text)
         self.refresh()
         self.tabs.setCurrentWidget(self.photo_checks)
         self.project_changed.emit()
@@ -727,12 +824,24 @@ class ProjectPage(QWidget):
             item.setText(1, {"succeeded": "Done", "failed": "Failed"}.get(status, "Cancelled"))
             item.setText(2, f"{seconds:.1f} s")
 
-    def _on_succeeded(self, result: MeshResult | SplatResult) -> None:
+    def _on_succeeded(self, result: SparseResult | MeshResult | SplatResult) -> None:
+        if isinstance(result, SparseResult):
+            self.overall.setValue(1000)
+            self.status.setText(
+                f"Cameras placed: {result.registered_images} of {result.total_images} photos. "
+                "Look at them in the 3D view, set the crop box if you like, then Build mesh."
+            )
+            self._update_buttons()
+            self.view_panel.refresh(prefer="cameras")
+            self.tabs.setCurrentWidget(self.view_panel)
+            return
         self.last_result = result
         self.overall.setValue(1000)
         self.status.setText("Finished")
         folder = self._result_folder()
         what = "Splats" if isinstance(result, SplatResult) else "Textured mesh"
+        if isinstance(result, SplatResult) and result.mesh is not None:
+            what = "Splats and their mesh"
         self.result_label.setText(f"{what} saved in {folder}" if folder else "Finished.")
         self._update_buttons()
         # Show the result.
@@ -745,6 +854,9 @@ class ProjectPage(QWidget):
         if failure.tail:
             self.log.appendPlainText("── last lines of the log ──")
             self.log.appendPlainText("\n".join(failure.tail))
+        if failure.trace:
+            self.log.appendPlainText("── where it happened (please include it in a bug report) ──")
+            self.log.appendPlainText("\n".join(failure.trace))
         self.result_label.setText(
             "Something went wrong. The last lines of the tool's output are in the log."
             if failure.tail

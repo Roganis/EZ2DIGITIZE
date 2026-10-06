@@ -1,11 +1,12 @@
 # Build pinned, CPU-only COLMAP and OpenMVS (tools/backends/build.sh) for
-# Linux x86_64 and macOS arm64, check them with the benchmark harness and the
-# app's own backend modules on the synthetic scene, and upload the packages
-# as artifacts.
+# Linux x86_64, macOS arm64 and Windows x64, check them with the benchmark
+# harness (not on Windows) and the app's own backend modules on the synthetic
+# scene, and upload the packages as artifacts.
 name: Backends
 
 on:
   workflow_dispatch:
+  workflow_call:  # from the Release workflow: binaries built from the tagged commit
   pull_request:
     paths:
       - "tools/backends/**"
@@ -35,10 +36,24 @@ jobs:
       matrix:
         # Linux: the oldest supported runner, because binaries need a glibc at
         # least as new as the build machine's.
-        os: [ubuntu-22.04, macos-latest]
+        os: [ubuntu-22.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows
+    env:
+      # A short work path on Windows: vcpkg build trees pass the 260-character
+      # limit under the workspace. The cache stays in the workspace either way.
+      EZ2D_BACKENDS_WORK: ${{ matrix.os == 'windows-latest' && 'C:/ez2d' || '' }}
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/build/backends/vcpkg-cache
+      PREFIX: ${{ matrix.os == 'windows-latest' && 'C:/ez2d/prefix' || 'build/backends/prefix' }}
+      EXE: ${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
+      - name: Long paths in git (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
       - uses: actions/checkout@v5
 
       - name: Install build tools (Linux)
@@ -53,6 +68,14 @@ jobs:
         if: runner.os == 'macOS'
         # glew: only to satisfy COLMAP's configure checks
         run: brew install ninja nasm autoconf autoconf-archive automake libtool pkg-config libomp glew
+
+      # cl, link, dumpbin, and the CMake and Ninja that come with Visual Studio.
+      # vcpkg fetches the rest (nasm, perl...) itself.
+      - name: MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       # vcpkg's binary cache. Saved even when the build fails, so a failure late
       # in a multi-hour build doesn't throw away the dependencies built so far.
@@ -76,29 +99,36 @@ jobs:
           path: build/backends/vcpkg-cache
           key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
 
+      # The harness is POSIX only (process groups, wait4); on Windows the app's
+      # own pipeline test below is the check.
       - name: Smoke test with the benchmark harness
+        if: runner.os != 'Windows'
         run: |
           B="uv run --group feasibility tools/feasibility/bench.py"
           $B synth ~/ez2d-data/synthetic
           $B run tools/feasibility/plans/backends-smoke.toml --results build/smoke \
             --machine "ci-${{ runner.os }}" \
-            --colmap build/backends/prefix/bin/colmap --openmvs-dir build/backends/prefix/bin
+            --colmap "$PREFIX/bin/colmap" --openmvs-dir "$PREFIX/bin"
 
       - name: App pipeline with the fresh builds
         env:
-          EZ2D_COLMAP: build/backends/prefix/bin/colmap
-          EZ2D_OPENMVS_DIR: build/backends/prefix/bin
           EZ2D_REQUIRE_BACKENDS: "1"
+          EZ2D_TEST_DOWNLOADS: "1"  # the learned features' models (49 MB)
         # The backend tests don't use Qt; without pytest-qt they also run on
         # runners without the libraries Qt needs (libEGL on Ubuntu).
-        run: uv run --all-groups pytest tests/backends -rs -p no:pytest-qt
+        run: |
+          export EZ2D_COLMAP="$PREFIX/bin/colmap$EXE" EZ2D_OPENMVS_DIR="$PREFIX/bin"
+          uv run --all-groups pytest tests/backends -rs -p no:pytest-qt
 
       - name: Summary
         if: always()
         run: |
+          # Always there, so the artifact's layout (backends/...) is the same
+          # on every platform.
+          mkdir -p build/smoke-report
           B="uv run --group feasibility tools/feasibility/bench.py"
           $B report --results build/smoke --out build/smoke-report || true
-          cat build/backends/prefix/BUILDINFO.json >> "$GITHUB_STEP_SUMMARY" || true
+          cat "$PREFIX/BUILDINFO.json" >> "$GITHUB_STEP_SUMMARY" || true
           cat build/smoke-report/*.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - uses: actions/upload-artifact@v4
@@ -108,5 +138,5 @@ jobs:
           retention-days: 14
           path: |
             build/backends/ez2d-backends-*.tar.gz
-            build/backends/prefix/BUILDINFO.json
+            build/backends/BUILDINFO-*.json
             build/smoke-report/

@@ -60,19 +60,40 @@ def find_tool(
     Absolute because stages run with their own folder as working directory.
     """
     if explicit is not None:
-        return explicit.absolute() if _is_executable(explicit) else None
+        found = executable(explicit)
+        return found.absolute() if found else None
     if env_var and (value := os.environ.get(env_var)):
-        candidate = Path(value).expanduser()
-        return candidate.absolute() if _is_executable(candidate) else None
+        found = executable(Path(value).expanduser())
+        return found.absolute() if found else None
     for folder in (bundled_bin_dir(), *extra_dirs):
-        if folder is not None and _is_executable(folder / name):
-            return (folder / name).absolute()
-    found = shutil.which(name)
-    return Path(found).absolute() if found else None
+        if folder is not None and (found := executable(folder / name)):
+            return found.absolute()
+    which = shutil.which(name)
+    return Path(which).absolute() if which else None
 
 
-def _is_executable(path: Path) -> bool:
-    return path.is_file() and os.access(path, os.X_OK)
+# On Windows a tool is named without its suffix: COLMAP is colmap.exe (and
+# the test suite's stand-ins are .cmd scripts).
+WINDOWS_SUFFIXES = (".exe", ".cmd", ".bat")
+
+
+def executable(path: Path) -> Path | None:
+    """`path` if it is an executable file; on Windows also `path` + .exe etc.
+
+    Windows has no executable bit (every file passes X_OK): there the
+    suffix decides.
+    """
+    if sys.platform == "win32":
+        if path.suffix.lower() in WINDOWS_SUFFIXES and path.is_file():
+            return path
+        for suffix in WINDOWS_SUFFIXES:
+            candidate = path.with_name(path.name + suffix)
+            if candidate.is_file():
+                return candidate
+        return None
+    if path.is_file() and os.access(path, os.X_OK):
+        return path
+    return None
 
 
 def result_parameters(options: Any) -> dict[str, Any]:

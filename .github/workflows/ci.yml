@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  workflow_call:  # from the Release workflow
 
 permissions:
   contents: read
@@ -13,8 +15,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]  # macos-latest is Apple Silicon
+        # macos-latest is Apple Silicon. Windows is community-tested (no
+        # maintainer hardware), but the suite runs there too.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -38,7 +43,20 @@ jobs:
         run: uv run ruff format --check
 
       - name: Type check
+        if: runner.os != 'Windows'
         run: uv run mypy
 
+      # The Phase 1 benchmark harness is POSIX only (fork, wait4, process groups).
+      - name: Type check (Windows)
+        if: runner.os == 'Windows'
+        run: uv run mypy src tests tools/spikes tools/packaging tools/viewer tools/plugins --exclude feasibility --exclude 'mapanything-poses/feedforward_colmap\.py$'
+
+      # In two parts, so a hang in a Qt test (the faulthandler_timeout in
+      # pyproject.toml prints where it is) doesn't hide the other results.
       - name: Tests
-        run: uv run pytest
+        run: uv run pytest --ignore=tests/ui --durations=10
+
+      - name: UI tests
+        if: success() || failure()
+        timeout-minutes: 10
+        run: uv run pytest tests/ui --durations=10

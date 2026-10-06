@@ -66,7 +66,8 @@ Phases are ordered by dependency. No durations are given on purpose.
 - Stack: Python 3.12+ with PySide6 (LGPL-3.0, compatible with GPL-3.0),
   managed with `uv` and a lockfile. Ruff, pyright or mypy, pytest, pytest-qt.
 - CI (GitHub Actions): lint, type check, unit tests on Linux and macOS
-  (Windows added later, as build-only).
+  (Windows added later, as build-only: since October 2026 the suite runs
+  there too).
 - Process runner design: `QProcess` or asyncio subprocesses off the GUI
   thread; cancel kills the whole process group.
 
@@ -182,9 +183,14 @@ installable on Linux as an AppImage.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification. The automatic part exists: OpenMVS
   estimates a region of interest from the sparse points and crops to it
-  (`--estimate-roi`, `--crop-to-roi`, on by default). The sparse viewer is
-  done (camera placement in the 3D view tab); adjusting the crop box in it
-  is next.
+  (`--estimate-roi`, `--crop-to-roi`, on by default). Done (`ez2digitize.crop`):
+  Place cameras stops after camera placement and opens the 3D view; there
+  "Crop box" starts from a box around most of the sparse points, its faces
+  are dragged by their handles and it turns about the vertical; the box is
+  saved in project.json with the camera placement it belongs to, and
+  densification keeps only what is inside (`DensifyPointCloud
+  --import-roi-file`; checked on the skull set: the stand cut off level).
+  `ez2d crop` sets it headless.
 - Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
 - AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
   workflow): GUI and CLI in one file, backends bundled.
@@ -215,12 +221,12 @@ fails, they can see which stage failed and why.
   missing backend. Done (`ez2digitize.diagnosis`, plus the pipeline's own
   notices for low registration and split models).
 - Splat output: Brush training on the same poses and masks, `.ply` export,
-  viewable in the embedded viewer. Done except the viewer
-  (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
-  run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
+  viewable in the embedded viewer. Done (`backends/brush.py`,
+  `pipeline.run_splat`, Build splats in the GUI, `ez2d run --splat`; Brush
+  0.3.0 bundled in the AppImage). It refuses software
   renderers. With masks, Brush gets the masks warped for OpenMVS where it
   looks for them (`images/masks/<stem>.png`) and leaves the background out
-  of its loss. Viewing waits for the viewer decision. Rotating splats
+  of its loss. The 3D view shows them, stood upright. Rotating splats
   upright on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in). Done
@@ -248,20 +254,39 @@ fails, they can see which stage failed and why.
     4 MB chunks resumed after drops (tested in Chromium with a dropped
     chunk), bit-for-bit originals in a new bundle. HEIC: on import (folder
     or phone) a JPEG copy is made next to the original, which is kept and
-    left out (`core.heic`, pillow-heif). Not done: the watch folder (when
-    is a synced set complete?).
+    left out (`core.heic`, pillow-heif). The watch folder too
+    (`ez2digitize.watch`, From phone → From a synced folder…, `ez2d
+    watch`): new photos are those that appear (sync tools keep capture
+    times), one has arrived when unchanged for 5 s, sync tools' temporary
+    files count as arriving, and the set has settled after 30 s without
+    change; the user imports then (the CLI does it itself).
 
 ## Phase 4: Mesh quality for real-world use
 
 - **Scale:** set real-world size from a known distance between two picked
   points; then automatic scale from printed ArUco markers on the capture mat.
+  Picked points done (`ez2digitize.scale`; in the 3D view on the camera
+  placement or dense cloud: Pick two points, the real distance, Set scale;
+  `ez2d scale`): STL and 3MF export in millimetres, OBJ, GLB and the point
+  cloud in metres. Checking against a caliper-measured object (see Testing)
+  waits for a capture. Printed markers done (`ez2digitize.markers`; AprilTag
+  tag36h11 instead of ArUco: OpenCV's wheels bundle OpenSSL 1.1.1, not
+  GPL-compatible, while AprilTag is BSD and 4.5 MB): a printable A4 sheet
+  (`ez2d markers`, Marker sheet… in the Scale tool), and after camera
+  placement the scale is set from the markers found, unless one was set by
+  hand (then they are compared). On a rendered sheet the scale comes out
+  within 0.1 %; a real capture is still to come.
 - **Orientation:** up-axis alignment (`colmap model_orientation_aligner` or
   fit to the mat plane) with manual adjust. Automatic part done
   (`ez2digitize.orientation`): up from the photos' down directions,
   corrected for EXIF rotation (COLMAP reads pixels unrotated, and its
   aligner maps gravity to +Y, upside down for glTF); exports stand upright,
   centred, on the ground, Y-up for OBJ/GLB and Z-up for STL/3MF. Manual
-  adjust needs the viewer.
+  adjust done (`ez2digitize.upright`; in the 3D view on the camera
+  placement or dense cloud: Level from three points on the mat or base, Tip
+  forward/sideways by quarter turns, Turn about the vertical, Automatic;
+  `ez2d orient`): the view, the exports and the mesh view all use it, and a
+  crop box is re-fitted level when it changes.
 - **Two-sided scans:** guided workflow for capturing the object, flipping
   it, capturing again, and reconstructing both sets together through masks.
   Done (`ez2digitize.sides`): a capture can be marked as turned over
@@ -281,8 +306,8 @@ fails, they can see which stage failed and why.
   texturing (`--faces`); the export checks watertightness (edges not shared
   by exactly two faces). The skull's meshes come out closed.
 - Export STL and 3MF for printing (untextured; warn if not watertight),
-  PLY point cloud. Done (`stl`, `3mf`, `points` export formats). Units are
-  the reconstruction's until the scale step exists.
+  PLY point cloud. Done (`stl`, `3mf`, `points` export formats), in real
+  units once the scale is set.
 - License notice for OpenMVS (AGPL-3.0) and its dependencies (some CGAL
   components are GPL) in `THIRD_PARTY_LICENSES`, with a source offer for the
   exact bundled versions. Done: `THIRD_PARTY_LICENSES` lists what the apps
@@ -298,8 +323,9 @@ fails, they can see which stage failed and why.
   `ui/viewer.py`, the 3D view tab): camera placement (sparse points and a
   frustum per photo), dense cloud, textured mesh (the upright GLB export,
   or OpenMVS's PLY converted) and splats, all stood upright; a finished
-  build opens in it. Next on top of it: the crop box, manual orientation,
-  scale from picked points, coverage on the camera rings.
+  build opens in it. The crop box and the scale are set in it (Phases 2
+  and 4), and so is the orientation, and the camera placement shows the
+  coverage rings (below).
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
   what to do with shiny objects (matte spray, cross-polarization). Written
@@ -310,7 +336,10 @@ fails, they can see which stage failed and why.
   `ez2digitize.coverage` reports gaps around the object (over 90°), photos
   all from one height, photos placed far from the rest, photos not placed,
   and the overlap estimate: photos with verified matches to fewer than two
-  others (notices in the log). Showing them on the rings needs the viewer; shiny/transparent
+  others (notices in the log). The 3D view shows them on the camera
+  placement (`coverage.rings`): a ring per height, its gaps from 35° shaded
+  and labelled (red over 90°), cameras with few matches orange and
+  misplaced ones red, with a summary above the view. Shiny/transparent
   subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
   The coverage check spots a camera that didn't move (all views within
@@ -319,18 +348,32 @@ fails, they can see which stage failed and why.
   (masks made automatically, the still-camera notice turned into a
   suggestion to make them) waits for more real turntable captures.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
-  Gaussian splatting extension.
+  Gaussian splatting extension. SPZ done (`core/splats.py`): every splat
+  export writes `<name>.spz` next to Brush's PLY, about a tenth of its size
+  (1.4 MB to 0.08 MB on the skull video test; 248 MB to 9 MB for a million
+  splats), stood upright, centred and on the ground like the mesh, each
+  splat's rotation and colour coefficients turned with it, in metres once
+  the scale is set. Checked against Niantic's reference reader. The glTF
+  extension waits for its adoption.
 
 ## Phase 6: Packaging and release
 
 - Release builds: Linux AppImage (primary), macOS `.app` (secondary),
-  Windows installer (community-tested).
+  Windows installer (community-tested). A portable Windows zip is built in
+  CI (Windows app workflow); the installer comes later.
 - Backend binaries bundled or auto-downloaded with SHA-256 checksums and
   pinned versions; source tarballs for every GPL/AGPL binary published with
-  each release. Bundled (AppImage, macOS app); the source archive is built
-  by `tools/backends/collect_sources.sh` (Backend sources workflow).
-  Attaching both to a release waits for the release process (versioning,
-  where releases live).
+  each release. Bundled (AppImage, macOS app, Windows zip); the source
+  archive is built by `tools/backends/collect_sources.sh`, and each release
+  attaches it.
+- Release process. Done (docs/RELEASING.md): the version in
+  `ez2digitize.__version__`, CHANGELOG.md, and a tag `vX.Y.Z` on main
+  that the Release workflow turns into a draft GitHub release: CI, the
+  backends built from the tagged commit, the three packages built and
+  tested with them, the backends' source packed from the same pins, the
+  app's source and SHA256SUMS. `tools/packaging/release.py` sets the
+  version and dates the changelog. The notices of the Rust crates inside
+  Brush ship with it (`tools/packaging/brush_notices.py`).
 - macOS code signing and notarization (paid Apple developer account);
   Windows signing can wait until Windows is officially supported.
 - Docs: quick-start, capture guide, troubleshooting, contribution guide,
@@ -344,15 +387,67 @@ fails, they can see which stage failed and why.
 ## Phase 7: Beyond v1
 
 - Plugin system for third-party backends (user-installed, license shown).
+  Done (`ez2digitize.plugins`, docs/PLUGINS.md): plugins for camera
+  placement and for splats, installed from a folder or `.zip`, licenses
+  shown and accepted before use (Settings → Plugins, `ez2d plugins`), run
+  as stages like the bundled tools. An example plugin is in
+  `tools/plugins/example-poses`. More slots (features and matching, mesh
+  from splats) can follow once a real plugin needs them.
 - Larger scenes (rooms, outdoor) with appropriate matchers and presets.
+  Done: a project's subject (object, or room/outdoor scene: no masks, no
+  camera-ring advice, OpenMVS free-space support for plain walls), and
+  matching for more than 200 photos by GPS, by COLMAP's vocabulary tree
+  (downloaded once, pinned like COLMAP pins it) or in order, with loop
+  detection for video (docs/CAPTURE.md). Waits for a real room and an
+  outdoor capture to tune the presets (memory, dense detail).
 - Better features/matching inside COLMAP: learned local features and
   matchers (e.g. ALIKED or DISK with LightGlue, permissively licensed;
   SuperPoint weights are not). A nearer-term gain than replacing SfM.
+  Done: COLMAP's own ALIKED + LightGlue (ONNX Runtime, now in the backend
+  builds), as an option next to SIFT; the models (BSD-3-Clause,
+  Apache-2.0) and the ALIKED vocabulary tree are downloaded once, pinned as
+  COLMAP pins them. Making it the default waits for a comparison on the
+  Phase 1 datasets (placed photos, time on the CPU, the M1).
 - Feed-forward pose estimation (VGGT, MASt3R-SfM and similar) as optional
   plugins. Most are PyTorch/CUDA-first (ROCm on Linux may work) and several
   carry non-commercial licenses, so they must not be bundled.
+  VGGT done as a plugin (`tools/plugins/vggt-poses`: GPL glue, VGGT and
+  its weights installed by the user under their licenses, shown before use).
+  Its COLMAP model is checked with real COLMAP (model_analyzer, the
+  undistorter); a run of VGGT itself on a GPU, and how it compares on the
+  Phase 1 datasets, wait for the reference machines. MASt3R-SfM (CC-BY-NC)
+  could follow the same way.
+  MapAnything done as a plugin too (`tools/plugins/mapanything-poses`):
+  Apache-2.0 code and weights (or the CC-BY-NC ones), and it takes the EXIF
+  focal length as input, which VGGT can't. The COLMAP writing is shared
+  with the VGGT plugin (`feedforward_colmap.py`). Run against MapAnything's
+  real code on the CPU with random weights; a GPU run with the real weights
+  waits for the reference machines.
+  Refining any such plugin's placement with COLMAP is done
+  (`backends.colmap_refine`, `ez2d run --refine-poses`, a checkbox): the
+  plugin's poses choose the pairs to match, points are triangulated with
+  them held, photos with almost no points are dropped and placed again,
+  and COLMAP's mapper, continuing from that model, refines everything. A
+  single bundle adjustment after the triangulation made things worse
+  (2.9° median rotation error to 4.9°): with the poses held, too few
+  points survive to pull wrong cameras back. With the real COLMAP 4.2.1 on
+  the synthetic scene (32 photos), plugin poses 2° off with a focal length
+  7% too long came out 0.06° off (median, 0.2° worst) with the focal
+  length within 0.1%; 5° and 15% off, 0.06° median and 0.9° worst. A test
+  runs it on the Backends job. The real check, VGGT and MapAnything
+  refined on the Phase 1 datasets, waits for the reference machines.
 - Surface reconstruction from splats (2DGS-style methods) as a second mesh
   path; check licenses, many derive from Inria's non-commercial code.
+  Licenses checked: 2DGS and Gaussian Opacity Fields are under Inria's
+  Gaussian-Splatting License (non-commercial), PGSR under its own; gsplat
+  (Apache-2.0) has a 2DGS rasteriser but only for CUDA. So the bundled
+  path is permissive and on the CPU: done (`ez2digitize.splat_mesh`), the
+  solid splats as oriented points (shortest axis as the normal, turned to
+  the nearest camera) into COLMAP's screened Poisson mesher (PoissonRecon,
+  MIT, already in COLMAP), vertex colours from the splats, exported as GLB
+  and PLY and shown in the 3D view. Checked on a synthetic sphere with the
+  real mesher (within 3-4% of the radius). The surface-trained methods can
+  come as plugins (a "mesh from splats" slot) once one is wanted.
 - Android capture companion, sending capture bundles through the Phase 3
   upload endpoint. Its value over the upload page is control of the camera,
   which a browser can't do:
@@ -360,11 +455,88 @@ fails, they can see which stage failed and why.
     lens only (phones otherwise switch lenses and readjust between shots);
   - live guidance: coverage ring of angles already shot, blur check after
     each photo, optional automatic shutter once the phone has moved enough;
-  - optionally ARCore poses saved in `capture.json` as priors for COLMAP.
+  - the phone's motion recorded with the capture: raw gyroscope,
+    accelerometer and gravity readings, and ARCore's camera poses (camera
+    and motion sensors fused, in metres, a few centimetres of drift), all
+    on the camera frames' clock (Android stamps sensors and frames with
+    the same one on most phones). A sidecar file in the bundle, named in
+    `capture.json` (a schema bump with its migration); the video and
+    photos stay untouched. ARCore wants to drive the camera itself, often
+    below full resolution, which conflicts with the locked full-quality
+    capture above; its shared-camera mode may reconcile them, to try on a
+    real phone. The raw sensors have no such conflict, so they are always
+    recorded. A browser can read the sensors but gives no reliable time
+    per video frame, so the upload page can't do this.
+
+  What the pipeline does with the motion data, cheapest and surest first:
+  1. Up from gravity: the upright direction without guessing it from how
+     the photos were held, which fails for photos at all angles.
+  2. Frames from video picked by motion: drop frames shot while turning
+     fast (likely blurred), and space them by angle travelled rather than
+     by time. Needs only the gyroscope.
+  3. Matching guided by the poses: compare only photos that look at the
+     same side, as GPS positions already do for large sets.
+  4. A default scale from ARCore's metres (accuracy to measure; the marker
+     sheet stays the precise way).
+  5. Known poses for MapAnything (`camera_poses` input, next to the EXIF
+     focal length the plugin already passes) and as position priors for
+     COLMAP's mapper (check what the pinned 4.2.1 supports).
+
+  The motion sensors see nothing when a turntable turns the object under a
+  still phone: there only gravity helps.
 
   Before starting it, check the Phase 1 photo sets (EXIF focal lengths,
   exposure differences) to see how much the phone's automatic adjustments
-  actually hurt reconstruction.
+  actually hurt reconstruction. The tool for that check is done: photo
+  inspection reads shutter, aperture, ISO, compensation and white balance;
+  the photo checks warn when the exposure moved by more than a stop; and
+  `ez2d photos PROJECT --exposure` reports the changes per capture and,
+  after camera placement, how many of the photos off the usual exposure
+  were left unplaced or matched few others, against the rest. Running it on
+  the Phase 1 phone captures decides whether the companion app is worth
+  building; that waits for the maintainer's data.
+- Motion data already inside videos, with no app: GoPro writes its
+  gyroscope and accelerometer into the MP4 (GPMF), and some phones and 360°
+  cameras write Google's camera motion track (CAMM). Reading them at video
+  import gives steps 1 and 2 above for videos people already have. Check
+  the licences of the parsers (or read the tracks ourselves; both formats
+  are documented) and record the data in the bundle like the companion
+  app's.
+  Started (`ez2digitize.motion`, `core.mp4`): both formats are read with
+  the standard library from their makers' documentation, no parser
+  library. Each video frame's capture.json entry records gravity's
+  direction in the camera's axes and the turning rate; the up direction
+  (orientation.estimate_up) uses measured gravity when at least three
+  placed frames have it. Checked on GoPro's sample files (HERO5 to MAX):
+  on the HERO6 sample, COLMAP's cameras and the measured gravity agree to
+  within 9° on every frame, while the guess from how the camera was held
+  was 51° off where it looked down at a table. Frames are now also chosen
+  by angle travelled (video.frame_progress): the gyroscope integrated into
+  an orientation and measured in 0.2 s steps, so hand tremor adds about a
+  fifth of what it would if the turning rate were simply summed; a quarter
+  of the spacing stays by time, and a video that turned less than 90° in
+  all (tripod, turntable) is spaced by time alone. On GoPro's samples the
+  gaps between kept frames now range from 0.15 to 1.3 s with the pace; on
+  the HERO6 room pan, COLMAP placed all 60 frames either way, in four
+  pieces (largest 29 frames by angle, 32 by time), so that clip shows no
+  gain; an object walked around is the case it is for, still to measure.
+  Frames shot while turning fast are passed over too (video.steady):
+  within each window, candidates turning more than 1.5 times the slowest
+  one plus 10°/s give way before sharpness decides, since the sharpness
+  score also rises with how busy the frame is. On GoPro's samples that
+  overrules sharpness in 5 of 40 windows on the HERO5 clip, 2 on the
+  HERO6 (where the gyroscope's pick is visibly crisper) and none on the
+  HERO7. Known poses reach camera placement plugins too: CAMM's 6DoF
+  samples (orientation and position, as ARCore-tracking apps write them)
+  give each frame a pose in capture.json, the app hands plugins a
+  `{priors}` file of them (docs/PLUGINS.md), and the MapAnything plugin
+  passes them as `camera_poses` (not metric: CAMM leaves the unit to the
+  app) when every photo has one from the same video. Not done yet: a real
+  CAMM file (none at hand; the tests build them
+  from the specification), and GoPro's in-camera stabilisation (HyperSmooth turns
+  the image against the body, so the accelerometer's gravity is off by
+  that turn; the MAX's and HERO8's fused gravity vector, used when
+  present, accounts for it).
 
 ## Testing and validation
 
@@ -376,7 +548,12 @@ fails, they can see which stage failed and why.
   self-hosted runner):** the Phase 1 datasets, checked for completion, mesh
   metrics against reference (bounding box, Chamfer distance to a reference
   mesh), splat PSNR on held-out views within tolerance. Run before each
-  release and each backend version bump.
+  release and each backend version bump. The check is done:
+  `bench.py regress save` keeps a results folder as the reference (metrics,
+  and each mesh with its cameras), `bench.py regress check` compares new
+  results with it, aligning the meshes by their cameras, and fails outside
+  the tolerances (see tools/feasibility/README.md). The reference itself
+  waits for the Phase 1 datasets on the reference machines.
 - **Scale accuracy:** measure a known object with calipers and check the
   scaled mesh against it.
 - **Human review:** reference screenshots per dataset, compared by a person

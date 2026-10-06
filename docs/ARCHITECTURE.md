@@ -80,6 +80,23 @@ component and must be photos or videos. `finish` moves the complete files
 into a capture bundle (`source: "upload"`, the phone's user agent as
 device) through `assemble_bundle`; `close` deletes what wasn't imported.
 
+## Watch folder (`watch.py`, `ui/watch_dialog.py`, `ez2d watch`)
+
+For a phone that syncs its photos to a folder. `FolderWatch` polls it (no
+file system notifications: plain polling also works on synced and network
+folders) down to 4 levels, skipping hidden folders such as Syncthing's
+`.stversions`. New photos are those not there when watching started (sync
+tools keep the capture time, so modification times can't tell), or with
+"since", also those modified after a given time. A photo has arrived when
+its size and modification time are unchanged for 5 s; a sync tool's
+temporary file for a photo (`.syncthing.IMG_1.jpg.tmp`, `.IMG_1.jpg.icloud`,
+`IMG_1.jpg.part`...) counts as arriving until renamed, or until unchanged
+for the settle time (abandoned). The set has settled when nothing new or
+changing was seen for 30 s: the dialog says so and leaves Import to the
+user; `ez2d watch` imports then. The bundle has `source: "watch"` and the
+folder in `source_info`; photos already in the project (same size and
+SHA-256) are left out. Videos are counted and left to Import video.
+
 ## Video import (`video.py`, `backends/ffmpeg.py`)
 
 A video becomes a capture bundle (`source: "video"`) holding the original
@@ -129,6 +146,17 @@ over 90° around the object, every photo within 15° of height, misplaced
 photos, and a camera that didn't move (all views within 10° of their mean;
 scale-free, unlike positions). On the skull: 23° largest gap, heights from
 -28° to 44°; two video frames misplaced.
+
+`rings` lays the same out for the 3D view, in the upright frame of
+`upright.rotation` (so a corrected orientation moves the rings with the
+model): the cameras sorted by height angle and split where it jumps by more
+than 12° (fewer than 4 cameras at a height join the nearest ring: strays,
+not a ring), each ring at its cameras' median height and distance, and its
+gaps from 35° (two or three photos missing at 10-15° steps). `views` adds
+it to the camera placement's JSON with a flag per camera, "far" (misplaced)
+or "weak" (`weak_photos`, from the matching database); the page draws each
+ring as a circle with its gaps shaded and labelled, orange, red over 90°,
+and colours the flagged cameras. `describe` is the summary above the view.
 
 ## Photo checks (`core/photos.py`)
 
@@ -232,11 +260,77 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
+## Mesh from splats (`splat_mesh.py`)
+
+A second mesh path after splat training (`MeshSettings.splat_mesh`, the
+`splat-mesh` stage). The prepare step turns the splats into oriented
+points (in-process, numpy): opacity at least 0.5, the largest 1% left out,
+the crop box applied, each normal along the splat's shortest axis, turned
+towards the nearest camera. The stage runs COLMAP's `poisson_mesher`
+(screened Poisson, with colours; depth by quality, trim 5, gentler than
+COLMAP's 10, since splats are sparser than dense MVS points). The result
+is a vertex-coloured PLY, exported as `<name>_splat_mesh.glb` (placed like
+the other exports) and `.ply`, and shown in the 3D view as "Mesh from
+splats". The 2DGS-style methods that train surface-aligned splats are
+non-commercial (Inria) or CUDA-only, so they are left to plugins.
+
+## Plugins (`plugins.py`, `ui/plugins_dialog.py`, `ez2d plugins`)
+
+Backends the user installs: tools that can't be bundled (non-commercial
+code or weights) or that the user prefers. See [PLUGINS.md](PLUGINS.md)
+for the format.
+
+- A plugin is a folder with `ez2d-plugin.toml`: the slot it fills, a
+  command with placeholders, and a `[[license]]` per part (code and weights
+  separately). It lives in the user's data folder (`plugins_dir()`). It
+  runs like the bundled backends, through `run_stage` (manifest, cache,
+  cancellation, log); it is never imported.
+- Slots are contracts on stage folders. `poses` is the `mapping` stage: the
+  photos as COLMAP sees them in, a binary COLMAP model in `sparse/0` out.
+  Undistortion and everything after it are unchanged. `splats` is the
+  `splat` stage: Brush's dataset in, `splat.ply` out.
+- A `poses` plugin's placement can be refined by COLMAP
+  (`MeshSettings.refine_poses`, `backends.colmap_refine`): the plugin then
+  runs as the `poses` stage, followed by COLMAP's `features`, `matching`
+  of only the pairs its poses suggest (`matches_importer`), `triangulation`
+  with its poses held (`point_triangulator`), `pose-check` (photos with
+  almost no points leave the model, `image_filterer`) and `mapping`
+  (COLMAP's mapper continuing from that model: it places the left-out
+  photos and refines everything). `point_triangulator` checks the model's
+  cameras, rigs and frames against the database's, so the model it starts
+  from is rebuilt from the database with the plugin's poses.
+- The backend in the manifest is `plugin:<id>` with the plugin's version,
+  and its build is the program's hash. The manifest file's hash is a
+  parameter, since a plugin run as `python3 run.py` has the interpreter as
+  its program.
+- `plugins.json` records the plugin chosen for each slot, and the hash of
+  the license texts the user accepted. A plugin can only be chosen once
+  accepted. If the texts change, it must be accepted again. A chosen
+  plugin that can't be used stops `Tools.locate` with a `PluginError`
+  rather than falling back, which would quietly change the result.
+- `Tools` carries the chosen plugins (`poses`, `splats`); the pipeline
+  skips features and matching for a camera placement plugin, and announces
+  each plugin run with its licenses as a Notice. The matching database
+  feeds coverage only if the current mapping came from it
+  (`colmap.matched_database`).
+- From a packaged app, a plugin's process gets the user's library path back
+  (PyInstaller puts the bundle's first), so the plugin's own Python and
+  libraries load.
+
 ## Export (`export.py`, `core/meshio.py`)
 
 Formats: `obj`, `glb` (textured), `ply` (OpenMVS's own), `stl` and `3mf`
 (geometry for printing, with a watertightness check recorded in
 export.json and reported as a notice), `points` (the dense point cloud).
+Splats (`export_splat`, `core/splats.py`): Brush's PLY as it is, and SPZ
+version 2 (positions as 24-bit fixed point, the rest quantised to bytes,
+gzipped: about a tenth of the PLY). The SPZ is stood upright: positions and
+rotations turned, and the view-dependent colour (SH degrees 1 to 3) turned
+by a per-degree matrix fitted by least squares on sample directions; it is
+centred and grounded by the camera placement's sparse points (2nd-98th
+percentiles), since trained splats can have floaters far out. Written from
+the format's description (Niantic's spz, MIT), and decoded identically by
+its reference reader.
 A Mesh size setting (`TextureOptions.target_faces`) has TextureMesh
 simplify the mesh before texturing, so the texture keeps its detail.
 
@@ -247,6 +341,18 @@ record it), average to gravity. The mesh and point cloud are rotated so
 up is +Y, centred on the vertical axis and put on the ground (Z-up for STL
 and 3MF); export.json records the transform. If the directions disagree
 (mean shorter than 0.5) the model's own frame is kept.
+
+The user can correct it (`upright.py`): a `base` rotation (levelled from
+three picked points, the plane's normal on the cameras' side, or tipped by
+quarter turns about the horizontal axes as seen) and a `turn` about the
+vertical, stored in project.json `settings["orientation"]` with the mapping
+run id, stale after a new camera placement like the crop box.
+`upright.rotation` (the correction, else the estimate) is the one rotation
+the viewer, the export and the mesh view use; export.json records it as
+`upright`, and it is part of what decides whether an earlier export (or
+its GLB, for the mesh view) can be reused. Changing it re-fits a crop box
+level around the old one (`crop.relevelled`); the scale is in
+reconstruction coordinates and stays.
 
 - The texture step always writes OpenMVS's textured PLY. Exporting
   converts it in-process (architecture rule 1 allows mesh export there) into
@@ -262,8 +368,11 @@ and 3MF); export.json records the transform. If the directions disagree
 - GLB materials are unlit (`KHR_materials_unlit`): photogrammetry
   textures already contain the lighting. GLBs pass the Khronos glTF
   validator without errors or warnings.
-- *(planned, Phase 4)* Scale, orientation and cleanup before export; STL
-  and 3MF for printing.
+- Scale (`scale.py`): with a scale set, the export's `Placement` gets a
+  factor after its rotation and offset: millimetres for STL and 3MF,
+  metres for OBJ, GLB and the point cloud (glTF's unit). `export.json`
+  records `scale_mm_per_unit` and the units, and the factor is part of
+  what decides whether an earlier export can be reused.
 
 ## GUI (`ui/`)
 
@@ -308,10 +417,27 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
 - `run_sparse` and `run_dense` are the two halves around the crop box;
   `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
   stage is reused and `force_from` re-runs a stage and everything after it.
-- Matching is exhaustive, except for more than 200 images that all come
-  from videos, which are matched sequentially (each frame with the next 10).
-  Exhaustive matching closes the loop of an orbit, which sequential matching
-  can't without a vocabulary tree; 200 images take about 3 minutes.
+- Matching (`_matching`) is exhaustive up to 200 images, which take about
+  3 minutes; pairs grow with the square. Beyond that: video frames
+  sequentially, with loop detection by COLMAP's vocabulary tree; photos by
+  their EXIF GPS position if 90% have one (`spatial`); else by image
+  retrieval with the vocabulary tree (`vocab_tree`); else sequentially in
+  name order, with a notice to take them in order. The tree is COLMAP's
+  own pinned file (`colmap.VOCAB_TREE`, the SIFT tree COLMAP 4.2.1 would
+  download itself; our builds have downloads off), fetched once into the
+  user's cache by `core.download`, like the masking model. The matching
+  stage records the tree by its hash, not its path.
+- Features: SIFT, or ALIKED matched with LightGlue (`FeatureOptions.kind`,
+  `MatchOptions.features`), which COLMAP runs with ONNX Runtime; the
+  backend builds now enable ONNX and ship its library. The models are
+  `colmap.Pinned` files like the vocabulary trees (COLMAP's own URLs and
+  hashes, fetched once by `pipeline._fetch`), recorded in the manifests by
+  hash. Each kind of feature has its own vocabulary tree.
+- The subject (`ez2digitize.subject`, in the project's settings): an
+  object, or a room or outdoor scene. A scene's preset uses no masks and
+  meshes with OpenMVS's free-space support (`--free-space-support`, for
+  weakly supported surfaces such as plain walls). The camera rings and
+  their advice are only for objects (`View.rings`, `_coverage_notes`).
   The best model is the one with the most registered images; a `Notice`
   event reports split models and low registration.
 - Only one pipeline runs per process (`PipelineBusy` otherwise): the 8 GB
@@ -360,6 +486,11 @@ the 3D view tab is first shown.
   page loads: stage outputs as they are, the sparse model as a PLY plus a
   JSON of cameras, the mesh as the export's GLB (or OpenMVS's PLY converted
   into a cached GLB).
+- The 3D view tab (`ui/view_panel.py`) puts tools next to the view's
+  name on the camera placement and the dense cloud, one at a time with one
+  row of controls: coverage (camera placement only), crop box, scale and
+  upright. What a tool draws shows while it is chosen; a crop box that is
+  set always shows, and only the crop tool drags it.
 - The page and files are served through an `ez2d://` scheme registered
   before the QApplication exists (`viewer.prepare()`); every other request
   is blocked. Python calls `ez2d.show(spec)`; the page answers with console
@@ -368,6 +499,44 @@ the 3D view tab is first shown.
   AppImage where unprivileged user namespaces are restricted).
 - Without WebGL the page still loads and says so; the packaged apps'
   self-test checks that the page loads (QtWebEngine works in the bundle).
+
+## Crop box (`crop.py`)
+
+An oriented box in the reconstruction's coordinates (OpenMVS's region of
+interest: rotation rows, centre, half sizes), stored in project.json
+`settings["crop_box"]` with the run id of the mapping stage it was drawn
+on; a new camera placement makes it stale (ignored, with a notice). The
+densify stage writes it to `crop_box.txt` and passes `--import-roi-file`,
+replacing OpenMVS's own estimate; its text is part of the stage's
+parameters, so a changed box re-runs densification and what follows.
+The viewer edits it in the upright frame, level and turned about the
+vertical (`UprightBox`); `from_upright`/`to_upright` convert.
+
+## Scale (`scale.py`)
+
+Two points in the reconstruction's coordinates and the real distance
+between them (millimetres), stored in project.json `settings["scale"]`
+with the mapping run id, stale after a new camera placement like the crop
+box. The 3D view picks the points in the upright frame (a click casts a
+ray into the cloud: of the points near the front-most hit, the one closest
+to the ray) and converts them back; `ez2d scale` sets the points and the
+distance, or just a corrected distance for the same points.
+
+Markers (`markers.py`): AprilTag tag36h11 squares printed at a known size
+(the black square; the sheet carries a 100 mm line to check the print).
+After undistort, `auto_scale` looks for them in the undistorted photos
+(pinhole cameras: a corner projects as K [R | t] X) with AprilTag (in
+process; quads found at half resolution, edges refined at full, about
+0.2 s for 12 MP), first in 8 photos spread over the set, stopping there if
+none has a marker. Each corner seen in two or more photos is triangulated
+(DLT, then again without views that reproject it more than 2 px off); the
+printed size over each marker edge's length is an estimate, and the
+median of them all is the scale, their median deviation the check (over
+2 % gives a warning). It is stored as a Scale with `source: "markers"`:
+the edge closest to the median, stretched to it. A scale picked by hand
+on the same camera placement is kept (the markers are compared with it in
+a notice). The sheet is drawn from the library's own code table and bit
+layout (its `apriltag_to_image` draws a shifted border in this version).
 
 Splat path (Phase 3) branches after `undistort`:
 

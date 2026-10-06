@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import ez2digitize
+from ez2digitize import plugins
 from ez2digitize.backends import colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.core import photos
@@ -61,6 +62,7 @@ def write_diagnostics(
         "app_version": ez2digitize.__version__,
         "system": system_info(),
         "tools": (tools or find_tools)(),
+        "plugins": plugins.report(),
     }
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".partial")
@@ -99,10 +101,11 @@ def system_info() -> dict[str, Any]:
         "available_memory_gb": round(available_memory() / GIB, 1),
         "frozen": bool(getattr(sys, "frozen", False)),
     }
-    with contextlib.suppress(ValueError, OSError, AttributeError):
-        info["total_memory_gb"] = round(
-            os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / GIB, 1
-        )
+    if sys.platform != "win32":
+        with contextlib.suppress(ValueError, OSError, AttributeError):
+            info["total_memory_gb"] = round(
+                os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / GIB, 1
+            )
     info["gpus"] = [asdict(gpu) for gpu in detect_gpus()]
     return info
 

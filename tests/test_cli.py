@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from pathlib import Path
 
 import pytest
+from scripts import printing_script
 
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.cli import main
@@ -106,13 +106,9 @@ def test_format_list_parsing() -> None:
 
 
 def _tool(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\necho '{text}'\n")
-    path.chmod(0o755)
-    return path
+    return printing_script(path, text)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_check(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -138,8 +134,9 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "photos", "masks", "run", "export", "check",
-        "diagnostics", "licenses", "status",
+        "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale",
+        "markers", "orient", "run", "export", "check", "diagnostics", "plugins", "licenses",
+        "status",
     }  # fmt: skip
 
 
@@ -171,6 +168,26 @@ def test_run_with_quality(
     assert main(["run", scan, "--level", "0", "--export", "none", *tools]) == 0
     out = capsys.readouterr().out
     assert "quality: Fast" in out and "Dense point cloud: full size photos" in out
+
+    # A scene: stored like the quality; --matching picks the pairs by hand.
+    assert (
+        main(["run", scan, "--subject", "scene", "--matching", "sequential", "--export", "none"])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Subject: Room or outdoor scene" in out
+    log = (Path(scan) / "stages" / "matching" / "log.txt").read_text()
+    assert "sequential_matcher" in log
+    assert main(["status", scan]) == 0
+    assert "subject: room or outdoor scene" in capsys.readouterr().out
+
+
+def test_new_scene(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize import subject
+    from ez2digitize.core.project import Project
+
+    assert main(["new", str(tmp_path / "room"), "--scene"]) == 0
+    assert subject.of(Project.open(tmp_path / "room")) == "scene"
 
 
 def test_licenses(capsys: pytest.CaptureFixture[str]) -> None:
@@ -253,3 +270,144 @@ def test_two_sided_import_and_flip(tmp_path: Path, capsys: pytest.CaptureFixture
     assert main(["status", str(project)]) == 0
     assert "(turned over)" in capsys.readouterr().out
     assert main(["flip", str(project), "nope"]) == 1
+
+
+def test_crop(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["crop", str(project)]) == 0
+    assert "no crop box" in capsys.readouterr().out
+    assert main(["crop", str(project), "--set", "0", "0", "0", "1", "1", "1"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    args = ["crop", str(project), "--set", "1", "2", "3", "0.5", "0.5", "1", "--yaw", "15"]
+    assert main(args) == 0
+    assert "crop box: centre (1, 2, 3), size (1, 1, 2), turned 15.0°" in capsys.readouterr().out
+    assert main(["crop", str(project), "--auto"]) == 1  # no sparse points in this project
+    assert main(["crop", str(project), "--clear"]) == 0
+    assert main(["crop", str(project)]) == 0
+    assert "no crop box" in capsys.readouterr().out
+
+
+def test_scale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["scale", str(project)]) == 0
+    assert "no scale" in capsys.readouterr().out
+    points = ["--points", "0", "0", "0", "0", "2", "0"]
+    assert main(["scale", str(project), *points, "--distance", "50"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    assert main(["scale", str(project), *points]) == 1
+    assert "--distance" in capsys.readouterr().err
+    assert main(["scale", str(project), *points, "--distance", "50"]) == 0
+    out = capsys.readouterr().out
+    assert "scale: 50 mm between the two points (25 mm per unit)" in out
+    assert "points (0, 0, 0) and (0, 2, 0)" in out
+    # The real distance again, measured more carefully: same points.
+    assert main(["scale", str(project), "--distance", "48"]) == 0
+    assert "(24 mm per unit)" in capsys.readouterr().out
+    same = ["--points", "1", "1", "1", "1", "1", "1", "--distance", "5"]
+    assert main(["scale", str(project), *same]) == 1
+    assert "two different points" in capsys.readouterr().err
+    assert main(["scale", str(project), "--clear"]) == 0
+    assert main(["scale", str(project)]) == 0
+    assert "no scale" in capsys.readouterr().out
+
+
+def test_orient(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["orient", str(project), "--tilt", "x"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    assert main(["orient", str(project)]) == 0
+    assert "the photos don't say which way is up" in capsys.readouterr().out
+    assert main(["orient", str(project), "--tilt", "x", "--turn", "30"]) == 0
+    out = capsys.readouterr().out
+    assert "corrected, turned 30°; up is (0.000, 0.000, -1.000)" in out
+    level = ["--level", "0", "0", "0", "1", "0", "0", "0", "0", "1"]
+    assert main(["orient", str(project), *level]) == 1  # no cameras to tell the side
+    assert "has no cameras" in capsys.readouterr().err
+    assert main(["orient", str(project), "--auto"]) == 0
+    assert main(["orient", str(project)]) == 0
+    assert "the photos don't say" in capsys.readouterr().out
+
+
+def test_watch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    synced = tmp_path / "Camera"
+    synced.mkdir()
+    for name in ("IMG_1.jpg", "IMG_2.jpg"):
+        (synced / name).write_bytes(name.encode())  # synced a moment ago
+    assert main(["new", str(tmp_path / "scan")]) == 0
+    # The photos already there from the last 10 minutes; settled at once.
+    args = ["watch", str(tmp_path / "scan"), str(synced), "--since", "10", "--settle", "0"]
+    assert main(args) == 0
+    out = capsys.readouterr().out
+    assert "2 new photo(s) ready." in out and "2 files -> capture" in out
+    # Again: nothing new, so nothing to import (the same photos are left out).
+    assert main(args) == 1
+    assert "all 2 photo(s) are already in the project" in capsys.readouterr().err
+    assert main(["watch", str(tmp_path / "scan"), str(tmp_path / "nowhere")]) == 1
+
+
+def test_photos_exposure_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from PIL import Image
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for n in range(3):
+        Image.new("RGB", (40, 30), (n * 60, 0, 0)).save(photos / f"{n}.jpg")
+    project = str(tmp_path / "p")
+    assert main(["new", project]) == 0
+    assert main(["import", project, str(photos)]) == 0
+    capsys.readouterr()
+    assert main(["photos", project, "--exposure"]) == 0
+    out = capsys.readouterr().out
+    assert "3 photos" in out and "exposure: not in EXIF" in out
+    assert "place the cameras to see how the photos off the usual exposure fared" in out
+
+
+def test_refine_poses_flag() -> None:
+    from ez2digitize import cli
+
+    args = cli._parser().parse_args(["run", "p", "--refine-poses"])
+    assert cli._settings(args, "balanced", "object").refine_poses
+    args = cli._parser().parse_args(["run", "p"])
+    assert not cli._settings(args, "balanced", "object").refine_poses

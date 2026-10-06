@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The masks panel, making masks with the fake masking worker."""
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,8 +15,6 @@ from ez2digitize import masks
 from ez2digitize.core.capture import import_folder, list_bundles
 from ez2digitize.core.project import Project
 from ez2digitize.ui.masks_panel import MasksPanel
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake worker")
 
 TIMEOUT_MS = 20_000
 

@@ -38,6 +38,8 @@ EXIF_DOWN: dict[int, Vector] = {
 # Below this, the photos' down directions disagree too much to trust the mean
 # (1.0: all identical; a level orbit with ±30° tilt gives about 0.9).
 MIN_AGREEMENT = 0.5
+# Images with a measured gravity direction needed to go by those alone.
+MIN_MEASURED = 3
 IDENTITY: Matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
@@ -52,21 +54,30 @@ def estimate_up(
     model_dir: Path,
     orientations: Mapping[str, int] | None = None,
     only: Collection[str] | None = None,
+    measured: Mapping[str, Vector] | None = None,
 ) -> UpEstimate | None:
     """Up from the registered images of a COLMAP model; None if it can't tell.
 
     `only`: the images to go by (the first side of a two-sided scan, see
-    sides.upright_names); None for all.
+    sides.upright_names); None for all. `measured`: gravity's direction in
+    the camera's axes where a motion sensor recorded it (video frames, see
+    ez2digitize.motion). When at least MIN_MEASURED of the images have
+    one, up comes from those alone: a measurement beats a guess.
     """
     images = read_images(model_dir)
-    downs = []
+    guessed, sensed = [], []
     for name, pose in images.items():
         if only is not None and name not in only:
             continue
-        down_camera = EXIF_DOWN.get((orientations or {}).get(name, 1), EXIF_DOWN[1])
         rotation = quaternion_matrix(pose.qvec)  # world to camera
-        downs.append(_mul_transposed(rotation, down_camera))
-    return up_from_downs(downs)
+        if measured and name in measured:
+            sensed.append(_mul_transposed(rotation, measured[name]))
+        else:
+            down_camera = EXIF_DOWN.get((orientations or {}).get(name, 1), EXIF_DOWN[1])
+            guessed.append(_mul_transposed(rotation, down_camera))
+    if len(sensed) >= MIN_MEASURED:
+        return up_from_downs(sensed)
+    return up_from_downs(guessed + sensed)
 
 
 def up_from_downs(downs: Iterable[Vector]) -> UpEstimate | None:
@@ -83,20 +94,25 @@ def up_from_downs(downs: Iterable[Vector]) -> UpEstimate | None:
 
 @dataclass(frozen=True)
 class Placement:
-    """Export coordinates = rotation · model + offset (then Z-up if asked)."""
+    """Export coordinates = scale · (rotation · model + offset) (then Z-up if asked).
+
+    `scale` converts reconstruction units to the export's (see ez2digitize.scale).
+    """
 
     rotation: Matrix
     offset: Vector
+    scale: float = 1.0
 
     def apply(self, positions: array[float], *, z_up: bool = False) -> array[float]:
         (a, b, c), (d, e, f), (g, h, i) = self.rotation
         ox, oy, oz = self.offset
+        s = self.scale
         out = array("f", positions)
         for k in range(0, len(out), 3):
             x, y, z = positions[k], positions[k + 1], positions[k + 2]
-            nx = a * x + b * y + c * z + ox
-            ny = d * x + e * y + f * z + oy
-            nz = g * x + h * y + i * z + oz
+            nx = (a * x + b * y + c * z + ox) * s
+            ny = (d * x + e * y + f * z + oy) * s
+            nz = (g * x + h * y + i * z + oz) * s
             if z_up:  # rotate +90° about X: Y-up becomes Z-up
                 ny, nz = -nz, ny
             out[k], out[k + 1], out[k + 2] = nx, ny, nz
@@ -109,12 +125,21 @@ class Placement:
         return (nx, -nz, ny) if z_up else (nx, ny, nz)
 
     def to_dict(self) -> dict[str, object]:
-        return {"rotation": [list(row) for row in self.rotation], "offset": list(self.offset)}
+        return {
+            "rotation": [list(row) for row in self.rotation],
+            "offset": list(self.offset),
+            "scale": self.scale,
+        }
 
 
 def place(positions: array[float], up: Vector | None) -> Placement:
     """Rotate `up` to +Y, centre on the vertical axis, lowest point at y = 0."""
     rotation = rotation_between(up, (0.0, 1.0, 0.0)) if up is not None else IDENTITY
+    return place_rotated(positions, rotation)
+
+
+def place_rotated(positions: array[float], rotation: Matrix) -> Placement:
+    """Rotate by `rotation` (model to upright), then centre and put on the ground."""
     turned = Placement(rotation, (0.0, 0.0, 0.0)).apply(positions)
     if not turned:
         return Placement(rotation, (0.0, 0.0, 0.0))

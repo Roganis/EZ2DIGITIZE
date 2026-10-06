@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import contextlib
 import json
+import sqlite3
 import struct
 from pathlib import Path
 
 import pytest
+from models import ring, write_images
 from PIL import Image
 
 from ez2digitize import views
@@ -16,12 +19,14 @@ from ez2digitize.core.stage import MANIFEST_FILE, StageManifest
 BACKEND = Colmap(Path("colmap"), "4.2.1").backend
 
 
-def _succeed(project: Project, stage: str, run_id: str) -> Path:
+def _succeed(
+    project: Project, stage: str, run_id: str, inputs: dict[str, str] | None = None
+) -> Path:
     folder = project.stage_dir(stage)
     folder.mkdir(parents=True, exist_ok=True)
     manifest = StageManifest(
         stage=stage, run_id=run_id, status="succeeded", cache_key="k", backend=BACKEND,
-        command=[], parameters={}, inputs={}, started="", finished="2026-10-06T08:00:00",
+        command=[], parameters={}, inputs=inputs or {}, started="", finished="2026-10-06T08:00:00",
         wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
     )  # fmt: skip
     write_json_atomic(folder / MANIFEST_FILE, manifest.to_dict())
@@ -97,6 +102,41 @@ def test_camera_placement(project: Project, tmp_path: Path) -> None:
     assert spec["kind"] == "cameras" and spec["upright"] == [list(r) for r in view.upright]
 
 
+def test_camera_placement_coverage(project: Project, tmp_path: Path) -> None:
+    undistort = _succeed(project, "undistort", "u1")
+    _sparse_model(undistort / "sparse")
+    # 24 photos on a low ring all round, 12 on a high one half way round.
+    write_images(undistort / "sparse" / "images.bin", ring(24, 10) + ring(12, 45, span=180))
+    matching = _succeed(project, "matching", "m1")
+    _succeed(project, "mapping", "p1", {"matching": "run:m1"})
+    with contextlib.closing(sqlite3.connect(matching / "database.db")) as db, db:
+        db.execute("CREATE TABLE images (image_id INTEGER, name TEXT)")
+        db.execute(
+            "CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, config INTEGER)"
+        )
+        db.executemany("INSERT INTO images VALUES (?, ?)", [(1, "c/001.jpg"), (2, "c/002.jpg")])
+    [view] = views.available(project)
+    rings, weak = views.camera_coverage(view)
+    assert rings is not None and [r.cameras for r in rings.rings] == [24, 12]
+    assert weak == ["c/001.jpg", "c/002.jpg"]  # no matches recorded at all
+
+    data = json.loads(views.files(view, tmp_path)["cameras"])  # type: ignore[arg-type]
+    flags = {c["name"]: c.get("flag") for c in data["cameras"]}
+    assert flags["c/001.jpg"] == "weak" and flags["c/003.jpg"] is None
+    low, high = data["coverage"]["rings"]
+    # (Up comes from the photos here, tilted a little by the half ring: not exactly 195°.)
+    assert low["gaps"] == [] and high["gaps"][0]["degrees"] > 180
+
+    # Without an up direction there are no rings; the cameras still show.
+    data = json.loads(views.sparse_scene(view.source)[1])
+    assert data["coverage"] is None and len(data["cameras"]) == 36
+
+    # Cameras placed by a plugin: the matches of an earlier COLMAP run don't apply.
+    _succeed(project, "mapping", "p2", {"captures": "capture:..."})
+    [view] = views.available(project)
+    assert views.camera_coverage(view)[1] == []
+
+
 def test_all_results_best_first(project: Project, tmp_path: Path) -> None:
     _sparse_model(_succeed(project, "undistort", "u1") / "sparse")
     (_succeed(project, "densify", "d1") / "scene_dense.ply").write_bytes(b"ply")
@@ -126,7 +166,12 @@ def test_mesh_from_the_upright_export(project: Project, tmp_path: Path) -> None:
     assert mesh.source == exported / "skull.glb" and mesh.upright is None
     assert views.files(mesh, tmp_path)["model"] == exported / "skull.glb"
 
-    # An export of an older run, or one left unaligned, isn't used.
+    # An export stood up another way (the orientation was corrected since) isn't used,
+    info["upright"] = [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+    (exported / "export.json").write_text(json.dumps(info))
+    assert views.available(project)[0].source == project.stage_dir("texture")
+    # nor one of an older run, or one left unaligned.
+    info["upright"] = None
     info["source"] = {"stage": "texture", "run_id": "t0"}
     (exported / "export.json").write_text(json.dumps(info))
     assert views.available(project)[0].source == project.stage_dir("texture")

@@ -17,6 +17,10 @@ angle (elevation), which shows:
   up in one spot and the object is lost.
 
 The findings are advice for the next capture; nothing is stopped.
+
+For the 3D view, `rings` lays the same out in the upright frame: the
+cameras grouped by height into rings, and each ring's gaps, drawn on the
+camera placement so the user sees where photos are missing.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from pathlib import Path
 
 from ez2digitize.backends.colmap_model import read_images
 from ez2digitize.orientation import (
+    Matrix,
     Vector,
     _mul_transposed,
     estimate_up,
@@ -61,25 +66,31 @@ def analyse(
     model_dir: Path,
     orientations: Mapping[str, int] | None = None,
     upright: Collection[str] | None = None,
+    measured: Mapping[str, Vector] | None = None,
 ) -> Coverage | None:
     """Coverage of a COLMAP model's registered images; None if too few to judge.
 
-    `upright`: the images to take the up direction from (see estimate_up).
+    `upright`, `measured`: the images to take the up direction from, and
+    gravity where a sensor measured it (see estimate_up).
     """
+    names, centres, axes = _poses(model_dir)
+    if len(centres) < MIN_CAMERAS:
+        return None
+    up_estimate = estimate_up(model_dir, orientations, upright, measured)
+    return assess(centres, axes, up_estimate.up if up_estimate else None, names)
+
+
+def _poses(model_dir: Path) -> tuple[list[str], list[Vector], list[Vector]]:
+    """The registered images' names, camera centres and viewing axes."""
     images = read_images(model_dir)
     centres: list[Vector] = []
     axes: list[Vector] = []
-    names = list(images)
     for pose in images.values():
         rotation = quaternion_matrix(pose.qvec)
-        t = pose.tvec
-        centre = _mul_transposed(rotation, t)
+        centre = _mul_transposed(rotation, pose.tvec)
         centres.append((-centre[0], -centre[1], -centre[2]))
         axes.append(_mul_transposed(rotation, (0.0, 0.0, 1.0)))
-    if len(centres) < MIN_CAMERAS:
-        return None
-    up_estimate = estimate_up(model_dir, orientations, upright)
-    return assess(centres, axes, up_estimate.up if up_estimate else None, names)
+    return list(images), centres, axes
 
 
 def assess(
@@ -89,11 +100,7 @@ def assess(
     names: Sequence[str] | None = None,
 ) -> Coverage:
     # Scale-free: around an object the views turn; a fixed camera looks one way.
-    units = [_unit(a) for a in axes]
-    mean_view = _unit(tuple(sum(a[i] for a in units) for i in range(3)))  # type: ignore[arg-type]
-    view_spread = max(
-        math.degrees(math.acos(max(-1.0, min(1.0, _dot(a, mean_view))))) for a in units
-    )
+    view_spread = _view_spread(axes)
     if view_spread < STILL_DEGREES:
         return Coverage(
             len(centres), None, None, 0.0, round(view_spread, 1),
@@ -104,10 +111,7 @@ def assess(
             ),
         )  # fmt: skip
     target = _closest_point(centres, axes)
-    distances = [_norm(_sub(c, target)) for c in centres]
-    median = sorted(distances)[len(distances) // 2] or 1.0
-    # A camera COLMAP misplaced far away would dominate the analysis.
-    far = [d > OUTLIER_DISTANCE * median for d in distances]
+    far, median = _far(centres, target)
     kept = [c for c, out in zip(centres, far, strict=True) if not out]
     misplaced = [names[i] if names else str(i) for i, out in enumerate(far) if out]
     middle = _median_point(kept)
@@ -151,6 +155,203 @@ def assess(
             )
     return Coverage(
         len(centres), gap, elevations, round(spread, 4), round(view_spread, 1), tuple(findings)
+    )
+
+
+def _view_spread(axes: Sequence[Vector]) -> float:
+    """The widest angle between a camera's view and the mean view, degrees."""
+    units = [_unit(a) for a in axes]
+    mean_view = _unit(tuple(sum(a[i] for a in units) for i in range(3)))  # type: ignore[arg-type]
+    return max(math.degrees(math.acos(max(-1.0, min(1.0, _dot(a, mean_view))))) for a in units)
+
+
+def _far(centres: Sequence[Vector], target: Vector) -> tuple[list[bool], float]:
+    """Which cameras are misplaced far away (they would dominate), and the median distance."""
+    distances = [_norm(_sub(c, target)) for c in centres]
+    median = sorted(distances)[len(distances) // 2] or 1.0
+    return [d > OUTLIER_DISTANCE * median for d in distances], median
+
+
+# --- the rings, for the 3D view ----------------------------------------------------
+
+# A jump in height angle this big between cameras (sorted by it) starts a new ring.
+RING_STEP_DEGREES = 12.0
+# Fewer cameras than this at one height join the nearest ring.
+MIN_RING_CAMERAS = 4
+# Gaps in a ring from this wide are shown: two or three photos missing at 10-15°.
+SHOWN_GAP_DEGREES = 35.0
+# Below this, the highest ring sees the top only at a glancing angle (the guide asks 30-45°).
+TOP_DEGREES = 25.0
+
+
+@dataclass(frozen=True)
+class Gap:
+    start: float  # azimuth where it starts, degrees
+    degrees: float
+
+
+@dataclass(frozen=True)
+class Ring:
+    elevation: float  # the cameras' median height angle, degrees
+    height: float  # median, above the object's centre
+    radius: float  # median distance from the vertical through the centre
+    cameras: int
+    gaps: tuple[Gap, ...]  # from SHOWN_GAP_DEGREES, counter-clockwise from `start`
+
+
+@dataclass(frozen=True)
+class RingLayout:
+    """The cameras around the object in the upright frame (Y up, see upright).
+
+    Azimuths are degrees about +Y from +X, counter-clockwise seen from
+    above: a point at azimuth a is (cos a, 0, -sin a) from the centre.
+    """
+
+    centre: Vector  # the object's centre, upright frame
+    rings: tuple[Ring, ...]  # lowest first
+    largest_gap: float  # around the object, all rings together
+    far: tuple[str, ...]  # misplaced cameras, left out
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "centre": [round(v, 6) for v in self.centre],
+            "rings": [
+                {
+                    "elevation": r.elevation,
+                    "height": round(r.height, 6),
+                    "radius": round(r.radius, 6),
+                    "cameras": r.cameras,
+                    "gaps": [{"start": g.start, "degrees": g.degrees} for g in r.gaps],
+                }
+                for r in self.rings
+            ],
+            "largest_gap": self.largest_gap,
+            "max_gap": MAX_GAP_DEGREES,
+        }
+
+
+def rings(model_dir: Path, rotation: Matrix | None) -> RingLayout | None:
+    """The rings of a COLMAP model's cameras; None without an up direction
+    (`rotation`, reconstruction to upright), with too few cameras, or with a
+    camera that stood still."""
+    if rotation is None:
+        return None
+    names, centres, axes = _poses(model_dir)
+    return layout(names, centres, axes, rotation)
+
+
+def layout(
+    names: Sequence[str], centres: Sequence[Vector], axes: Sequence[Vector], rotation: Matrix
+) -> RingLayout | None:
+    if len(centres) < MIN_CAMERAS or _view_spread(axes) < STILL_DEGREES:
+        return None
+    target = _closest_point(centres, axes)
+    far, _median = _far(centres, target)
+    placed = []  # (elevation, azimuth, height, radius)
+    for centre, out in zip(centres, far, strict=True):
+        if out:
+            continue
+        x, h, z = _rotate(rotation, _sub(centre, target))
+        radius = math.hypot(x, z)
+        placed.append(
+            (math.degrees(math.atan2(h, radius)), math.degrees(math.atan2(-z, x)) % 360, h, radius)
+        )
+    shown = []
+    for group in _by_height(placed):
+        shown.append(
+            Ring(
+                elevation=round(_middle([c[0] for c in group]), 1),
+                height=_middle([c[2] for c in group]),
+                radius=_middle([c[3] for c in group]),
+                cameras=len(group),
+                gaps=_gaps([c[1] for c in group], SHOWN_GAP_DEGREES),
+            )
+        )
+    around = _gaps([c[1] for c in placed], 0.0)
+    return RingLayout(
+        centre=_rotate(rotation, target),
+        rings=tuple(shown),
+        largest_gap=max((g.degrees for g in around), default=360.0),
+        far=tuple(n for n, out in zip(names, far, strict=True) if out),
+    )
+
+
+def describe(layout: RingLayout | None, weak: int = 0) -> str:
+    """What the rings show, in a sentence or three (for the 3D view)."""
+    if layout is None:
+        return ""
+    heights = ", ".join(f"{r.cameras} at {r.elevation:.0f}°" for r in layout.rings)
+    parts = [f"Photos by height: {heights}."]
+    gaps = [f"{g.degrees:.0f}° at {r.elevation:.0f}°" for r in layout.rings for g in r.gaps]
+    if layout.largest_gap > MAX_GAP_DEGREES:
+        parts.append(
+            f"Nothing from {layout.largest_gap:.0f}° of the way around: that side will be "
+            "missing or guessed."
+        )
+    if gaps:
+        parts.append(
+            f"Gaps in the rings (orange, red over {MAX_GAP_DEGREES:.0f}°): {', '.join(gaps)}."
+        )
+    else:
+        parts.append("No gaps in the rings.")
+    if layout.rings and layout.rings[-1].elevation < TOP_DEGREES:
+        parts.append("The top is seen only from low down: add a higher ring.")
+    if weak:
+        parts.append(f"{weak} photo(s) with few matches (orange cameras).")
+    if layout.far:
+        parts.append(f"{len(layout.far)} placed far off (red cameras).")
+    return " ".join(parts)
+
+
+def _by_height(
+    cameras: list[tuple[float, float, float, float]],
+) -> list[list[tuple[float, float, float, float]]]:
+    """Cameras grouped into rings by height angle, lowest first."""
+    ordered = sorted(cameras)
+    groups = [[ordered[0]]] if ordered else []
+    for camera in ordered[1:]:
+        if camera[0] - groups[-1][-1][0] > RING_STEP_DEGREES:
+            groups.append([camera])
+        else:
+            groups[-1].append(camera)
+    # A few photos at their own height are a stray, not a ring: join the nearest.
+    while len(groups) > 1:
+        small = min(range(len(groups)), key=lambda i: len(groups[i]))
+        if len(groups[small]) >= MIN_RING_CAMERAS:
+            break
+        height = _middle([c[0] for c in groups[small]])
+        other = min(
+            (i for i in (small - 1, small + 1) if 0 <= i < len(groups)),
+            key=lambda i: abs(_middle([c[0] for c in groups[i]]) - height),
+        )
+        low, high = sorted((small, other))
+        groups[low : high + 1] = [sorted(groups[low] + groups[high])]
+    return groups
+
+
+def _gaps(azimuths: Sequence[float], least: float) -> tuple[Gap, ...]:
+    """The angles around without a camera, from `least` degrees."""
+    ordered = sorted(azimuths)
+    if not ordered:
+        return ()
+    following = [*ordered[1:], ordered[0] + 360.0]
+    return tuple(
+        Gap(round(a, 1), round(b - a, 1))
+        for a, b in zip(ordered, following, strict=True)
+        if b - a >= least and b - a > 0
+    )
+
+
+def _middle(values: Sequence[float]) -> float:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+def _rotate(m: Matrix, v: Vector) -> Vector:
+    return (
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
     )
 
 

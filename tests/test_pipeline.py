@@ -3,7 +3,6 @@
 """Pipeline logic with fake backends that write the files the real ones do."""
 
 import os
-import sys
 import threading
 import time
 from pathlib import Path
@@ -29,8 +28,6 @@ from ez2digitize.pipeline import (
     StageStarted,
     Tools,
 )
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 
 
 @pytest.fixture
@@ -64,7 +61,11 @@ def test_run_mesh_runs_every_stage_in_order(project: Project, tools: Tools) -> N
     result = pipeline.run_mesh(project, tools, on_event=handler)
 
     started = [e for e in events if isinstance(e, StageStarted)]
-    unmasked = [s for s in pipeline.STAGES if s not in ("refine", "mask-undistort")]
+    unmasked = [
+        s
+        for s in pipeline.STAGES
+        if s not in ("refine", "mask-undistort", *pipeline.REFINE_POSE_STAGES)
+    ]
     assert [e.stage for e in started] == unmasked
     assert [(e.index, e.count) for e in started][:2] == [(1, 8), (2, 8)]
     assert result.sparse.registered_images == 3 and result.sparse.total_images == 3
@@ -101,7 +102,9 @@ def test_refine_is_optional(project: Project, tools: Tools) -> None:
     settings = MeshSettings(refine=RefineOptions())
     pipeline.run_mesh(project, tools, settings, on_event=handler)
     stages = [e.stage for e in events if isinstance(e, StageStarted)]
-    assert stages == [s for s in pipeline.STAGES if s != "mask-undistort"]
+    assert stages == [
+        s for s in pipeline.STAGES if s not in ("mask-undistort", *pipeline.REFINE_POSE_STAGES)
+    ]
     texture_cmd = (project.stage_dir("texture") / "log.txt").read_text()
     assert "scene_refined.ply" in texture_cmd
 
@@ -145,7 +148,7 @@ def test_best_of_several_models_and_notices(
 
 
 def test_no_model(project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FAKE_MODELS", "")
+    monkeypatch.setenv("FAKE_MODELS", "none")
     with pytest.raises(PipelineError, match="could not reconstruct any cameras"):
         pipeline.run_sparse(project, tools)
 
@@ -188,6 +191,99 @@ def test_matching_mode_follows_capture_source_and_size(
     assert matcher() == "exhaustive"  # few frames: every pair, to close the loop
     monkeypatch.setattr(pipeline, "EXHAUSTIVE_MAX_IMAGES", 2)
     assert matcher() == "sequential"
+
+
+def test_matching_many_photos(
+    project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beyond EXHAUSTIVE_MAX_IMAGES: by GPS, by the vocabulary tree, else in order."""
+    from ez2digitize.backends import colmap
+    from ez2digitize.core import photos
+
+    monkeypatch.setattr(pipeline, "EXHAUSTIVE_MAX_IMAGES", 2)
+
+    def matched() -> tuple[str, list[str]]:
+        events, handler = _collect()
+        pipeline.run_sparse(project, tools, on_event=handler)
+        log = (project.stage_dir("matching") / "log.txt").read_text().splitlines()[0]
+        return log, [e.message for e in events if isinstance(e, Notice)]
+
+    # No tree (the tests are offline): photos in the order they were taken.
+    log, notices = matched()
+    assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 0" in log
+    assert "downloading COLMAP's vocabulary tree (72 MB, once)" in notices
+    assert any(n.startswith("could not download COLMAP's vocabulary tree") for n in notices)
+    assert any("taken just before and after it" in n for n in notices)
+
+    tree = colmap.VOCAB_TREES["sift"].path
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    with tree.open("wb") as f:
+        f.truncate(colmap.VOCAB_TREES["sift"].size)  # as if downloaded
+    log, notices = matched()
+    assert "vocab_tree_matcher" in log and str(tree) in log
+    assert "3 photos: each is matched with the most similar ones" in notices
+
+    monkeypatch.setattr(photos, "gps_share", lambda _bundles: 0.95)
+    log, notices = matched()
+    assert "spatial_matcher" in log
+    assert "3 photos with GPS positions: each is matched with its neighbours" in notices
+
+    # Video: frames in order, loops found with the tree.
+    for bundle in list_bundles(project):
+        bundle.source = "video"
+        bundle.save()
+    log, _notices = matched()
+    assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 1" in log
+
+
+def test_learned_features(project: Project, tools: Tools) -> None:
+    """ALIKED + LightGlue: the models are fetched first (here: already there)."""
+    from ez2digitize import presets
+    from ez2digitize.backends import colmap
+
+    settings = presets.mesh_settings(features="aliked")
+    events, handler = _collect()
+    with pytest.raises(PipelineError, match="need the ALIKED and LightGlue models"):
+        pipeline.run_sparse(project, tools, settings, on_event=handler)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert "downloading the ALIKED model (3 MB, once)" in notices
+
+    for pinned in (colmap.ALIKED_MODEL, colmap.LIGHTGLUE_MODEL):
+        pinned.path.parent.mkdir(parents=True, exist_ok=True)
+        with pinned.path.open("wb") as f:
+            f.truncate(pinned.size)  # as if downloaded
+    pipeline.run_sparse(project, tools, settings)
+    features = (project.stage_dir("features") / "log.txt").read_text()
+    matching = (project.stage_dir("matching") / "log.txt").read_text()
+    assert "ALIKED_N16ROT" in features and str(colmap.ALIKED_MODEL.path) in features
+    assert "ALIKED_LIGHTGLUE" in matching and str(colmap.LIGHTGLUE_MODEL.path) in matching
+
+
+def test_chosen_vocab_tree_matching_needs_the_tree(project: Project, tools: Tools) -> None:
+    from ez2digitize.backends import colmap
+
+    settings = MeshSettings(matching=colmap.MatchOptions(mode="vocab_tree"))
+    with pytest.raises(PipelineError, match="needs COLMAP's vocabulary tree"):
+        pipeline.run_sparse(project, tools, settings)
+
+
+def test_scene(project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A room or outdoor scene: no masks, no ring advice, walls kept when meshing."""
+    from ez2digitize import coverage, presets
+
+    bundle = list_bundles(project)[0]
+    (project.masks_dir / bundle.id).mkdir()
+    (project.masks_dir / bundle.id / "a.jpg.png").write_bytes(b"mask")
+    analysed: list[object] = []
+    monkeypatch.setattr(coverage, "analyse", lambda *args: analysed.append(args))
+    monkeypatch.setattr(coverage, "weak_photos", lambda _db: [])  # the fake has no database
+    pipeline.run_mesh(project, tools, presets.mesh_settings(subject="scene"))
+    assert "--ImageReader.mask_path" not in (project.stage_dir("features") / "log.txt").read_text()
+    assert "--free-space-support 1" in (project.stage_dir("mesh") / "log.txt").read_text()
+    assert analysed == []
+    pipeline.run_mesh(project, tools, presets.mesh_settings())
+    assert len(analysed) == 1
+    assert "--free-space-support" not in (project.stage_dir("mesh") / "log.txt").read_text()
 
 
 def test_masks_are_used_when_present(project: Project, tools: Tools) -> None:
@@ -299,8 +395,8 @@ def test_splats(
     monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
     events: list[pipeline.PipelineEvent] = []
     result = pipeline.run_splat(project, replace(tools, brush=fake_brush), on_event=events.append)
-    assert result.file.read_text() == "ply splats"
-    assert result.exports and result.exports[0].name.endswith("_splat.ply")
+    assert result.file.read_bytes().startswith(b"ply\n")
+    assert [f.suffix for f in result.exports] == [".ply", ".spz"]
     started = [e.stage for e in events if isinstance(e, pipeline.StageStarted)]
     assert started == ["features", "matching", "mapping", "undistort", "splat"]
     assert result.splat.host["gpu"]
@@ -410,3 +506,31 @@ def test_two_sided_scan_notices(
     notices = [e.message for e in events if isinstance(e, Notice)]
     assert not any(n.startswith("two-sided scan") for n in notices)
     assert any(n.startswith("both sides joined: 3 of 3 photos") for n in notices)
+
+
+def test_crop_box_reaches_densify(project: Project, tools: Tools) -> None:
+    from ez2digitize import crop, scale
+
+    pipeline.run_sparse(project, tools)
+    run = crop.camera_run(project)
+    assert run is not None
+    upright_box = crop.UprightBox((0.0, 0.0, 0.0), (1.0, 2.0, 3.0))
+    crop.save(project, crop.from_upright(upright_box, None, run))
+    scale.save(project, scale.make(((0, 0, 0), (1, 0, 0)), 10.0, run))
+    events, handler = _collect()
+    pipeline.run_dense(project, tools, on_event=handler)
+    densify = project.stage_dir("densify")
+    log = (densify / "log.txt").read_text()
+    assert f"--import-roi-file {densify / 'crop_box.txt'} --crop-to-roi 1" in log
+    assert (densify / "crop_box.txt").read_text().splitlines()[-1] == "1.0 2.0 3.0"
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert "the dense cloud keeps what is inside the crop box" in notices
+
+    # A new camera placement: the old box doesn't fit its coordinates.
+    pipeline.run_sparse(project, tools, force_from="mapping")
+    events, handler = _collect()
+    pipeline.run_dense(project, tools, on_event=handler)
+    assert "--import-roi-file" not in (densify / "log.txt").read_text()
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any("drawn on an earlier camera placement" in n for n in notices)
+    assert any("scale was set on an earlier camera placement" in n for n in notices)

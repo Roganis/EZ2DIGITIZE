@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from pathlib import Path
 
 import pytest
@@ -57,7 +56,6 @@ def test_open_errors_are_shown(
     assert window.page is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 def test_closing_while_running_asks_and_cancels(
     qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -69,7 +67,11 @@ def test_closing_while_running_asks_and_cancels(
     (tmp_path / "photos" / "a.jpg").write_bytes(b"a")
     page.import_folder(tmp_path / "photos")
     page.start_run()
-    qtbot.waitUntil(lambda: "mapping" in page._stage_items, timeout=20_000)
+    # Stop waiting if the run ends first (a stage failed), and say why.
+    qtbot.waitUntil(
+        lambda: "mapping" in page._stage_items or not page.runner.running, timeout=20_000
+    )
+    assert "mapping" in page._stage_items, f"{page.status.text()}\n{page.log.toPlainText()}"
 
     answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
     monkeypatch.setattr(QMessageBox, "question", lambda *_args: answers.pop(0))

@@ -15,6 +15,11 @@ photos.
   textured cloth. It gives COLMAP points to lock onto around the object,
   which helps most with plain objects. It gets reconstructed too; the
   object is still the part in focus.
+- **For real size: the marker sheet** (3D view → Scale → Marker sheet…, or
+  `ez2d markers sheet.svg`). Print it at 100 % and check the 100 mm line;
+  if a black square isn't 30 mm, measure one and enter that as the marker
+  size. Put the object in the middle. It doubles as a patterned mat, and
+  the model comes out at its real size by itself.
 - **A plain or blurred background beyond the mat** is fine. Don't let
   people or things move in the background between photos.
 - **Fill the frame** with the object (and a bit of mat): two-thirds of the
@@ -35,6 +40,12 @@ photos.
 - **Don't zoom** during a set, and keep the same camera and lens. With a
   zoom lens, tape the ring. If a set mixes cameras or zoom settings, each
   is calibrated on its own automatically, but one per set is more accurate.
+- **Lock the exposure** where you can: manual mode on a camera, AE/AF lock
+  on a phone (press and hold on the object). Left to itself, the camera
+  brightens and darkens photos as the background changes. The photo checks
+  say when it moved by more than a stop, and `ez2d photos PROJECT
+  --exposure` shows by how much, and, after camera placement, whether
+  those photos were placed less often.
 - **Keep EXIF data** (copy the original files, don't export or resize):
   the focal length in it helps a lot.
 - **iPhone:** HEIC photos are fine: a JPEG copy of each is made on import
@@ -45,6 +56,17 @@ photos.
 Video works for a quick capture: walk slowly around the object in good
 light, 30 seconds to 2 minutes. EZ2DIGITIZE keeps the sharpest frame of
 each stretch (100 frames by default). Photos still give finer detail.
+
+Videos from a GoPro (HERO5 and later, and the MAX in its single-lens
+mode), and from phones and cameras that write Google's camera motion track
+(CAMM), carry the camera's motion sensors. EZ2DIGITIZE reads them on
+import and notes gravity's direction for every frame, so the model is
+stood upright by measurement rather than by guessing how the camera was
+held, which goes wrong when you shoot steeply from above or below. The
+frames are also spaced by how far the camera turned rather than by time,
+so slowing down or pausing on one side doesn't crowd the frames there,
+and frames taken while the camera swung fast are left out.
+The import says when a video has such data.
 
 ## Turntables
 
@@ -90,8 +112,38 @@ To capture the underside too:
 - **No texture (plain white plastic):** the patterned mat helps the camera
   placement; for the surface itself, a light pattern (masking tape bits,
   washable marker, projected dots) gives the matcher something to find.
+  If too few photos are placed, try **Advanced → Features: ALIKED +
+  LightGlue**: learned features find more on weak texture (slower).
 - **Thin parts** (wires, hair, leaves): they will be thick or missing at
   any quality; High helps a little.
+
+## Rooms and outdoor scenes
+
+The app is made for small objects, but a room, a building front or a
+garden works too. Set **Subject** to **Room or outdoor scene** (`ez2d new
+--scene`, or `ez2d run --subject scene`). Masks are then not used, the
+camera rings and their advice are left out (they assume photos all round
+an object), and plain walls and floors are kept when meshing.
+
+- **Walk, don't spin.** Standing in one spot and turning gives views with
+  no depth between them. Take a step sideways between photos, so each
+  overlaps the last by about two thirds.
+- **In a room,** walk along the walls looking across and inwards, then
+  through the middle; add photos looking up at the ceiling and down at the
+  floor near the walls. Plain walls with nothing on them are hard: posters,
+  furniture or a few sticky notes help.
+- **Outdoors,** keep the light the same (overcast is best) and leave out
+  moving things (people, cars, trees in wind) where you can.
+- **Many photos are fine.** Up to 200 photos, every pair is compared.
+  Beyond that, phone photos with a GPS position are compared with their
+  neighbours, and others with the photos that look most alike. That needs
+  COLMAP's vocabulary tree, which is downloaded once. Without it, each
+  photo is compared with those taken just before and after it, so take
+  them in order then. Videos are compared frame by frame, with the tree
+  finding where a walk comes back to its start.
+- **Size and memory.** Large scenes need far more memory in the dense
+  step. Start with Fast, and use the crop box to keep only the part you
+  want.
 
 ## After a run
 

@@ -29,7 +29,7 @@ import re
 import shutil
 import sqlite3
 import struct
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -43,15 +43,17 @@ from ez2digitize.backends.common import (
     find_tool,
     result_parameters,
 )
+from ez2digitize.core import download
 from ez2digitize.core.capture import CaptureBundle
 from ez2digitize.core.files import fingerprint, write_uniform_png
 from ez2digitize.core.project import Project
-from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
+from ez2digitize.core.runner import CancelToken, ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import (
     Backend,
     StageManifest,
     StageSpec,
     capture_input,
+    load_manifest,
     stage_input,
     tree_input,
 )
@@ -65,7 +67,11 @@ IMAGE_LIST = "image_list.txt"
 READABLE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"})
 
 CameraGrouping = Literal["per_capture", "per_image", "single"]
-MatchMode = Literal["exhaustive", "sequential"]
+MatchMode = Literal["exhaustive", "sequential", "spatial", "vocab_tree"]
+# SIFT (COLMAP's classic, on the CPU), or learned: ALIKED features matched
+# with LightGlue, run with ONNX Runtime; better on weak texture and large
+# viewpoint changes, slower on the CPU, and the models are downloaded once.
+FeatureKind = Literal["sift", "aliked"]
 MapperKind = Literal["incremental", "global"]
 
 
@@ -104,6 +110,86 @@ def locate(explicit: Path | None = None) -> Colmap:
     return Colmap(path=path, version=version)
 
 
+# --- files COLMAP would download -------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Pinned:
+    """A file COLMAP 4.2.1 itself downloads, as its source pins it (URL and sha256).
+
+    Our builds have downloads off, so the app fetches these into the user's
+    cache when a run needs them, like the masking model.
+    """
+
+    name: str
+    url: str
+    sha256: str
+    size: int  # bytes, for progress and to say how much is fetched
+
+    @property
+    def path(self) -> Path:
+        return download.models_dir() / self.name
+
+
+_RELEASES = "https://github.com/colmap/colmap/releases/download"
+# src/colmap/retrieval/resources.h (kDefault*VocabTreeUri): image retrieval,
+# one tree per kind of feature.
+VOCAB_TREES: dict[FeatureKind, Pinned] = {
+    "sift": Pinned(
+        "vocab_tree_faiss_flickr100K_words256K.bin",
+        f"{_RELEASES}/3.11.1/vocab_tree_faiss_flickr100K_words256K.bin",
+        "96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc",
+        72_412_636,
+    ),
+    "aliked": Pinned(
+        "vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin",
+        f"{_RELEASES}/3.13.0/vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin",
+        "8b2f9bdc44ca7204d8543bb3adab4c03ba9336c84ef41220b5007991036f075e",
+        18_764_565,
+    ),
+}
+# src/colmap/feature/resources.h: ALIKED (BSD-3-Clause, Zhao et al.) and the
+# LightGlue weights for it (Apache-2.0, Lindenberger et al.), as ONNX models.
+ALIKED_MODEL = Pinned(
+    "aliked-n16rot.onnx",
+    f"{_RELEASES}/3.13.0/aliked-n16rot.onnx",
+    "39c423d0a6f03d39ec89d3d1d61853765c2fb6a8b8381376c703e5758778a547",
+    2_997_054,
+)
+LIGHTGLUE_MODEL = Pinned(
+    "aliked-lightglue.onnx",
+    f"{_RELEASES}/3.13.0/aliked-lightglue.onnx",
+    "b9a5de7204648b18a8cf5dcac819f9d30de1a5961ef03756803c8b86c2dceb8d",
+    45_804_950,
+)
+
+
+def find_pinned(pinned: Pinned) -> Path | None:
+    """The downloaded file, or None (its hash was checked when it arrived)."""
+    path = pinned.path
+    try:
+        return path if path.stat().st_size == pinned.size else None
+    except OSError:
+        return None
+
+
+def fetch_pinned(
+    pinned: Pinned,
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    cancel: CancelToken | None = None,
+) -> Path:
+    """Download it into the user's cache; raises core.download.DownloadError."""
+    return download.fetch(
+        pinned.url,
+        pinned.path,
+        pinned.sha256,
+        size=pinned.size,
+        on_progress=on_progress,
+        cancel=cancel,
+    )
+
+
 # --- options -------------------------------------------------------------------
 
 
@@ -115,14 +201,42 @@ class FeatureOptions:
     # One set of intrinsics per capture bundle by default: a bundle is one
     # session with one camera. Phones that switch lenses need "per_image".
     camera_grouping: CameraGrouping = "per_capture"
+    kind: FeatureKind = "sift"
+    # ALIKED: the model file (ALIKED_MODEL). It keeps a quarter of
+    # max_num_features (2048 at 8192, COLMAP's own default for ALIKED): its
+    # features are more distinctive, and LightGlue's time grows with them.
+    model: Path | None = None
     threads: int | None = None
 
 
 @dataclass(frozen=True)
 class MatchOptions:
+    """How photos are paired for matching.
+
+    - exhaustive: every pair; best, but grows with the square of the count.
+    - sequential: each photo with the next `sequential_overlap` (and, with
+      COLMAP's quadratic overlap, the 2nd, 4th, 8th... after), in name order:
+      video frames, or a walk through a room. With a vocabulary tree it also
+      looks for loops (back at the start of an orbit or a walk).
+    - spatial: each photo with its nearest neighbours by EXIF GPS position
+      (outdoors, phones).
+    - vocab_tree: each photo with the `vocab_tree_images` most similar ones,
+      by image retrieval: large unordered sets.
+
+    `vocab_tree` is the tree file (see `VOCAB_TREE`), for vocab_tree and for
+    loop detection in sequential matching.
+    """
+
     mode: MatchMode = "exhaustive"
-    # Sequential matching (video frames): how many following frames to match.
     sequential_overlap: int = 10
+    spatial_neighbors: int = 50
+    spatial_max_distance_m: float = 100.0
+    vocab_tree_images: int = 100
+    vocab_tree: Path | None = None
+    # The features' kind; ALIKED features are matched with LightGlue
+    # (`lightglue`, the LIGHTGLUE_MODEL file).
+    features: FeatureKind = "sift"
+    lightglue: Path | None = None
     threads: int | None = None
 
 
@@ -205,8 +319,17 @@ def extract_features(
         "--ImageReader.single_camera_per_image", _flag(options.camera_grouping == "per_image"),
         "--FeatureExtraction.use_gpu", "0",
         "--FeatureExtraction.max_image_size", str(options.max_image_size),
-        "--SiftExtraction.max_num_features", str(options.max_num_features),
     ]  # fmt: skip
+    if options.kind == "aliked":
+        if options.model is None:
+            raise BackendError("ALIKED features need the ALIKED model file")
+        argv += [
+            "--FeatureExtraction.type", "ALIKED_N16ROT",
+            "--AlikedExtraction.n16rot_model_path", options.model,
+            "--AlikedExtraction.max_num_features", str(aliked_features(options)),
+        ]  # fmt: skip
+    else:
+        argv += ["--SiftExtraction.max_num_features", str(options.max_num_features)]
     if options.threads:
         argv += ["--FeatureExtraction.num_threads", str(options.threads)]
     inputs = {"captures": fingerprint([capture_input(b) for b in bundles])}
@@ -217,20 +340,29 @@ def extract_features(
     def prepare(folder: Path) -> None:
         (folder / IMAGE_LIST).write_text("\n".join(names) + "\n", encoding="utf-8")
         if masks is not None:
-            _stage_masks(project, masks, names, folder / MASKS_OUT)
+            stage_masks(project, masks, names, folder / MASKS_OUT)
 
     return StageSpec(
         name=stage,
         backend=colmap.backend,
         argv=argv,
-        parameters={**result_parameters(options), "masked": masks is not None},
+        parameters={
+            **result_parameters(options),
+            # The model by what it is, not where it is.
+            "model": ALIKED_MODEL.sha256 if options.kind == "aliked" else None,
+            "masked": masks is not None,
+        },
         inputs=inputs,
         parse_line=ColmapProgress(total_images=len(names)),
         prepare=prepare,
     )
 
 
-def _stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
+def aliked_features(options: FeatureOptions) -> int:
+    return max(options.max_num_features // 4, 256)
+
+
+def stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
     """A mask for every image: the project's, or a white one (keep everything).
 
     COLMAP skips an image whose mask is missing, so photos without a mask
@@ -299,7 +431,7 @@ def match_features(
     options: MatchOptions | None = None,
     camera_groups: Mapping[str, str] | None = None,
 ) -> StageSpec:
-    """Exhaustive (photo sets) or sequential (video) matching.
+    """Feature matching over the pairs `options.mode` chooses (see MatchOptions).
 
     `camera_groups` (image name -> group, see `merge_cameras`) merges the
     per-image cameras of features extracted with `camera_grouping="per_image"`
@@ -313,10 +445,35 @@ def match_features(
         "--database_path", stage_dir / DATABASE,
         "--FeatureMatching.use_gpu", "0",
     ]  # fmt: skip
+    tree = options.vocab_tree
+    if options.features == "aliked":
+        if options.lightglue is None:
+            raise BackendError("ALIKED features are matched with LightGlue, which needs its model")
+        argv += [
+            "--FeatureMatching.type", "ALIKED_LIGHTGLUE",
+            "--AlikedMatching.lightglue_model_path", options.lightglue,
+        ]  # fmt: skip
     if options.mode == "sequential":
         argv += [
             "--SequentialMatching.overlap", str(options.sequential_overlap),
-            "--SequentialMatching.loop_detection", "0",
+            "--SequentialMatching.quadratic_overlap", "1",
+            "--SequentialMatching.loop_detection", _flag(tree is not None),
+        ]  # fmt: skip
+        if tree is not None:
+            argv += ["--SequentialMatching.vocab_tree_path", tree]
+    elif options.mode == "spatial":
+        # COLMAP reads the positions from EXIF GPS during feature extraction.
+        argv += [
+            "--SpatialMatching.max_num_neighbors", str(options.spatial_neighbors),
+            "--SpatialMatching.max_distance", str(options.spatial_max_distance_m),
+            "--SpatialMatching.ignore_z", "1",
+        ]  # fmt: skip
+    elif options.mode == "vocab_tree":
+        if tree is None:
+            raise BackendError("vocabulary tree matching needs the tree file")
+        argv += [
+            "--VocabTreeMatching.vocab_tree_path", tree,
+            "--VocabTreeMatching.num_images", str(options.vocab_tree_images),
         ]  # fmt: skip
     if options.threads:
         argv += ["--FeatureMatching.num_threads", str(options.threads)]
@@ -326,7 +483,12 @@ def match_features(
         if camera_groups:
             merge_cameras(folder / DATABASE, camera_groups)
 
-    parameters = result_parameters(options)
+    # The tree and the model by what they are, not where they are.
+    parameters = {
+        **result_parameters(options),
+        "vocab_tree": VOCAB_TREES[options.features].sha256 if tree else None,
+        "lightglue": LIGHTGLUE_MODEL.sha256 if options.features == "aliked" else None,
+    }
     if camera_groups:
         parameters["camera_groups"] = fingerprint(sorted(camera_groups.items()))
     return StageSpec(
@@ -500,6 +662,22 @@ def _link_or_copy(source: Path, target: Path) -> None:
 
 
 # --- results -------------------------------------------------------------------
+
+
+def matched_database(project: Project) -> Path | None:
+    """The matching stage's database, if the current camera placement came from it.
+
+    Not when a plugin placed the cameras: the database left from an earlier
+    COLMAP run would describe other matches.
+    """
+    matching = load_manifest(project.stage_dir("matching"))
+    mapping = load_manifest(project.stage_dir("mapping"))
+    if matching is None or mapping is None or not matching.succeeded:
+        return None
+    if mapping.inputs.get("matching") != f"run:{matching.run_id}":
+        return None
+    database = project.stage_dir("matching") / DATABASE
+    return database if database.is_file() else None
 
 
 def registered_images(model: Path) -> int:

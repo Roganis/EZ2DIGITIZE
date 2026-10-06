@@ -16,10 +16,13 @@ from ez2digitize.core.runner import (
     ProcessStartError,
     Progress,
     Started,
+    command_line,
+    host_libraries,
     run_process,
+    run_quick,
 )
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="runner is POSIX only")
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
 
 def py(code: str) -> list[str]:
@@ -27,6 +30,17 @@ def py(code: str) -> list[str]:
 
 
 def _alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE, query
+        if not handle:
+            return False
+        try:
+            return bool(kernel32.WaitForSingleObject(handle, 0) == 0x102)  # WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -64,7 +78,7 @@ def test_success_logs_and_events(tmp_path: Path) -> None:
     assert sorted(lines) == ["one", "three", "two"]
     assert result.tail == lines
     text = log.read_text()
-    assert text.startswith(f"$ {sys.executable} -c ")
+    assert text.startswith(f"$ {command_line([sys.executable, '-c'])} ")
     assert "one\n" in text and "two\n" in text and text.endswith("[exit code 0]\n")
     assert result.wall_s > 0 and result.cpu_s >= 0
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", result.started)
@@ -75,6 +89,7 @@ def test_failure_exit_code(tmp_path: Path) -> None:
     assert result.exit_code == 3 and not result.ok
 
 
+@POSIX
 def test_killed_by_signal_reports_negative_code(tmp_path: Path) -> None:
     result = run_process(
         py("import os, signal; os.kill(os.getpid(), signal.SIGKILL)"),
@@ -149,11 +164,13 @@ def test_cancel_kills_whole_process_tree(tmp_path: Path) -> None:
     )
     assert time.monotonic() - started < 15
     assert result.cancelled and not result.ok
-    assert result.exit_code == -15  # SIGTERM
+    # POSIX: SIGTERM. Windows: the job is ended, exit code 1.
+    assert result.exit_code == (1 if sys.platform == "win32" else -15)
     assert _wait_dead(int(pid_file.read_text()))
     assert "[cancelled" in (tmp_path / "log.txt").read_text()
 
 
+@POSIX
 def test_cancel_escalates_to_sigkill(tmp_path: Path) -> None:
     cancel = CancelToken()
 
@@ -193,7 +210,7 @@ def test_leftover_child_holding_output_is_killed(tmp_path: Path) -> None:
     assert _wait_dead(int(pid_file.read_text()))
 
 
-@pytest.mark.skipif(sys.platform not in ("linux", "darwin"), reason="needs rusage")
+@pytest.mark.skipif(sys.platform not in ("linux", "darwin", "win32"), reason="no peak memory")
 def test_peak_rss_is_the_childs(tmp_path: Path) -> None:
     result = run_process(
         py("""
@@ -259,6 +276,7 @@ def test_line_splitter(chunks: list[bytes], lines: list[str]) -> None:
     assert out + splitter.close() == lines
 
 
+@POSIX
 def test_pty_delivers_buffered_output_while_running(tmp_path: Path) -> None:
     # Python, like C stdio, buffers stdout in blocks unless it is a terminal.
     code = """
@@ -309,3 +327,69 @@ def test_log_file_is_current_while_running(tmp_path: Path) -> None:
         on_event=on_event,
     )
     assert seen_in_file == [True]
+
+
+def test_follow_reads_a_log_file_as_output(tmp_path: Path) -> None:
+    """A tool that writes only to a log file (OpenMVS on Windows), followed live."""
+    code = """
+        import time
+        with open("Tool-1.log", "w") as log:
+            for n in (1, 2):
+                log.write(f"step {n} of 2\\n"); log.flush(); time.sleep(0.3)
+            log.write("no newline at the end")
+    """
+    events: list[Event] = []
+
+    def parse(line: str) -> Progress | None:
+        match = re.match(r"step (\d) of 2", line)
+        return Progress("Working", int(match.group(1)) / 2) if match else None
+
+    result = run_process(
+        py(code),
+        log_path=tmp_path / "log.txt",
+        cwd=tmp_path,
+        on_event=events.append,
+        parse_line=parse,
+        follow="*.log",
+    )
+    assert result.ok
+    lines = [e.line for e in events if isinstance(e, Output)]
+    assert lines == ["step 1 of 2", "step 2 of 2", "no newline at the end"]
+    assert [e.fraction for e in events if isinstance(e, Progress)] == [0.5, 1.0]
+    assert "step 2 of 2" in (tmp_path / "log.txt").read_text()
+    assert result.tail[-1] == "no newline at the end"
+
+
+def test_run_quick_reads_log_files() -> None:
+    from ez2digitize.core.runner import run_quick
+
+    code = "open('App-7.log', 'w').write('OpenMVS x64 v2.4.0\\n')"
+    assert "v2.4.0" not in run_quick(py(code))
+    assert "OpenMVS x64 v2.4.0" in run_quick(py(code), logs="*.log")
+
+
+def test_programs_outside_a_packaged_app_get_the_host_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app's library path is for its bundled tools, not for a system FFmpeg."""
+    internal = tmp_path / "app" / "_internal"
+    bundled = tmp_path / "app" / "_internal" / "backends" / "bin" / "colmap"
+    monkeypatch.setenv("LD_LIBRARY_PATH", f"{internal}:/opt/lib")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/lib")
+    show = py("import os; print('path=' + os.environ.get('LD_LIBRARY_PATH', '-'))")
+    assert host_libraries(sys.executable) is None  # not a packaged app
+    assert f"path={internal}:/opt/lib" in run_quick(show)
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
+    assert host_libraries(bundled) is None  # the app's own tools keep its libraries
+    assert host_libraries(sys.executable) == {"LD_LIBRARY_PATH": "/opt/lib"}
+    assert "path=/opt/lib" in run_quick(show)
+    log = tmp_path / "log.txt"
+    run_process(show, log_path=log, env={"OTHER": "1"})
+    assert "path=/opt/lib" in log.read_text()
+
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")  # it was empty before the app set it
+    assert host_libraries(sys.executable) == {"LD_LIBRARY_PATH": ""}
+    monkeypatch.delenv("LD_LIBRARY_PATH")
+    assert host_libraries(sys.executable) is None

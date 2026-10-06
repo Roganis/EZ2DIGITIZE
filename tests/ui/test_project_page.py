@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The project page driving the real pipeline with fake backends."""
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -14,10 +13,8 @@ from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.common import BackendMissing
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.project import Project
-from ez2digitize.pipeline import Tools
+from ez2digitize.pipeline import MeshResult, Tools
 from ez2digitize.ui.project_page import ProjectPage
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 
 TIMEOUT_MS = 20_000
 
@@ -60,7 +57,7 @@ def test_import_enables_run(page: ProjectPage, photos: Path) -> None:
 def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
     page.import_folder(photos)
     page.quality.setCurrentIndex(0)  # Fast -> resolution level 2
-    page.start_run()
+    page.run_button.click()  # the button, not start_run(): its signal passes an argument
     assert page.runner.running and not page.run_button.isEnabled()
     assert page.cancel_button.isEnabled()
     _wait_idle(qtbot, page)
@@ -225,6 +222,21 @@ def test_quality_presets_and_advanced_values(page: ProjectPage) -> None:
     assert page.settings().refine is not None and page.refine.isChecked()
 
 
+def test_scene_subject(qtbot: QtBot, page: ProjectPage, fake_tools: Tools) -> None:
+    from ez2digitize import subject
+
+    assert page.chosen_subject == "object" and page.use_masks.isChecked()
+    page.subject.setCurrentIndex(1)  # Room or outdoor scene
+    assert subject.of(Project.open(page.project.root)) == "scene"  # stored at once
+    assert not page.use_masks.isChecked()
+    settings = page.settings()
+    assert settings.subject == "scene" and settings.mesh.free_space_support
+    assert "Subject: Room or outdoor scene" in page.values.text()
+    reopened = ProjectPage(Project.open(page.project.root), lambda: fake_tools)
+    qtbot.addWidget(reopened)
+    assert reopened.chosen_subject == "scene" and not reopened.use_masks.isChecked()
+
+
 def test_quality_is_saved_with_the_project(
     qtbot: QtBot, page: ProjectPage, photos: Path, fake_tools: Tools
 ) -> None:
@@ -297,3 +309,27 @@ def test_making_masks_blocks_runs_then_enables_use_masks(
     assert page.run_button.isEnabled()
     assert page.use_masks.isEnabled() and page.use_masks.isChecked()
     assert page.settings().use_masks
+
+
+def test_place_cameras_then_look(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
+    page.import_folder(photos)
+    page.place_button.click()
+    _wait_idle(qtbot, page)
+    assert list(_states(page)) == ["features", "matching", "mapping", "undistort"]
+    assert page.status.text().startswith("Cameras placed: 3 of 3 photos.")
+    assert page.tabs.currentWidget() is page.view_panel
+    assert page.last_result is None  # no mesh yet: nothing to open
+    assert page.run_button.isEnabled() and page.place_button.isEnabled()
+
+
+def test_a_bug_shows_where_it_happened(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
+    def broken(*_args: object, **_kwargs: object) -> MeshResult:
+        raise TypeError("'bool' object is not callable")
+
+    page.import_folder(photos)
+    page.start_run(broken)
+    _wait_idle(qtbot, page)
+    assert page.status.text().startswith("Stopped: unexpected error: TypeError")
+    assert page.last_failure is not None and not page.last_failure.tail
+    log = page.log.toPlainText()
+    assert "where it happened" in log and "in broken" in log

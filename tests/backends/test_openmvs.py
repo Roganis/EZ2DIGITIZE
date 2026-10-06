@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -44,20 +43,28 @@ def test_parse_version() -> None:
     assert parse_version("nothing") is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch) -> None:
-    for tool in TOOLS:
-        fake_tool(tmp_path / "bin" / tool, BANNER)
+    made = {tool: fake_tool(tmp_path / "bin" / tool, BANNER) for tool in TOOLS}
     found = openmvs.locate(tmp_path / "bin")
     assert found == OpenMVS(tmp_path / "bin", "2.4.0") and found.supported
     monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "bin"))
     assert openmvs.locate() == found
-    (tmp_path / "bin" / "TextureMesh").unlink()
+    made["TextureMesh"].unlink()
     with pytest.raises(BackendMissing, match="incomplete: no TextureMesh"):
         openmvs.locate()
     monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "nowhere"))
     with pytest.raises(BackendMissing, match="not found"):
         openmvs.locate()
+
+
+def test_locate_reads_the_log_file(tmp_path: Path) -> None:
+    """OpenMVS on Windows prints to a console of its own: the version is in its log."""
+    from scripts import python_script
+
+    body = f"open('InterfaceCOLMAP-1.log', 'w').write({BANNER!r})\n"
+    for tool in TOOLS:
+        python_script(tmp_path / "bin" / tool, body)
+    assert openmvs.locate(tmp_path / "bin").version == "2.4.0"
 
 
 def test_import_colmap(project: Project) -> None:
@@ -95,6 +102,12 @@ def test_mesh_refine_texture(project: Project) -> None:
     dense, mesh = _manifest("densify", "d1"), _manifest("mesh", "m1")
     spec = openmvs.reconstruct_mesh(MVS, project, dense)
     assert _opt(spec, "--pointcloud-file") == str(project.stage_dir("densify") / "scene_dense.ply")
+    assert "--free-space-support" not in spec.argv
+    scene = openmvs.reconstruct_mesh(
+        MVS, project, dense, options=openmvs.MeshOptions(free_space_support=True)
+    )
+    assert _opt(scene, "--free-space-support") == "1"
+    assert scene.cache_key() != spec.cache_key()
 
     with pytest.raises(BackendError, match="no mesh output"):
         openmvs.texture_mesh(MVS, project, dense, mesh)

@@ -12,9 +12,14 @@
     ez2d import ~/scans/skull ~/Pictures/skull-under --flipped   # the other side
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
+    ez2d crop ~/scans/skull --auto          # crop box around the sparse points
+    ez2d scale ~/scans/skull --distance 42  # the picked points are 42 mm apart
+    ez2d orient ~/scans/skull --tilt x      # it lay on its side: a quarter turn
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
     ez2d check                              # which COLMAP and OpenMVS are used
+    ez2d plugins install ~/vggt-plugin      # a plugin: read its licenses, accept,
+    ez2d plugins use poses vggt             # and use it to place the cameras
 
 The same code the GUI uses; this is how regression datasets run on the
 reference machines and in CI.
@@ -29,11 +34,26 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TextIO, cast
+from typing import TextIO, cast, get_args
 
 import segno
 
-from ez2digitize import diagnostics, licenses, masks, presets, sides, video
+from ez2digitize import (
+    crop,
+    diagnostics,
+    licenses,
+    markers,
+    masks,
+    motion,
+    plugins,
+    presets,
+    scale,
+    sides,
+    subject,
+    upright,
+    video,
+    views,
+)
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -69,6 +89,7 @@ from ez2digitize.pipeline import (
     run_splat,
 )
 from ez2digitize.upload import UploadSession
+from ez2digitize.watch import SETTLE_S, FolderWatch, import_ready
 
 
 def commands() -> tuple[str, ...]:
@@ -88,6 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PipelineError,
         ExportError,
         masks.MaskingError,
+        markers.MarkerError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -101,6 +123,9 @@ def _parser() -> argparse.ArgumentParser:
     new = sub.add_parser("new", help="create an empty project folder")
     new.add_argument("project", type=Path)
     new.add_argument("--name", help="display name (default: the folder name)")
+    new.add_argument(
+        "--scene", action="store_true", help="a room or an outdoor scene, not a small object"
+    )
     new.set_defaults(func=_cmd_new)
 
     imp = sub.add_parser("import", help="import folders of photos, or videos, as capture bundles")
@@ -141,6 +166,28 @@ def _parser() -> argparse.ArgumentParser:
     phone.add_argument("--port", type=int, default=0, help="port to listen on (default: any)")
     phone.set_defaults(func=_cmd_upload)
 
+    synced = sub.add_parser(
+        "watch",
+        help="import the photos a phone syncs to a folder (Syncthing, iCloud Drive...) "
+        "once they have all arrived",
+    )
+    synced.add_argument("project", type=Path)
+    synced.add_argument("folder", type=Path, help="the folder the phone's photos sync to")
+    synced.add_argument(
+        "--since",
+        type=float,
+        metavar="MINUTES",
+        help="also take the photos already there from the last MINUTES (default: only new ones)",
+    )
+    synced.add_argument(
+        "--settle",
+        type=float,
+        default=SETTLE_S,
+        metavar="SECONDS",
+        help=f"import once nothing new has arrived for this long (default {SETTLE_S:.0f})",
+    )
+    synced.set_defaults(func=_cmd_watch)
+
     checks = sub.add_parser(
         "photos", help="check the photos; leave some out of the reconstruction or bring them back"
     )
@@ -153,6 +200,12 @@ def _parser() -> argparse.ArgumentParser:
         help="photos to leave out: file name, or <capture id>/<file name> if ambiguous",
     )
     checks.add_argument("--include", nargs="+", default=[], metavar="PHOTO", help="bring back")
+    checks.add_argument(
+        "--exposure",
+        action="store_true",
+        help="how the camera's exposure, ISO, focal length and white balance changed in "
+        "each capture, and (after camera placement) how the photos off it fared",
+    )
     checks.set_defaults(func=_cmd_photos)
 
     mask = sub.add_parser(
@@ -178,6 +231,104 @@ def _parser() -> argparse.ArgumentParser:
     mask.add_argument("--force", action="store_true", help="make the automatic masks again")
     mask.set_defaults(func=_cmd_masks)
 
+    box = sub.add_parser(
+        "crop",
+        help="the crop box: what the dense reconstruction keeps",
+        description="Without options: show the crop box. Coordinates are in the upright "
+        "frame the 3D view shows (Y up), after camera placement (`ez2d run --sparse-only`).",
+    )
+    box.add_argument("project", type=Path)
+    change = box.add_mutually_exclusive_group()
+    change.add_argument(
+        "--auto", action="store_true", help="a box around most of the sparse points"
+    )
+    change.add_argument(
+        "--set",
+        nargs=6,
+        type=float,
+        metavar=("CX", "CY", "CZ", "HX", "HY", "HZ"),
+        help="centre and half sizes",
+    )
+    change.add_argument("--clear", action="store_true", help="no box: OpenMVS's own estimate")
+    box.add_argument("--yaw", type=float, default=0.0, help="degrees about the vertical axis")
+    box.set_defaults(func=_cmd_crop)
+
+    size = sub.add_parser(
+        "scale",
+        help="real-world size: the real distance between two points",
+        description="Without options: show the scale. The two points are usually picked in "
+        "the GUI's 3D view; here they are given in the upright frame it shows (Y up), "
+        "after camera placement. With the scale set, exports are in millimetres (STL, "
+        "3MF) and metres (OBJ, GLB, point cloud).",
+    )
+    size.add_argument("project", type=Path)
+    size.add_argument(
+        "--points",
+        nargs=6,
+        type=float,
+        metavar=("AX", "AY", "AZ", "BX", "BY", "BZ"),
+        help="the two points (needs --distance)",
+    )
+    size.add_argument(
+        "--distance", type=float, metavar="MM", help="their real distance, in millimetres"
+    )
+    size.add_argument("--clear", action="store_true", help="no scale: arbitrary units")
+    size.add_argument(
+        "--markers",
+        action="store_true",
+        help="from the printed markers in the photos (see `ez2d markers`), replacing a scale "
+        "set by hand; found after camera placement anyway, unless one was",
+    )
+    size.add_argument(
+        "--marker-size",
+        type=float,
+        metavar="MM",
+        help=f"the markers' black squares as printed (default {markers.DEFAULT_SIZE_MM:g}; "
+        "remembered for the project)",
+    )
+    size.set_defaults(func=_cmd_scale)
+
+    sheet = sub.add_parser(
+        "markers",
+        help="write the printable sheet of scale markers (SVG, A4)",
+        description="Print it at 100 %, put the object in the middle, and take the photos: "
+        "after camera placement the scale is set from the markers.",
+    )
+    sheet.add_argument("output", type=Path, help="the SVG file to write")
+    sheet.add_argument(
+        "--size",
+        type=float,
+        default=markers.DEFAULT_SIZE_MM,
+        metavar="MM",
+        help=f"the markers' black squares (default {markers.DEFAULT_SIZE_MM:g})",
+    )
+    sheet.set_defaults(func=_cmd_markers)
+
+    orient = sub.add_parser(
+        "orient",
+        help="which way the model stands (the export's up and facing)",
+        description="Without options: show the orientation. By default it comes from how "
+        "the photos were held; these correct it, after camera placement. Points are in the "
+        "upright frame the 3D view shows (Y up). A crop box is re-fitted level.",
+    )
+    orient.add_argument("project", type=Path)
+    how = orient.add_mutually_exclusive_group()
+    how.add_argument("--auto", action="store_true", help="back to the estimate from the photos")
+    how.add_argument(
+        "--level",
+        nargs=9,
+        type=float,
+        metavar="V",
+        help="three points (x y z each) on the surface the object stands on",
+    )
+    how.add_argument(
+        "--tilt",
+        choices=("x", "-x", "z", "-z"),
+        help="a quarter turn about a horizontal axis (- turns the other way)",
+    )
+    orient.add_argument("--turn", type=float, metavar="DEG", help="degrees about the vertical")
+    orient.set_defaults(func=_cmd_orient)
+
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
     part = run.add_mutually_exclusive_group()
@@ -185,6 +336,11 @@ def _parser() -> argparse.ArgumentParser:
     part.add_argument("--dense-only", action="store_true", help="only the OpenMVS stages")
     part.add_argument(
         "--splat", action="store_true", help="Gaussian splats with Brush instead of a mesh"
+    )
+    run.add_argument(
+        "--splat-mesh",
+        action="store_true",
+        help="with --splat: also a mesh from the splats (Poisson, vertex colours)",
     )
     run.add_argument("--brush", type=Path, help="Brush executable (brush_app)")
     run.add_argument("--steps", type=int, help="splat training steps (default from --quality)")
@@ -198,6 +354,25 @@ def _parser() -> argparse.ArgumentParser:
         choices=presets.QUALITIES,
         help="preset: fast, balanced or high (default: the project's last, else balanced); "
         "the options below override single values",
+    )
+    run.add_argument(
+        "--subject",
+        choices=subject.SUBJECTS,
+        help="object (photos all round a small object) or scene (a room, a building, "
+        "a landscape); default: the project's",
+    )
+    run.add_argument(
+        "--matching",
+        choices=["auto", *get_args(colmap.MatchMode)],
+        default="auto",
+        help="how photos are paired: auto (every pair up to 200 photos, then by GPS, "
+        "similarity or order), or one mode",
+    )
+    run.add_argument(
+        "--features",
+        choices=get_args(colmap.FeatureKind),
+        help="sift (default) or aliked: learned features matched with LightGlue, better "
+        "on weak texture, slower on the CPU (models downloaded on first use)",
     )
     run.add_argument("--max-image-size", type=int, help="COLMAP feature image size")
     run.add_argument("--mapper", choices=["global", "incremental"], default="global")
@@ -217,6 +392,12 @@ def _parser() -> argparse.ArgumentParser:
         "texture), points (dense point cloud), or none (default obj,glb)",
     )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
+    run.add_argument(
+        "--refine-poses",
+        action="store_true",
+        help="with a camera placement plugin: refine its cameras with COLMAP (features, "
+        "matching of the photos its cameras say overlap, refinement at full resolution)",
+    )
     run.add_argument(
         "--no-align", action="store_true", help="export in the reconstruction's own frame"
     )
@@ -255,6 +436,37 @@ def _parser() -> argparse.ArgumentParser:
     diag.add_argument("-o", "--output", type=Path, help="zip file (default: in the current folder)")
     diag.set_defaults(func=_cmd_diagnostics)
 
+    plug = sub.add_parser(
+        "plugins", help="backends you install yourself: list, install, accept, use, remove"
+    )
+    plug.set_defaults(func=_cmd_plugins_list)
+    actions = plug.add_subparsers(dest="action", metavar="ACTION")
+    actions.add_parser("list", help="installed plugins and which are used").set_defaults(
+        func=_cmd_plugins_list
+    )
+    inst = actions.add_parser("install", help="install a plugin from its folder or a .zip")
+    inst.add_argument("source", type=Path, metavar="FOLDER_OR_ZIP")
+    inst.add_argument("--update", action="store_true", help="replace an installed version")
+    inst.add_argument(
+        "--accept", action="store_true", help="accept its licenses without asking (read them!)"
+    )
+    inst.set_defaults(func=_cmd_plugins_install)
+    show = actions.add_parser("license", help="print a plugin's licenses")
+    show.add_argument("plugin")
+    show.set_defaults(func=_cmd_plugins_license)
+    acc = actions.add_parser("accept", help="accept a plugin's licenses (after reading them)")
+    acc.add_argument("plugin")
+    acc.set_defaults(func=_cmd_plugins_accept)
+    use = actions.add_parser(
+        "use", help="use a plugin for camera placement (poses) or splats; 'built-in' to stop"
+    )
+    use.add_argument("slot", choices=plugins.SLOTS)
+    use.add_argument("plugin", help="plugin id, or built-in")
+    use.set_defaults(func=_cmd_plugins_use)
+    rm = actions.add_parser("remove", help="uninstall a plugin")
+    rm.add_argument("plugin")
+    rm.set_defaults(func=_cmd_plugins_remove)
+
     lic = sub.add_parser("licenses", help="third-party components, licenses and sources")
     lic.add_argument("--gpl", action="store_true", help="print EZ2DIGITIZE's own license")
     lic.set_defaults(func=_cmd_licenses)
@@ -267,6 +479,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _cmd_new(args: argparse.Namespace) -> int:
     project = Project.create(args.project, name=args.name)
+    subject.store(project, "scene" if args.scene else "object")
     print(f"created project {project.name!r} in {project.root}")
     return 0
 
@@ -299,6 +512,8 @@ def _cmd_import(args: argparse.Namespace) -> int:
                 f"{source}: {info['frames']} frames, the sharpest of {info['candidates']} "
                 f"extracted -> capture {bundle.id}"
             )
+            if (described := motion.describe(info)) is not None:
+                print(f"  {described}")
     _check_photos(project)
     _print_sides(project)
     return 0
@@ -378,6 +593,35 @@ def _cmd_upload(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    since = time.time() - args.since * 60 if args.since else None
+    watch = FolderWatch(args.folder, since=since, settle=args.settle)
+    print(
+        f"watching {args.folder}: photos are imported once nothing new has arrived for "
+        f"{args.settle:.0f} s (Ctrl+C to stop)",
+        flush=True,
+    )
+    shown = None
+    try:
+        while True:
+            state = watch.poll()
+            counts = (len(state.ready), state.arriving, state.videos)
+            if counts != shown:
+                shown = counts
+                print(f"  {state.describe()}", flush=True)
+            if state.settled:
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("stopped; nothing imported", file=sys.stderr)
+        return 130
+    bundle = import_ready(project, state, args.folder)
+    print(f"{len(bundle.files)} files -> capture {bundle.id}")
+    _check_photos(project)
+    return 0
+
+
 def _cmd_photos(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
     for refs, excluded in ((args.exclude, True), (args.include, False)):
@@ -386,7 +630,49 @@ def _cmd_photos(args: argparse.Namespace) -> int:
             verb = "left out" if excluded else "brought back"
             print(f"{verb}: {', '.join(f'{bundle.id}/{n}' for n in names)}")
     _check_photos(project)
+    if args.exposure:
+        _print_exposure(project)
     return 0
+
+
+def _print_exposure(project: Project) -> None:
+    """The camera's automatic adjustments per capture, and what they cost."""
+    from ez2digitize import coverage
+    from ez2digitize.backends import colmap_model
+
+    bundles = list_bundles(project)
+    placed: set[str] | None = None
+    weak: list[str] = []
+    model = colmap.best_model(project.stage_dir("mapping") / "sparse")
+    if model is not None and load_manifest(project.stage_dir("mapping")) is not None:
+        try:
+            placed = set(colmap_model.read_images(model))
+            database = colmap.matched_database(project)
+            weak = coverage.weak_photos(database) if database else []
+        except (OSError, ValueError, BackendError):
+            placed = None
+    for found in photos.exposure_report(bundles, placed, weak):
+        print(f"capture {found.capture}: {found.photos} photos")
+        if found.spread_stops is None:
+            print("  exposure: not in EXIF")
+        else:
+            shutter = found.shutter_s or (0.0, 0.0)
+            iso = found.iso or (0.0, 0.0)
+            print(f"  exposure changed by {found.spread_stops:.1f} stops "
+                  f"(shutter 1/{1 / shutter[1]:.0f} to 1/{1 / shutter[0]:.0f} s, "
+                  f"ISO {iso[0]:.0f} to {iso[1]:.0f}); {len(found.off)} photos over "
+                  f"{photos.EXPOSURE_STOPS:g} stop off the usual")  # fmt: skip
+        focal = ", ".join(f"{f:g}" for f in found.focal_mm) or "not in EXIF"
+        print(f"  focal lengths (mm): {focal}")
+        print(f"  white balance: {', '.join(found.white_balance) or 'not in EXIF'}")
+        if found.unplaced is not None and found.weak is not None:
+            off, rest = len(found.off), found.photos - len(found.off)
+            print(f"  not placed: {found.unplaced[0]} of {off} off the usual exposure, "
+                  f"{found.unplaced[1]} of {rest} others")  # fmt: skip
+            print(f"  few matches: {found.weak[0]} of {off} off the usual exposure, "
+                  f"{found.weak[1]} of {rest} others")  # fmt: skip
+    if placed is None:
+        print("(place the cameras to see how the photos off the usual exposure fared)")
 
 
 def _resolve_photos(
@@ -542,6 +828,223 @@ def _print_masks(project: Project, bundles: Sequence[CaptureBundle]) -> None:
     print("`ez2d run` uses the masks; `--no-masks` ignores them")
 
 
+def _cmd_crop(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.clear:
+        crop.save(project, None)
+        print("crop box removed: OpenMVS estimates the region itself")
+        return 0
+    if args.auto or args.set is not None:
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        if args.auto:
+            upright_box = crop.automatic_for(project)
+            if upright_box is None:
+                raise PipelineError("the camera placement has no sparse points")
+        else:
+            c, h = args.set[:3], args.set[3:]
+            if min(h) <= 0:
+                raise PipelineError("half sizes must be positive")
+            upright_box = crop.UprightBox((c[0], c[1], c[2]), (h[0], h[1], h[2]), args.yaw)
+        crop.save(
+            project, crop.from_upright(upright_box, views.upright_rotation(project), placement)
+        )
+    box = crop.stored(project)
+    if box is None:
+        print("no crop box: OpenMVS estimates the region from the sparse points")
+        return 0
+    shown = crop.to_upright(box, views.upright_rotation(project))
+    centre = ", ".join(f"{v:.4g}" for v in shown.centre)
+    size = ", ".join(f"{2 * v:.4g}" for v in shown.half_size)
+    print(f"crop box: centre ({centre}), size ({size}), turned {shown.yaw:.1f}°")
+    if crop.current(project) is None:
+        print("  drawn on an earlier camera placement: not used until set again")
+    return 0
+
+
+def _cmd_scale(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.clear:
+        scale.save(project, None)
+        print("scale removed: exports are in the reconstruction's own units")
+        return 0
+    if args.marker_size is not None:
+        if not args.marker_size > 0:
+            raise PipelineError("the marker size must be more than 0 mm")
+        project.settings[markers.SIZE_SETTING] = args.marker_size
+        project.save()
+    if args.markers:
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        size_mm = markers.project_size(project)
+        found = markers.measure_project(project, size_mm)
+        if found is None:
+            raise PipelineError("no scale markers found in the photos (see `ez2d markers`)")
+        scale.save(project, markers.to_scale(found, size_mm, placement))
+    upright = views.upright_rotation(project)
+    if args.points is not None or args.distance is not None:
+        if args.distance is None:
+            raise PipelineError("give the real distance between the points (--distance MM)")
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        if args.points is not None:
+            a, b = args.points[:3], args.points[3:]
+            points = scale.from_upright(((a[0], a[1], a[2]), (b[0], b[1], b[2])), upright)
+        else:
+            picked = scale.current(project)
+            if picked is None or picked.source != "points":
+                raise PipelineError("pick two points first (3D view, or --points)")
+            points = picked.points
+        try:
+            scale.save(project, scale.make(points, args.distance, placement))
+        except scale.ScaleError as exc:
+            raise PipelineError(str(exc)) from exc
+    stored = scale.stored(project)
+    if stored is None:
+        print("no scale: exports are in the reconstruction's own (arbitrary) units")
+        return 0
+    a, b = scale.to_upright(stored.points, upright)
+    shown = " and ".join("(" + ", ".join(f"{v:.4g}" for v in p) + ")" for p in (a, b))
+    print(f"scale: {scale.describe(stored)}")
+    print(f"  points {shown}")
+    if scale.current(project) is None:
+        print("  picked on an earlier camera placement: not used until set again")
+    return 0
+
+
+def _cmd_markers(args: argparse.Namespace) -> int:
+    args.output.write_text(markers.sheet_svg(args.size), encoding="utf-8")
+    print(f"wrote {args.output}: print it at 100 % (the line on it measures 100 mm)")
+    return 0
+
+
+def _cmd_orient(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.auto:
+        upright.change(project, None)
+        print("orientation: back to the estimate from the photos")
+    elif args.level is not None or args.tilt is not None or args.turn is not None:
+        try:
+            start = upright.starting_point(project)
+            if args.level is not None:
+                v = args.level
+                shown = start.rotation
+                points = tuple(
+                    upright.mul_transposed(shown, (v[i], v[i + 1], v[i + 2])) for i in (0, 3, 6)
+                )
+                centre = upright.camera_centre(project)
+                if centre is None:
+                    raise upright.OrientationError("the camera placement has no cameras")
+                start = upright.levelled(start, points, centre)  # type: ignore[arg-type]
+            if args.tilt is not None:
+                start = upright.tilted(start, args.tilt[-1], -90.0 if "-" in args.tilt else 90.0)
+            if args.turn is not None:
+                start = upright.turned(start, args.turn)
+        except upright.OrientationError as exc:
+            raise PipelineError(str(exc)) from exc
+        upright.change(project, start)
+    manual = upright.current(project)
+    rotation = upright.rotation(project)
+    if rotation is None:
+        print("orientation: the photos don't say which way is up; the reconstruction's own frame")
+    else:
+        up = upright.mul_transposed(rotation, (0.0, 1.0, 0.0))
+        source = f"corrected, turned {manual.turn:g}°" if manual is not None else "from the photos"
+        print(f"orientation: {source}; up is ({', '.join(f'{v:.3f}' for v in up)}) in the "
+              "reconstruction's coordinates")  # fmt: skip
+    if manual is None and upright.stored(project) is not None:
+        print("  a correction made on an earlier camera placement is not used")
+    return 0
+
+
+def _cmd_plugins_list(args: argparse.Namespace) -> int:
+    found = plugins.installed()
+    print(f"plugins folder: {plugins.plugins_dir()}")
+    for slot in plugins.SLOTS:
+        chosen = plugins.chosen_id(slot)
+        print(f"{plugins.SLOT_LABELS[slot]} ({slot}): {chosen or plugins.BUILT_IN[slot]}")
+    if not found.plugins:
+        print("no plugins installed")
+    for plugin in found.plugins:
+        state = "licenses accepted" if plugins.accepted(plugin) else "licenses not accepted yet"
+        elsewhere = "" if plugin.runs_here else "; not for this system"
+        print(f"  {plugin.id}  {plugin.label()}, {plugin.slot}: {state}{elsewhere}")
+        print(f"      {plugin.license_summary()}")
+    for problem in found.problems:
+        print(f"  not usable: {problem}")
+    return 0
+
+
+def _installed(plugin_id: str) -> plugins.Plugin:
+    plugin = plugins.installed().get(plugin_id)
+    if plugin is None:
+        raise plugins.PluginError(f"no plugin {plugin_id!r} is installed (see `ez2d plugins`)")
+    return plugin
+
+
+def _print_licenses(plugin: plugins.Plugin) -> None:
+    for lic in plugin.licenses:
+        free = "" if lic.free else "  (not known to be a free license: check its terms)"
+        print(f"=== {plugin.name}: {lic.covers}, {lic.spdx}{free} ===")
+        print(lic.text().rstrip())
+        print()
+
+
+def _cmd_plugins_install(args: argparse.Namespace) -> int:
+    plugin = plugins.install(args.source, replace_existing=args.update)
+    print(f"installed {plugin.label()} ({plugin.slot}) in {plugin.folder}")
+    if plugins.accepted(plugin):
+        print("its licenses are unchanged and still accepted")
+        return 0
+    if args.accept:
+        plugins.accept(plugin)
+        print(f"accepted its licenses: {plugin.license_summary()}")
+    elif sys.stdin.isatty():
+        _print_licenses(plugin)
+        if input("Accept these licenses? [y/N] ").strip().lower() in ("y", "yes"):
+            plugins.accept(plugin)
+            print("accepted")
+    if plugins.accepted(plugin):
+        print(f"use it with: ez2d plugins use {plugin.slot} {plugin.id}")
+    else:
+        print(f"read its licenses (ez2d plugins license {plugin.id}), then accept them "
+              f"(ez2d plugins accept {plugin.id}) to use it")  # fmt: skip
+    return 0
+
+
+def _cmd_plugins_license(args: argparse.Namespace) -> int:
+    _print_licenses(_installed(args.plugin))
+    return 0
+
+
+def _cmd_plugins_accept(args: argparse.Namespace) -> int:
+    plugin = _installed(args.plugin)
+    plugins.accept(plugin)
+    print(f"accepted {plugin.name}'s licenses: {plugin.license_summary()}")
+    return 0
+
+
+def _cmd_plugins_use(args: argparse.Namespace) -> int:
+    slot = cast(plugins.Slot, args.slot)
+    if args.plugin.lower() in ("built-in", "builtin", plugins.BUILT_IN[slot].lower()):
+        plugins.choose(slot, None)
+        print(f"{plugins.SLOT_LABELS[slot]}: {plugins.BUILT_IN[slot]} (built in)")
+        return 0
+    plugin = _installed(args.plugin)
+    plugins.choose(slot, plugin)
+    print(f"{plugins.SLOT_LABELS[slot]}: {plugins.describe(plugin)}")
+    return 0
+
+
+def _cmd_plugins_remove(args: argparse.Namespace) -> int:
+    plugins.remove(args.plugin)
+    print(f"removed {args.plugin}")
+    return 0
+
+
 def _cmd_licenses(args: argparse.Namespace) -> int:
     name = licenses.LICENSE if args.gpl else licenses.THIRD_PARTY
     print(licenses.license_text(name) or f"{name} is missing from this copy")
@@ -583,6 +1086,16 @@ def _cmd_check(args: argparse.Namespace) -> int:
         bundled = " (bundled)" if _is_bundled(splats.path) else ""
         state = "ok" if splats.supported else f"not the tested version {brush.PINNED_VERSION}"
         print(f"Brush {splats.version} (for splats): {state}, {splats.path}{bundled}")
+    # Learned features need a COLMAP built with ONNX Runtime; only the bundled
+    # build says whether it is (in its BUILDINFO.json).
+    info = licenses.backend_build_info()
+    if info is not None:
+        onnx = info.get("onnxruntime")
+        print(
+            f"Learned features (ALIKED + LightGlue): ONNX Runtime {onnx}"
+            if onnx
+            else "Learned features (ALIKED + LightGlue): not in this COLMAP build"
+        )
     # Only video import needs FFmpeg: reported, but not required.
     try:
         video_tool = ffmpeg.locate(args.ffmpeg)
@@ -599,6 +1112,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
             f"Masking model {masks.MODEL.name}: not downloaded yet "
             f"({masks.MODEL.size / 1e6:.0f} MB, the first `ez2d masks` gets it)"
         )
+    for slot in plugins.SLOTS:
+        try:
+            chosen = plugins.chosen(slot)
+        except plugins.PluginError as exc:
+            print(f"{plugins.SLOT_LABELS[slot]} plugin: {exc}")
+            ok = False
+        else:
+            if chosen is not None:
+                print(f"{plugins.SLOT_LABELS[slot]}: {plugins.describe(chosen)}")
     gpus = hardware.detect_gpus()
     for gpu in gpus:
         note = " (software renderer: too slow for splats)" if gpu.is_cpu else ""
@@ -616,6 +1138,7 @@ def _is_bundled(path: Path) -> bool:
 def _cmd_status(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
     print(f"{project.name} ({project.root})")
+    print(f"subject: {subject.LABELS[subject.of(project)].lower()}")
     bundles = list_bundles(project)
     print(f"captures: {len(bundles)}")
     for bundle in bundles:
@@ -638,10 +1161,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
+    splat_plugin = plugins.chosen("splats") if args.splat else None
     tools = Tools(
         colmap=colmap.locate(args.colmap),
         openmvs=openmvs.locate(args.openmvs_dir),
-        brush=brush.locate(args.brush) if args.splat else None,
+        brush=brush.locate(args.brush) if args.splat and splat_plugin is None else None,
+        poses=plugins.chosen("poses"),
+        splats=splat_plugin,
     )
     checked: list[tuple[str, colmap.Colmap | openmvs.OpenMVS | brush.Brush, str]] = [
         ("COLMAP", tools.colmap, colmap.PINNED_VERSION),
@@ -660,7 +1186,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if project.preset != quality:
         project.preset = quality
         project.save()
-    settings = _settings(args, quality)
+    chosen = args.subject or subject.of(project)
+    subject.store(project, chosen)
+    settings = _settings(args, quality, chosen)
     print(f"quality: {presets.LABELS[quality]}")
     for label, value in presets.describe(settings):
         print(f"  {label}: {value}")
@@ -761,14 +1289,19 @@ def _formats(text: str) -> tuple[ExportFormat, ...]:
     return tuple(cast(ExportFormat, n) for n in names)
 
 
-def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSettings:
+def _settings(
+    args: argparse.Namespace, quality: presets.Quality, chosen: subject.Subject
+) -> MeshSettings:
     settings = presets.mesh_settings(
         quality,
+        subject=chosen,
+        features=args.features,
         level=args.level,
         refine=args.refine,
         max_image_size=args.max_image_size,
         faces=args.faces,
         steps=args.steps,
+        splat_mesh=args.splat and args.splat_mesh,
     )
     threads = args.threads
     return replace(
@@ -779,9 +1312,13 @@ def _settings(args: argparse.Namespace, quality: presets.Quality) -> MeshSetting
         mesh=replace(settings.mesh, threads=threads),
         refine=None if settings.refine is None else replace(settings.refine, threads=threads),
         texture=replace(settings.texture, threads=threads),
+        matching=None
+        if args.matching == "auto"
+        else colmap.MatchOptions(mode=args.matching, threads=threads),
         export_formats=args.export,
-        use_masks=not args.no_masks,
+        use_masks=settings.use_masks and not args.no_masks,
         align=not args.no_align,
+        refine_poses=args.refine_poses,
     )
 
 

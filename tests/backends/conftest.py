@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from scripts import printing_script
 
 from ez2digitize.core.project import Project
 
@@ -16,10 +17,7 @@ def project(tmp_path: Path) -> Project:
 
 
 def _fake_tool(path: Path, output: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\ncat <<'EOF'\n{output}\nEOF\n")
-    path.chmod(0o755)
-    return path
+    return printing_script(path, output)
 
 
 @pytest.fixture

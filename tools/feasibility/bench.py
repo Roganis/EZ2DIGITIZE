@@ -109,6 +109,28 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_regress(args: argparse.Namespace) -> int:
+    from ez2d_bench import regress
+
+    try:
+        if args.action == "save":
+            for note in regress.save(
+                args.results, args.reference, machine=args.machine, force=args.force
+            ):
+                print(note)
+            print(f"wrote {args.reference / regress.REFERENCE_NAME}")
+            return 0
+        result = regress.check(args.results, args.reference, machine=args.machine)
+    except regress.RegressError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(result.markdown())
+    if args.out:
+        args.out.write_text(result.markdown())
+        print(f"wrote {args.out}")
+    return 1 if result.failed else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bench.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -181,6 +203,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
     p.add_argument("--out", type=Path, default=DEFAULT_REPORTS)
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("regress", help="compare results with a saved reference, within tolerances")
+    p.add_argument("action", choices=["save", "check"], help="save a reference, or check one")
+    p.add_argument("reference", type=Path, help="reference folder (reference.json, meshes/)")
+    p.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+    p.add_argument("--machine", help="only this machine's runs (default: all)")
+    p.add_argument("--force", action="store_true", help="save: replace an existing reference")
+    p.add_argument("--out", type=Path, help="check: also write the Markdown report here")
+    p.set_defaults(func=cmd_regress)
     return parser
 
 

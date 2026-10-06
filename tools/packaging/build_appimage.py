@@ -35,6 +35,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "src"))
+import brush_notices  # noqa: E402
+
 from ez2digitize import __version__  # noqa: E402
 
 APPIMAGETOOL = (
@@ -67,6 +69,9 @@ EXCLUDED_MODULES = (
     "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtCharts",
     "PySide6.QtDataVisualization",
 )  # fmt: skip
+# Packages whose native library is loaded with ctypes, which PyInstaller doesn't
+# see: their binaries are collected explicitly (the marker detector's libapriltag).
+CTYPES_PACKAGES = ("pupil_apriltags",)
 # The viewer's page and JavaScript libraries: package data, which PyInstaller
 # doesn't collect by itself. Same place in the bundle as in the source tree.
 VIEWER_WEB = REPO / "src" / "ez2digitize" / "ui" / "viewer_web"
@@ -108,6 +113,8 @@ def pyinstaller(out: Path) -> Path:
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd += ["--add-data", VIEWER_DATA]
+    for package in CTYPES_PACKAGES:
+        cmd += ["--collect-binaries", package]
     cmd.append(HERE / "entry.py")
     run(cmd)
     return out / "dist" / NAME
@@ -158,7 +165,15 @@ def add_brush(onedir: Path, release: Path) -> str:
     licenses = target / "licenses" / "brush"
     licenses.mkdir(parents=True, exist_ok=True)
     shutil.copy2(release / "LICENSE", licenses / "LICENSE")
-    return output([target / "bin" / "brush_app", "--version"]).strip()
+    version = output([target / "bin" / "brush_app", "--version"]).strip()
+    add_brush_notices(licenses, version)
+    return version
+
+
+def add_brush_notices(licenses: Path, brush_version: str) -> None:
+    """The notices of the crates inside Brush (brush_notices.py), for this Brush only."""
+    brush_notices.check(brush_notices.OUT, brush_version)
+    shutil.copy2(brush_notices.OUT, licenses / "THIRD-PARTY-NOTICES.txt")
 
 
 def _resolved_libraries(binary: Path) -> list[tuple[str, Path | None]]:
@@ -241,6 +256,12 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
         new: list[str | Path] = [image, "new", project]
         for cmd in (new, imp):
             print(output(cmd, env=env))
+        # The marker sheet: drawn by the marker detector's library (ctypes, collected
+        # by hand), which the pipeline would otherwise only use if markers were found.
+        sheet = Path(scratch) / "markers.svg"
+        print(output([image, "markers", sheet], env=env))
+        if not sheet.is_file() or "<rect" not in sheet.read_text(encoding="utf-8"):
+            raise SystemExit("the marker sheet was not written (marker library missing?)")
         # Automatic masks: downloads the model through the app (HTTPS from the
         # frozen Python), then runs ONNX Runtime in the masking worker. The
         # imported masks stay; the run below uses those.
@@ -258,6 +279,22 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
             raise SystemExit("the pipeline run produced no GLB")
         results["pipeline_s"] = round(time.monotonic() - start, 1)
         results["glb_bytes"] = glbs[0].stat().st_size
+        # A plugin, installed and run by the app: the example camera placement,
+        # whose own python3 must start with this computer's libraries, not the
+        # bundle's, and which runs the bundled COLMAP.
+        start = time.monotonic()
+        plugin_env = dict(env, EZ2D_PLUGINS_DIR=str(Path(scratch) / "plugins"))
+        example = REPO / "tools" / "plugins" / "example-poses"
+        install: list[str | Path] = [image, "plugins", "install", example, "--accept"]
+        print(output(install, env=plugin_env))
+        print(output([image, "plugins", "use", "poses", "example-poses"], env=plugin_env))
+        placed = output([image, "run", project, "--sparse-only"], env=plugin_env)
+        print(placed)
+        if "placing the cameras with Example camera placement" not in placed or (
+            "sparse model:" not in placed
+        ):
+            raise SystemExit("the example plugin did not place the cameras")
+        results["plugin_s"] = round(time.monotonic() - start, 1)
     return results
 
 

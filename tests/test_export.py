@@ -1,19 +1,19 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ez2digitize import pipeline
+from ez2digitize.backends.brush import Brush
 from ez2digitize.core.capture import import_files
 from ez2digitize.core.project import Project
 from ez2digitize.export import ExportError, _file_stem, export_mesh
 from ez2digitize.pipeline import MeshSettings, Tools
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake backends")
 NOW = datetime(2026, 10, 5, 18, 0, 0)
 
 
@@ -43,7 +43,7 @@ def test_formats_are_checked(built: Project) -> None:
 def test_export_all_formats(built: Project) -> None:
     files = export_mesh(built, ["obj", "glb", "ply"], now=NOW)
     folder = built.exports_dir / "20261005-180000"
-    assert sorted(str(f.relative_to(folder)) for f in files) == [
+    assert sorted(f.relative_to(folder).as_posix() for f in files) == [
         "My_Skull.glb",
         "obj/My_Skull.mtl",
         "obj/My_Skull.obj",
@@ -96,8 +96,42 @@ def test_print_and_point_cloud_exports(built: Project) -> None:
     info = json.loads((folder / "export.json").read_text())
     # One triangle: three open edges.
     assert (info["watertight"], info["open_edges"]) == (False, 3)
-    (note,) = export_notes(files)
-    assert "not closed (3 open" in note
+    closed, unscaled = export_notes(files)
+    assert "not closed (3 open" in closed
+    assert "no scale is set" in unscaled and info["scale_mm_per_unit"] is None
+
+
+def _stl_vertices(path: Path) -> list[float]:
+    import struct
+
+    data = path.read_bytes()
+    (count,) = struct.unpack("<I", data[80:84])
+    values: list[float] = []
+    for i in range(count):
+        values += struct.unpack("<9f", data[84 + 50 * i + 12 : 84 + 50 * i + 48])
+    return values
+
+
+def test_scale_gives_real_units(built: Project) -> None:
+    from ez2digitize import crop, scale
+    from ez2digitize.export import export_notes
+
+    plain = export_mesh(built, ["stl", "glb"], align=False, now=NOW)
+    run = crop.camera_run(built)
+    assert run is not None
+    # 2 reconstruction units are 10 mm: 5 mm per unit.
+    scale.save(built, scale.make(((0, 0, 0), (0, 2, 0)), 10.0, run))
+    scaled = export_mesh(built, ["stl", "glb"], align=False, now=NOW)
+    assert scaled[0].parent != plain[0].parent  # not the unscaled export again
+    stl = _stl_vertices(scaled[1])
+    assert stl == pytest.approx([v * 5 for v in _stl_vertices(plain[1])])  # millimetres
+    info = json.loads((scaled[0].parent / "export.json").read_text())
+    assert info["scale_mm_per_unit"] == 5.0 and info["units"]["stl"] == "mm"
+    assert export_notes(scaled) == [
+        "the mesh is not closed (3 open and 0 non-manifold edges): "
+        "a slicer may need to repair it before printing"
+    ]
+    assert export_mesh(built, ["stl", "glb"], align=False) == scaled  # reused
 
 
 def test_watertight_check() -> None:
@@ -156,3 +190,73 @@ def test_point_cloud_round_trip(tmp_path: Path) -> None:
     again = read_point_cloud(tmp_path / "out.ply")
     assert list(again.positions) == [1, 5, 0, 2, 5, 0] and again.colors == cloud.colors
     assert isinstance(again, PointCloud) and list(again.normals or array("f")) == [0, 1, 0] * 2
+
+
+def test_orientation_correction_is_used(built: Project) -> None:
+    from ez2digitize import upright
+
+    before = export_mesh(built, ["stl"], now=NOW)
+    upright.change(built, upright.tilted(upright.starting_point(built), "x"))
+    rotation = upright.rotation(built)
+    assert rotation is not None
+    after = export_mesh(built, ["stl"], now=NOW)
+    assert after[0].parent != before[0].parent  # not the export stood up the old way
+    info = json.loads((after[0].parent / "export.json").read_text())
+    assert info["upright"] == [list(row) for row in rotation]
+    assert info["placement"]["rotation"] == info["upright"]
+    assert export_mesh(built, ["stl"]) == after  # reused while nothing changes
+
+
+def test_splat_export(
+    tmp_path: Path, fake_tools: Tools, fake_brush: Brush, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ez2digitize import crop, scale, upright
+    from ez2digitize.core.hardware import Gpu
+    from ez2digitize.core.splats import read_ply, read_spz
+    from ez2digitize.export import export_splat
+
+    project = Project.create(tmp_path / "My Skull")
+    for name in ("a.jpg", "b.jpg"):
+        (tmp_path / name).write_bytes(name.encode())
+    import_files(project, [tmp_path / "a.jpg", tmp_path / "b.jpg"], source="folder")
+    with pytest.raises(ExportError, match="train them first"):
+        export_splat(project)
+    monkeypatch.setattr(pipeline, "detect_gpus", lambda: [Gpu("amd", "RX 7900 GRE")])
+    tools = replace(fake_tools, brush=fake_brush)
+    pipeline.run_splat(project, tools, MeshSettings(export_formats=()))
+
+    plain = export_splat(project, align=False, now=NOW)  # nothing says which way is up
+    assert json.loads((plain[0].parent / "export.json").read_text())["upright"] is None
+    run = crop.camera_run(project)
+    assert run is not None
+    # The model's Z is up: a quarter turn about X stands it up (Y up).
+    turn = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+    upright.save(project, upright.Orientation(turn, 0.0, run))
+
+    ply, spz = export_splat(project, now=NOW)
+    assert (ply.name, spz.name) == ("My_Skull_splat.ply", "My_Skull.spz")
+    trained = project.stage_dir("splat") / "splat.ply"
+    assert ply.read_bytes() == trained.read_bytes()  # Brush's file as it is
+    original, packed = read_ply(trained), read_spz(spz)
+    assert packed.count == original.count == 2 and packed.sh_degree == 0
+    info = json.loads((ply.parent / "export.json").read_text())
+    assert info["formats"] == ["splat", "spz"] and info["splats"] == 2
+    assert info["upright"] == [list(r) for r in turn]
+    # The splats at (0, 0, 0) and (1, 1, 1): the model's z is now the height.
+    heights = packed.positions[:, 1]
+    assert heights.max() - heights.min() == pytest.approx(1, abs=1e-3)
+    assert heights.min() == pytest.approx(0, abs=0.03)  # on the ground (2nd percentile)
+    assert export_splat(project) == [ply, spz]  # the same export again
+
+    scale.save(project, scale.make(((0, 0, 0), (0, 2, 0)), 10.0, run))  # 5 mm per unit
+    _ply, scaled = export_splat(project)
+    assert scaled.parent != spz.parent
+    spread = np.ptp(read_spz(scaled).positions, axis=0)
+    assert spread == pytest.approx(np.ptp(packed.positions, axis=0) * 0.005, abs=1e-3)  # metres
+    assert json.loads((scaled.parent / "export.json").read_text())["units"] == {"spz": "m"}
+
+    (project.stage_dir("splat") / "splat.ply").write_text("not splats")
+    with pytest.raises(ExportError, match="cannot read the splats"):
+        export_splat(project, align=False)

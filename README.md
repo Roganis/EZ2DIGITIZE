@@ -7,13 +7,17 @@ open-source reconstruction tools (COLMAP, OpenMVS, Brush) for you.
 **Status:** early development ([roadmap](docs/ROADMAP.md)). Photos, a
 video or a phone upload in; a textured mesh (OBJ, GLB, STL, 3MF) or
 Gaussian splats out; from the GUI or the command line. CI builds a Linux
-AppImage and a macOS app with the tools inside.
+AppImage, a macOS app and a portable Windows zip with the tools inside;
+tagged versions are published on the
+[releases page](https://github.com/Roganis/EZ2DIGITIZE/releases)
+([changelog](CHANGELOG.md)).
 
 Primary platform: Linux with an AMD GPU. Secondary: macOS on Apple Silicon.
 
 - [Quick start](docs/QUICKSTART.md)
 - [Capturing a small object](docs/CAPTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Plugins](docs/PLUGINS.md): tools you install yourself
 - [Contributing](CONTRIBUTING.md)
 
 ## Development
@@ -39,9 +43,15 @@ uv run ez2d new ~/scans/skull
 uv run ez2d import ~/scans/skull ~/Pictures/skull   # --masks DIR to add masks
 uv run ez2d import ~/scans/skull ~/Videos/skull.mp4  # a video: --frames N (100)
 uv run ez2d upload ~/scans/skull                    # photos from a phone (QR code)
+uv run ez2d watch ~/scans/skull ~/Sync/Camera       # or from the folder it syncs to
 uv run ez2d photos ~/scans/skull --exclude Preview.jpg  # photo checks, leave out
 uv run ez2d masks ~/scans/skull                     # automatic masks (model: 179 MB)
 uv run ez2d import ~/scans/skull ~/Pictures/under --flipped  # the other side
+uv run ez2d run ~/scans/skull --sparse-only         # place the cameras only, then:
+uv run ez2d crop ~/scans/skull --auto               # a crop box (or --set, in the 3D view)
+uv run ez2d scale ~/scans/skull --distance 42       # the points picked in the 3D view: 42 mm
+uv run ez2d markers sheet.svg                       # a sheet of scale markers to print
+uv run ez2d orient ~/scans/skull --tilt x           # lying on its side: a quarter turn
 uv run ez2d run ~/scans/skull --quality fast        # fast, balanced (default), high
 uv run ez2d status ~/scans/skull
 uv run ez2d export ~/scans/skull --formats glb      # OBJ and GLB are exported after run

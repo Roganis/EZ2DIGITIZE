@@ -6,11 +6,15 @@ Headless: the Qt side (ui.viewer) serves these files to the web page and
 tells it which `View` to draw. A view is one result of the pipeline:
 
 - `cameras`: the camera placement, COLMAP's sparse points and a frustum
-  per photo (both generated from the mapping stage's binary model),
+  per photo (both generated from the mapping stage's binary model), with
+  the coverage rings (see coverage.rings) and the photos that matched
+  few others,
 - `dense`: OpenMVS's dense point cloud,
 - `mesh`: the textured mesh, as the GLB the export wrote for the current
   texture run, else converted from OpenMVS's PLY into a cached GLB,
-- `splat`: Brush's Gaussian splats.
+- `splat`: Brush's Gaussian splats,
+- `splat-mesh`: the mesh made from the splats (see splat_mesh), as its
+  exported GLB, else converted into a cached GLB with vertex colours.
 
 `available` only looks at which stages succeeded, so it is cheap; `files`
 does the work (reading the sparse model, converting the mesh) when a view
@@ -21,26 +25,27 @@ or the photos don't say which way is up.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
+import sqlite3
 import struct
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize.backends import brush
+from ez2digitize import coverage, splat_mesh, subject, upright
+from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
-from ez2digitize.core.capture import list_bundles
 from ez2digitize.core.files import FormatError, read_json_object
 from ez2digitize.core.meshio import MeshFormatError, read_openmvs_ply, write_glb
-from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import StageManifest, load_manifest
-from ez2digitize.orientation import Matrix, estimate_up, quaternion_matrix, rotation_between
-from ez2digitize.sides import upright_names
+from ez2digitize.orientation import Matrix, quaternion_matrix
 
-ViewKey = Literal["cameras", "dense", "mesh", "splat"]
+ViewKey = Literal["cameras", "dense", "mesh", "splat", "splat-mesh"]
 # How the page draws a view (viewer.js): GLB mesh, PLY points, splats, or
 # sparse points with camera frustums.
 Kind = Literal["glb", "points", "splat", "cameras"]
@@ -50,8 +55,9 @@ LABELS: dict[ViewKey, str] = {
     "dense": "Dense point cloud",
     "mesh": "Textured mesh",
     "splat": "Gaussian splats",
+    "splat-mesh": "Mesh from splats",
 }
-ORDER: tuple[ViewKey, ...] = ("mesh", "splat", "dense", "cameras")
+ORDER: tuple[ViewKey, ...] = ("mesh", "splat-mesh", "splat", "dense", "cameras")
 
 
 class ViewError(Exception):
@@ -68,6 +74,10 @@ class View:
     source: Path
     upright: Matrix | None
     finished: str = ""
+    # The cameras view: COLMAP's database, for the photos with few matches.
+    database: Path | None = None
+    # The cameras view: rings round an object (not for a room or a scene).
+    rings: bool = True
 
     @property
     def label(self) -> str:
@@ -77,16 +87,23 @@ class View:
 def available(project: Project) -> list[View]:
     """The views this project has results for, best first (see ORDER)."""
     views: dict[ViewKey, View] = {}
-    up = _upright(project)
+    up = upright_rotation(project)
 
     texture = _succeeded(project, "texture")
     if texture is not None:
-        glb = _exported_glb(project, texture.run_id)
+        glb = _exported_glb(project, texture.run_id, up)
         if glb is not None:
             views["mesh"] = View("mesh", "glb", texture.run_id, glb, None, texture.finished)
         else:
             stage = project.stage_dir("texture")
             views["mesh"] = View("mesh", "glb", texture.run_id, stage, up, texture.finished)
+    meshed = _succeeded(project, splat_mesh.STAGE)
+    if meshed is not None and (project.stage_dir(splat_mesh.STAGE) / splat_mesh.MESH).is_file():
+        glb = _exported_glb(project, meshed.run_id, up)
+        source = glb or project.stage_dir(splat_mesh.STAGE)
+        views["splat-mesh"] = View(
+            "splat-mesh", "glb", meshed.run_id, source, None if glb else up, meshed.finished
+        )
     splat = _succeeded(project, "splat")
     if splat is not None and (project.stage_dir("splat") / brush.SPLAT_FILE).is_file():
         views["splat"] = View(
@@ -109,6 +126,8 @@ def available(project: Project) -> list[View]:
             project.stage_dir("undistort") / "sparse",
             up,
             undistorted.finished,
+            colmap.matched_database(project),
+            rings=subject.of(project) == "object",
         )
     return [views[k] for k in ORDER if k in views]
 
@@ -123,11 +142,16 @@ def files(view: View, cache: Path) -> dict[str, Path | bytes]:
             if view.source.suffix == ".glb":
                 return {"model": view.source}
             return {"model": _cached_glb(view, cache)}
+        if view.key == "splat-mesh":
+            if view.source.suffix == ".glb":
+                return {"model": view.source}
+            return {"model": _cached_splat_mesh(view, cache)}
         if view.key == "splat":
             return {"model": view.source / brush.SPLAT_FILE}
         if view.key == "dense":
             return {"model": view.source / "scene_dense.ply"}
-        points, cameras = sparse_scene(view.source)
+        rings, weak = camera_coverage(view)
+        points, cameras = sparse_scene(view.source, rings, weak)
         return {"model": points, "cameras": cameras}
     except (OSError, BackendError, MeshFormatError, FormatError) as exc:
         raise ViewError(f"{view.label} can't be shown: {exc}") from exc
@@ -169,11 +193,32 @@ def read_points(model_dir: Path) -> tuple[list[tuple[float, float, float]], byte
     return positions, bytes(colors)
 
 
-def sparse_scene(model_dir: Path) -> tuple[bytes, bytes]:
+def camera_coverage(view: View) -> tuple[coverage.RingLayout | None, list[str]]:
+    """The cameras view's rings and its photos with few matches (advice: never fails)."""
+    if view.key != "cameras":
+        return None, []
+    rings = None
+    if view.rings:
+        with contextlib.suppress(OSError, ValueError, BackendError):
+            rings = coverage.rings(view.source, view.upright)
+    weak: list[str] = []
+    if view.database is not None and view.database.is_file():
+        with contextlib.suppress(OSError, sqlite3.Error):
+            weak = coverage.weak_photos(view.database)
+    return rings, weak
+
+
+def sparse_scene(
+    model_dir: Path,
+    rings: coverage.RingLayout | None = None,
+    weak: Collection[str] = (),
+) -> tuple[bytes, bytes]:
     """The sparse points as a PLY and the cameras as JSON, for the page.
 
     Each camera: its centre, its rotation (camera to world, rows), the
-    vertical field of view and aspect ratio of its image, and its name.
+    vertical field of view and aspect ratio of its image, its name, and a
+    `flag` if it was misplaced far off ("far") or matched few others
+    ("weak"). `coverage`: the rings (upright frame), or null.
     """
     positions, colors = read_points(model_dir)
     header = (
@@ -207,7 +252,12 @@ def sparse_scene(model_dir: Path) -> tuple[bytes, bytes]:
                 "aspect": round(camera.width / camera.height, 4),
             }
         )
-    return header + bytes(body), json.dumps({"cameras": shown}).encode()
+        if rings is not None and name in rings.far:
+            shown[-1]["flag"] = "far"
+        elif name in weak:
+            shown[-1]["flag"] = "weak"
+    data = {"cameras": shown, "coverage": rings.to_dict() if rings is not None else None}
+    return header + bytes(body), json.dumps(data).encode()
 
 
 # --- helpers ----------------------------------------------------------------------
@@ -222,23 +272,13 @@ def _dense_ply(project: Project) -> Path:
     return project.stage_dir("densify") / "scene_dense.ply"
 
 
-def _upright(project: Project) -> Matrix | None:
-    """The rotation that stands the reconstruction up (as the export does)."""
-    model = project.stage_dir("undistort") / "sparse"
-    if not (model / "images.bin").is_file():
-        return None
-    try:
-        bundles = list_bundles(project)
-        estimate = estimate_up(model, exif_orientations(bundles), upright_names(bundles))
-    except (OSError, ValueError, BackendError, FormatError):
-        return None
-    if estimate is None:
-        return None
-    return rotation_between(estimate.up, (0.0, 1.0, 0.0))
+def upright_rotation(project: Project) -> Matrix | None:
+    """The rotation that stands the reconstruction up (as the export does; see upright)."""
+    return upright.rotation(project)
 
 
-def _exported_glb(project: Project, run_id: str) -> Path | None:
-    """The newest GLB exported from this texture run, upright."""
+def _exported_glb(project: Project, run_id: str, up: Matrix | None) -> Path | None:
+    """The newest GLB exported from this texture run, stood upright the way it is now."""
     if not project.exports_dir.is_dir():
         return None
     for folder in sorted(project.exports_dir.iterdir(), reverse=True):
@@ -253,11 +293,22 @@ def _exported_glb(project: Project, run_id: str) -> Path | None:
             and source.get("run_id") == run_id
             and isinstance(names, list)
             and info.get("align", False)
+            and info.get("upright") == ([list(row) for row in up] if up else None)
         ):
             for name in names:
                 if str(name).endswith(".glb") and (folder / str(name)).is_file():
                     return folder / str(name)
     return None
+
+
+def _cached_splat_mesh(view: View, cache: Path) -> Path:
+    target = cache / f"splat-mesh-{view.run_id}.glb"
+    if not target.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        partial = target.with_suffix(".part")
+        splat_mesh.write_glb(splat_mesh.read_mesh(view.source / splat_mesh.MESH), partial)
+        partial.replace(target)
+    return target
 
 
 def _cached_glb(view: View, cache: Path) -> Path:

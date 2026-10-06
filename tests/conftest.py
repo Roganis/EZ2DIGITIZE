@@ -1,16 +1,23 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import http.server
 import os
 import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from scripts import FAKE_BRUSH, python_script
 
 from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.colmap import Colmap
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.backends.openmvs import TOOLS, OpenMVS
 from ez2digitize.pipeline import Tools
+
+# The Phase 1 benchmark harness (tools/feasibility) is POSIX only.
+collect_ignore_glob = ["feasibility/*"] if sys.platform == "win32" else []
 
 # Run Qt without a display (CI, SSH sessions). Must be set before Qt loads.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,6 +27,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist")
 
 def pytest_configure(config: pytest.Config) -> None:
     # The viewer's scheme must be registered before pytest-qt makes the QApplication.
+    # Without pytest-qt (`-p no:pytest-qt`: the Backends workflow, on runners
+    # without Qt's system libraries) nothing makes one, and Qt mustn't load.
+    if not config.pluginmanager.has_plugin("pytest-qt"):
+        return
     from ez2digitize.ui import viewer
 
     viewer.prepare()
@@ -27,7 +38,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 # Behaviour is steered through environment variables the fakes read:
 # FAKE_FAIL=<command> makes that command exit 1, FAKE_MODELS="30,2" sets the
-# registered images per model, FAKE_SLEEP=<command> makes it hang.
+# registered images per model ("none": no model; Windows drops empty variables),
+# FAKE_SLEEP=<command> makes it hang.
 FAKE_COLMAP = """
 import os, struct, sys, time
 from pathlib import Path
@@ -39,29 +51,87 @@ if os.environ.get("FAKE_SLEEP") == cmd:
 if os.environ.get("FAKE_FAIL") == cmd:
     print("something went wrong", flush=True)
     sys.exit(1)
+def write_model(model, names):
+    # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
+    cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
+    (model / "cameras.bin").write_bytes(cameras)
+    images = struct.pack("<Q", len(names))
+    for image_id, name in enumerate(names, 1):
+        images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
+        images += name.encode() + b"\\0" + struct.pack("<Q", 0)
+    (model / "images.bin").write_bytes(images)
+
+def database_names():
+    import sqlite3
+    with sqlite3.connect(opt("--database_path")) as db:
+        return [n for (n,) in db.execute("SELECT name FROM images ORDER BY image_id")]
+
 if cmd == "feature_extractor":
-    # The "database" is the image list, so the mapper knows the names.
-    Path(opt("--database_path")).write_text(Path(opt("--image_list_path")).read_text())
+    # A database with COLMAP 4.2.1's tables: a SIMPLE_RADIAL camera (8x6) and
+    # its rig per capture folder, a frame per image.
+    import sqlite3
+    names = Path(opt("--image_list_path")).read_text().split()
+    with sqlite3.connect(opt("--database_path")) as db:
+        db.executescript(
+            "CREATE TABLE cameras (camera_id INTEGER PRIMARY KEY, model INTEGER, width INTEGER,"
+            " height INTEGER, params BLOB, prior_focal_length INTEGER);"
+            "CREATE TABLE rigs (rig_id INTEGER PRIMARY KEY, ref_sensor_id INTEGER,"
+            " ref_sensor_type INTEGER);"
+            "CREATE TABLE rig_sensors (rig_id INTEGER, sensor_id INTEGER, sensor_type INTEGER,"
+            " sensor_from_rig BLOB);"
+            "CREATE TABLE frames (frame_id INTEGER PRIMARY KEY, rig_id INTEGER);"
+            "CREATE TABLE frame_data (frame_id INTEGER, data_id INTEGER, sensor_id INTEGER,"
+            " sensor_type INTEGER);"
+            "CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT, camera_id INTEGER);"
+        )
+        cameras = {}
+        for image_id, name in enumerate(names, 1):
+            folder = name.split("/")[0]
+            if folder not in cameras:
+                cameras[folder] = len(cameras) + 1
+                params = struct.pack("<4d", 9.6, 4.0, 3.0, 0.0)
+                row = (cameras[folder], params)
+                db.execute("INSERT INTO cameras VALUES (?, 2, 8, 6, ?, 0)", row)
+                db.execute("INSERT INTO rigs VALUES (?, ?, 0)", (cameras[folder], cameras[folder]))
+            camera = cameras[folder]
+            db.execute("INSERT INTO images VALUES (?, ?, ?)", (image_id, name, camera))
+            db.execute("INSERT INTO frames VALUES (?, ?)", (image_id, camera))
+            db.execute("INSERT INTO frame_data VALUES (?, ?, ?, 0)", (image_id, image_id, camera))
     print("Processed file [1/1]")
+elif cmd in ("mapper", "global_mapper") and "--input_path" in args:
+    # Continuing from a model: every image of the database placed.
+    write_model(Path(opt("--output_path")), database_names())
 elif cmd in ("mapper", "global_mapper"):
-    names = Path(opt("--database_path")).read_text().split()
-    for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").split(",")):
+    names = database_names()
+    for i, n in enumerate(os.environ.get("FAKE_MODELS", "3").replace("none", "").split(",")):
         if not n:
             continue
         model = Path(opt("--output_path")) / str(i)
         model.mkdir(parents=True)
-        # One SIMPLE_RADIAL camera, 8x6 pixels; images registered in order.
-        cameras = struct.pack("<QIiQQ4d", 1, 1, 2, 8, 6, 7.0, 4.0, 3.0, 0.01)
-        (model / "cameras.bin").write_bytes(cameras)
-        images = struct.pack("<Q", int(n))
-        for image_id, name in enumerate(names[: int(n)], 1):
-            images += struct.pack("<I7dI", image_id, 1, 0, 0, 0, 0, 0, 0, 1)
-            images += name.encode() + b"\\0" + struct.pack("<Q", 0)
-        (model / "images.bin").write_bytes(images)
+        write_model(model, names[: int(n)])
+elif cmd in ("point_triangulator", "image_filterer"):
+    for model_file in Path(opt("--input_path")).glob("*.bin"):
+        (Path(opt("--output_path")) / model_file.name).write_bytes(model_file.read_bytes())
+elif cmd == "matches_importer":
+    pairs = Path(opt("--match_list_path")).read_text().splitlines()
+    print(f"matching {len(pairs)} pairs", flush=True)
 elif cmd == "image_undistorter":
     out = Path(opt("--output_path"))
     (out / "images").mkdir()
     (out / "sparse").mkdir()
+    for model_file in Path(opt("--input_path")).glob("*.bin"):  # the model, as is
+        (out / "sparse" / model_file.name).write_bytes(model_file.read_bytes())
+elif cmd == "poisson_mesher":
+    # A coloured tetrahedron, as PoissonRecon writes it (with its density value).
+    header = ("ply\\nformat binary_little_endian 1.0\\nelement vertex 4\\n"
+              + "".join(f"property float {n}\\n" for n in ("x", "y", "z", "value"))
+              + "".join(f"property uchar {n}\\n" for n in ("red", "green", "blue"))
+              + "element face 4\\nproperty list uchar int vertex_indices\\nend_header\\n")
+    body = b"".join(struct.pack("<4f3B", *v, 1.0, 200, 100, 50)
+                    for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    faces = ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
+    body += b"".join(struct.pack("<B3i", 3, *f) for f in faces)
+    Path(opt("--output_path")).write_bytes(header.encode() + body)
 elif cmd == "image_undistorter_standalone":
     src, out = Path(opt("--image_path")), Path(opt("--output_path"))
     for line in Path(opt("--input_file")).read_text().splitlines():
@@ -72,7 +142,7 @@ elif cmd == "image_undistorter_standalone":
 FAKE_OPENMVS = """
 import os, sys
 from pathlib import Path
-tool = Path(sys.argv[0]).name
+tool = Path(sys.argv[0]).stem  # "DensifyPointCloud.cmd" on Windows
 args = sys.argv[1:]
 print(f"fake {tool}", flush=True)
 if os.environ.get("FAKE_FAIL") == tool:
@@ -80,6 +150,16 @@ if os.environ.get("FAKE_FAIL") == tool:
 out = Path(args[args.index("-o") + 1])
 out.write_text("mvs")
 out.with_suffix(".ply").write_text("ply")
+if tool == "DensifyPointCloud":
+    # Three coloured points, binary like OpenMVS's dense cloud.
+    import struct
+    header = ("ply\\nformat binary_little_endian 1.0\\nelement vertex 3\\n"
+              "property float x\\nproperty float y\\nproperty float z\\n"
+              "property uchar red\\nproperty uchar green\\nproperty uchar blue\\n"
+              "end_header\\n")
+    body = b"".join(struct.pack("<3f3B", *v, 200, 100, 50)
+                    for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0)))
+    out.with_suffix(".ply").write_bytes(header.encode() + body)
 if tool in ("ReconstructMesh", "RefineMesh"):
     # A mesh header saying 1000 faces (what the texture step reads to simplify).
     out.with_suffix(".ply").write_text(
@@ -136,27 +216,6 @@ print("progress=end", flush=True)
 
 # Brush: checks the dataset layout, prints a progress bar like the real one
 # (with colour codes) and writes the splat file.
-FAKE_BRUSH = """
-import os, sys
-from pathlib import Path
-args = sys.argv[1:]
-if args == ["--version"]:
-    print("brush-cli 0.3.0")
-    sys.exit(0)
-if os.environ.get("FAKE_FAIL") == "brush":
-    sys.exit(1)
-opt = lambda name: args[args.index(name) + 1]
-dataset = Path(args[0])
-assert (dataset / "sparse" / "0").is_dir() and (dataset / "images").is_dir(), "bad dataset"
-steps = int(opt("--total-steps"))
-masks = sorted((dataset / "images" / "masks").glob("*"))
-assert all(m.resolve().is_file() for m in masks), "dangling mask link"
-print(f"masks: {len(masks)}", flush=True)
-print("\\x1b[34mi\\x1b[0m Completed loading", flush=True)
-for done in (steps // 2, steps):
-    print(f"[1s] \\x1b[36m###\\x1b[0m   {done}/{steps}   Steps (9/s, 0s remaining)", flush=True)
-(Path(opt("--export-path")) / opt("--export-name")).write_text("ply splats")
-"""
 
 
 # Stands in for mask_worker: writes the masks and report.json the real one
@@ -186,10 +245,7 @@ for n, job in enumerate(jobs, 1):
 
 
 def _script(path: Path, body: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!{sys.executable}\n{body}")
-    path.chmod(0o755)
-    return path
+    return python_script(path, body)
 
 
 @pytest.fixture
@@ -221,8 +277,9 @@ def fake_mask_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     import ez2digitize.masks
 
-    script = _script(tmp_path / "fake" / "mask_worker.py", FAKE_MASK_WORKER)
-    monkeypatch.setattr(ez2digitize.masks, "worker_argv", lambda: [sys.executable, str(script)])
+    # What to run (on Windows a .cmd file, not one Python can run).
+    script = _script(tmp_path / "fake" / "mask_worker", FAKE_MASK_WORKER)
+    monkeypatch.setattr(ez2digitize.masks, "worker_argv", lambda: [str(script)])
     model = ez2digitize.masks.model_file()
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as f:
@@ -234,8 +291,46 @@ def fake_mask_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP", "FAKE_COVERAGE"):
         monkeypatch.delenv(var, raising=False)
-    # Never the user's model cache.
+    # Never the user's model cache or plugins.
     monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("EZ2D_PLUGINS_DIR", str(tmp_path / "plugins"))
+
+
+@pytest.fixture
+def server(tmp_path: Path) -> Iterator[str]:
+    """A local web server for tmp_path/www (for download tests)."""
+    root = tmp_path / "www"
+    root.mkdir()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, directory=str(root), **kwargs)  # type: ignore[arg-type]
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    class Server(http.server.ThreadingHTTPServer):
+        def handle_error(self, request: object, client_address: object) -> None:
+            pass  # a cancelled download hangs up mid-transfer
+
+    httpd = Server(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def _no_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never the network: COLMAP's files (vocabulary trees, learned feature models)
+    can't be fetched unless a test says so."""
+    from ez2digitize.backends import colmap
+    from ez2digitize.core.download import DownloadError
+
+    def offline(*_args: object, **_kwargs: object) -> Path:
+        raise DownloadError("no network in the tests")
+
+    monkeypatch.setattr(colmap, "fetch_pinned", offline)
 
 
 @pytest.fixture(autouse=True)

@@ -53,6 +53,17 @@ segno
   Source:   https://github.com/heuer/segno
   Notes:    QR codes for phone upload (pure Python, no dependencies).
 
+pupil-apriltags (with the AprilTag 3 library)
+  License:  MIT (the Python binding); BSD-2-Clause (AprilTag, (C) 2013-2015
+            The Regents of The University of Michigan)
+  Source:   https://github.com/pupil-labs/apriltags
+            (AprilTag: https://github.com/AprilRobotics/apriltag)
+  Notes:    Finds the printed scale markers (tag36h11) in the photos and
+            draws them for the printable sheet (ez2digitize.markers). Chosen
+            over OpenCV's ArUco detector: OpenCV's Linux wheels bundle
+            OpenSSL 1.1.1, whose license isn't GPL-compatible. License text
+            in its dist-info.
+
 ONNX Runtime
   License:  MIT
   Source:   https://github.com/microsoft/onnxruntime
@@ -95,6 +106,34 @@ Qin et al.)
   Notes:    The ONNX export published by the rembg project (MIT),
             https://github.com/danielgatis/rembg/releases/tag/v0.0.0
 
+COLMAP's vocabulary trees and learned feature models are not bundled
+either: they are downloaded when a run needs them (more than 200 photos;
+learned features chosen), into the same cache, checked against the sha256
+COLMAP 4.2.1 itself pins (ez2digitize.backends.colmap.VOCAB_TREES,
+ALIKED_MODEL, LIGHTGLUE_MODEL):
+
+aliked-n16rot.onnx (ALIKED, "ALIKED: A Lighter Keypoint and Descriptor
+Extraction Network via Deformable Transformation", Zhao et al.)
+  License:  BSD-3-Clause (code and weights)
+  Source:   https://github.com/Shiaoming/ALIKED
+  Notes:    The ONNX export published by the COLMAP project with its 3.13.0
+            release.
+
+aliked-lightglue.onnx (LightGlue, Lindenberger et al., weights for ALIKED)
+  License:  Apache-2.0 (code and pre-trained weights, per its README)
+  Source:   https://github.com/cvg/LightGlue
+  Notes:    The ONNX export published by the COLMAP project with its 3.13.0
+            release.
+
+vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin (for ALIKED) and
+vocab_tree_faiss_flickr100K_words256K.bin
+  License:  none stated for the file itself; published by the COLMAP project
+            (BSD-3-Clause) as an asset of its 3.11.1 release, and the
+            file COLMAP itself downloads. It holds visual words trained on
+            the Flickr100k images, not the images.
+  Source:   https://github.com/colmap/colmap/releases/tag/3.11.1 (SIFT)
+            and /tag/3.13.0 (ALIKED)
+
 
 2. External backends (invoked as separate processes)
 ----------------------------------------------------
@@ -106,18 +145,37 @@ backends/licenses/ (the copyright file of every library linked in), and the
 app shows this file under Help -> Licenses.
 
 COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
+                with code it compiles in: LSD (AGPL-3.0-or-later),
+                PoissonRecon (MIT) and VLFeat (BSD-2-Clause) from its own
+                tree, and PoseLib (BSD-3-Clause) and faiss 1.14.1 (MIT),
+                which its build fetches; their license texts are in
+                backends/licenses as colmap-<name>.txt
+ONNX Runtime    MIT                 https://github.com/microsoft/onnxruntime
+  1.30.0        Microsoft's release library, as COLMAP's build fetches it
+                (for ALIKED and LightGlue), shipped next to COLMAP; its
+                license and ThirdPartyNotices.txt (the components inside it)
+                are in backends/licenses as onnxruntime*.txt
 OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
                 (depends on CGAL, parts of which are GPL-3.0+), with the
                 upstream fix in tools/backends/patches applied
 Brush 0.3.0     Apache-2.0          https://github.com/ArthurBrussee/brush
                 The release binary, unmodified, with its LICENSE under
-                backends/licenses/brush. Its Rust dependencies' notices are
-                not in the release; collecting them (cargo-about) is a Phase
-                6 release task.
+                backends/licenses/brush, and THIRD-PARTY-NOTICES.txt there:
+                the license, copyright and NOTICE texts of the 545 Rust
+                crates compiled into it (MIT, Apache-2.0, BSD, ISC, Zlib,
+                MPL-2.0, Unicode-3.0 and the like), collected from Brush's
+                Cargo.lock by tools/packaging/brush_notices.py.
 GCC runtime     GPL-3.0 with the GCC Runtime Library Exception
                 (libgomp, libgfortran, libquadmath; AppImage only, copied
-                from the build machine for the backends)
+                from the build machine for the backends; in the Windows
+                backend builds, the MinGW runtime DLLs LAPACK needs, if any)
 libomp          Apache-2.0 with LLVM exceptions (macOS app only, Homebrew's)
+MSVC runtime    Microsoft's redistributable runtime (Windows backend builds
+                only: vcomp140.dll, the OpenMP runtime, and any C++ runtime
+                DLL it needs; the rest is linked statically). Part of the
+                compiler, so a System Library in GPL-3.0 section 1 terms;
+                redistributed under the Visual Studio license's terms for
+                its redistributable files.
 FFmpeg          LGPL-2.1+ or GPL-2.0+ depending on build configuration
                                     https://ffmpeg.org/
                 Used for video import (decoding, JPEG frames). Not bundled

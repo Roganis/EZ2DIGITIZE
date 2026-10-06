@@ -46,7 +46,8 @@ def test_parse_probe() -> None:
 
 def test_parse_probe_applies_rotation() -> None:
     rotated = _probe(side_data_list=[{"rotation": -90}])
-    assert ffmpeg.parse_probe(rotated, Path("v.mp4")).width == 2160
+    info = ffmpeg.parse_probe(rotated, Path("v.mp4"))
+    assert (info.width, info.rotation) == (2160, -90)
 
 
 @pytest.mark.parametrize(
@@ -79,6 +80,13 @@ def test_locate(fake_ffmpeg: FFmpeg, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv(ffmpeg.ENV_VAR, str(fake_ffmpeg.path))
     assert ffmpeg.locate().path == fake_ffmpeg.path
+
+
+def test_locate_says_what_went_wrong(fake_ffmpeg: FFmpeg, monkeypatch: pytest.MonkeyPatch) -> None:
+    said = "ffmpeg: symbol lookup error: /usr/lib/libavcodec.so.61: undefined symbol: x"
+    monkeypatch.setattr(ffmpeg, "run_quick", lambda _argv: said + "\n")
+    with pytest.raises(BackendMissing, match="it said:\nffmpeg: symbol lookup error"):
+        ffmpeg.locate(fake_ffmpeg.path)
 
 
 def test_locate_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

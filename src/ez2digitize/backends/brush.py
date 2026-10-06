@@ -32,16 +32,20 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from ez2digitize.backends.colmap import MASK_SUFFIX, MASKS_OUT
 from ez2digitize.backends.common import BackendMissing, find_tool, result_parameters
+from ez2digitize.core.files import link
 from ez2digitize.core.project import Project
 from ez2digitize.core.runner import ProcessStartError, Progress, run_quick
 from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_input
 
 NAME = "brush"
+# A bump also means: BRUSH_VERSION in the package workflows, and the notices of
+# the crates inside it (tools/packaging/brush_notices.py).
 PINNED_VERSION = "0.3.0"
 ENV_VAR = "EZ2D_BRUSH"
 EXECUTABLE = "brush_app"
@@ -109,26 +113,6 @@ def train(
     """
     options = options or SplatOptions()
     stage_dir = project.stage_dir(stage)
-    source = project.stage_dir(undistorted.stage)
-    warped = project.stage_dir(masks.stage) if masks is not None else None
-
-    def prepare(folder: Path) -> None:
-        dataset = folder / "dataset"
-        images = dataset / "images"
-        (dataset / "sparse").mkdir(parents=True)
-        images.mkdir()
-        # Relative, so a moved project still works.
-        up = Path("..") / ".." / ".."
-        (dataset / "sparse" / "0").symlink_to(up / source.name / "sparse")
-        for capture in sorted(p.name for p in (source / "images").iterdir() if p.is_dir()):
-            (images / capture).symlink_to(up / source.name / "images" / capture)
-        if warped is not None:
-            (images / MASKS_DIR).mkdir()
-            for mask in sorted((warped / MASKS_OUT).glob(f"*{MASK_SUFFIX}")):
-                stem = mask.name.removesuffix(MASK_SUFFIX)
-                link = images / MASKS_DIR / f"{stem}.png"
-                link.symlink_to(Path("..") / up / warped.name / MASKS_OUT / mask.name)
-
     argv: list[str | Path] = [
         brush.path,
         stage_dir / "dataset",
@@ -151,9 +135,39 @@ def train(
         inputs=inputs,
         parse_line=BrushProgress(),
         use_pty=True,
-        prepare=prepare,
+        prepare=dataset_preparer(project, undistorted, masks),
         gpu=True,
     )
+
+
+def dataset_preparer(
+    project: Project, undistorted: StageManifest, masks: StageManifest | None
+) -> Callable[[Path], None]:
+    """What makes `dataset/` in a splat stage's folder (see the module's description).
+
+    Also used for splat plugins, which get the same dataset.
+    """
+    source = project.stage_dir(undistorted.stage)
+    warped = project.stage_dir(masks.stage) if masks is not None else None
+
+    def prepare(folder: Path) -> None:
+        dataset = folder / "dataset"
+        images = dataset / "images"
+        (dataset / "sparse").mkdir(parents=True)
+        images.mkdir()
+        # Relative, so a moved project still works.
+        up = Path("..") / ".." / ".."
+        link(up / source.name / "sparse", dataset / "sparse" / "0")
+        for capture in sorted(p.name for p in (source / "images").iterdir() if p.is_dir()):
+            link(up / source.name / "images" / capture, images / capture)
+        if warped is not None:
+            (images / MASKS_DIR).mkdir()
+            for mask in sorted((warped / MASKS_OUT).glob(f"*{MASK_SUFFIX}")):
+                stem = mask.name.removesuffix(MASK_SUFFIX)
+                target = images / MASKS_DIR / f"{stem}.png"
+                link(Path("..") / up / warped.name / MASKS_OUT / mask.name, target)
+
+    return prepare
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")

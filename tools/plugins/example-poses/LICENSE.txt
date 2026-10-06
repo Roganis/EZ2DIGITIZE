@@ -1,0 +1,10 @@
+Example camera placement plugin for EZ2DIGITIZE.
+Copyright 2026 EZ2DIGITIZE contributors.
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. The full text is in the LICENSE file at the top of
+EZ2DIGITIZE's source, and at https://www.gnu.org/licenses/gpl-3.0.txt.
+
+It runs COLMAP (BSD-3-Clause), which it does not include.

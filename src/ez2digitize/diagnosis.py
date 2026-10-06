@@ -67,12 +67,33 @@ _EMPTY_MESH = Explanation(
     "that the masks don't hide the object.",
 )
 
+_NO_ONNX = Explanation(
+    "This COLMAP can't use learned features",
+    "It was built without ONNX Runtime, which ALIKED and LightGlue need. Use SIFT "
+    "features, or a COLMAP built with ONNX (the one bundled with the app is).",
+)
+
 Rule = Callable[[str, int, str], Explanation | None]
 
 
-def _killed(exit_code: int, *signals: signal.Signals) -> bool:
+def _killed(exit_code: int, *signals: int | None) -> bool:
     # The runner reports death by signal as a negative exit code; a shell as 128 + n.
-    return any(exit_code in (-sig, 128 + sig) for sig in signals)
+    return any(exit_code in (-sig, 128 + sig) for sig in signals if sig is not None)
+
+
+# POSIX signal numbers; Windows has none of these, its crashes are NTSTATUS codes.
+SIGKILL: int | None = getattr(signal, "SIGKILL", None)
+SIGBUS: int | None = getattr(signal, "SIGBUS", None)
+# Windows: access violation, stack overflow, heap corruption; illegal instruction.
+WINDOWS_CRASHES = frozenset({0xC0000005, 0xC00000FD, 0xC0000374, 0xC0000409})
+WINDOWS_ILLEGAL = frozenset({0xC000001D})
+# Windows: no memory, and the commit limit (RAM plus page file) reached.
+WINDOWS_NO_MEMORY = frozenset({0xC0000017, 0xC000012D})
+
+
+def _windows_status(exit_code: int, codes: frozenset[int]) -> bool:
+    # Python reports them unsigned; some tools pass them on as signed 32-bit.
+    return (exit_code & 0xFFFFFFFF) in codes
 
 
 def _matches(pattern: str) -> Callable[[str], bool]:
@@ -94,6 +115,7 @@ _dense_empty = _matches(
     r"no images see \d+ or more points|no valid depth|densifying point-cloud failed"
     r"|empty point-?cloud|point-cloud is not valid"
 )
+_no_onnx = _matches(r"requires ONNX support")
 _mesh_empty = _matches(r"empty initial mesh|empty mesh|cannot load mesh|no faces")
 
 
@@ -101,7 +123,7 @@ def _rules() -> list[Rule]:
     def memory(stage: str, code: int, log: str) -> Explanation | None:
         # The kernel's OOM killer sends SIGKILL, which also is how cancel ends: the
         # pipeline reports cancellation separately, so a SIGKILL here is not ours.
-        if _oom(log) or _killed(code, signal.SIGKILL):
+        if _oom(log) or _killed(code, SIGKILL) or _windows_status(code, WINDOWS_NO_MEMORY):
             return _OUT_OF_MEMORY
         return None
 
@@ -109,9 +131,13 @@ def _rules() -> list[Rule]:
         return _DISK_FULL if _disk(log) else None
 
     def illegal(stage: str, code: int, log: str) -> Explanation | None:
-        if _killed(code, signal.SIGILL) or "illegal instruction" in log.lower():
+        illegal = _killed(code, signal.SIGILL) or _windows_status(code, WINDOWS_ILLEGAL)
+        if illegal or "illegal instruction" in log.lower():
             return _ILLEGAL_INSTRUCTION
         return None
+
+    def onnx(stage: str, code: int, log: str) -> Explanation | None:
+        return _NO_ONNX if stage in ("features", "matching") and _no_onnx(log) else None
 
     def mapping(stage: str, code: int, log: str) -> Explanation | None:
         return _NO_OVERLAP if stage in ("matching", "mapping") and _no_model(log) else None
@@ -128,11 +154,13 @@ def _rules() -> list[Rule]:
         return None
 
     def crash(stage: str, code: int, log: str) -> Explanation | None:
-        crashed = _killed(code, signal.SIGSEGV, signal.SIGABRT, signal.SIGBUS)
+        crashed = _killed(code, signal.SIGSEGV, signal.SIGABRT, SIGBUS) or _windows_status(
+            code, WINDOWS_CRASHES
+        )
         return _CRASH if crashed or "segmentation fault" in log.lower() else None
 
     # Most specific first: a crash after "out of memory" is an out-of-memory.
-    return [disk, memory, illegal, mapping, unreadable, dense, mesh, crash]
+    return [disk, memory, illegal, onnx, mapping, unreadable, dense, mesh, crash]
 
 
 _RULES = _rules()

@@ -12,6 +12,13 @@ runs on your computer; nothing is uploaded anywhere.
 - **macOS (Apple Silicon):** unzip `EZ2DIGITIZE-<version>-macos-arm64.zip`.
   The app isn't notarized yet, so remove the quarantine once:
   `xattr -dr com.apple.quarantine EZ2DIGITIZE.app`.
+- **Windows (x64, community-tested):** unzip
+  `EZ2DIGITIZE-<version>-windows-x86_64.zip` and run `EZ2DIGITIZE.exe`
+  (`ez2d.exe` is the command line). The app isn't signed yet, so Windows
+  SmartScreen warns once: More info → Run anyway.
+
+Releases are on the project's
+[GitHub releases page](https://github.com/Roganis/EZ2DIGITIZE/releases).
 
 COLMAP, OpenMVS and Brush come inside the app. Video import uses the FFmpeg
 installed on your computer (`pacman -S ffmpeg`, `apt install ffmpeg`,
@@ -24,7 +31,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    photos all around the object, from two heights, everything in focus.
 2. **New project** (File → New Project), then **Import photos…** and pick
    the folder. Or **Import video…**, or **From phone…** to send photos over
-   Wi-Fi by scanning a QR code.
+   Wi-Fi by scanning a QR code, or, if the phone already syncs its photos to
+   this computer (Syncthing, iCloud Drive…), to take them from that folder
+   as they arrive.
 3. Read the **Photo checks** tab: it flags photos that are blurry, a
    different size, from another camera, or that can't be read. Uncheck a
    photo to leave it out.
@@ -32,20 +41,42 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    keeps only the object in every photo (cleaner, faster). Uncheck any mask
    that cuts off part of the object. To scan the underside too, see
    **Other side…** and the Both sides tab ([capture guide](CAPTURE.md)).
-5. Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
+5. For a room or an outdoor scene instead of an object, set **Subject** to
+   **Room or outdoor scene** (see the [capture guide](CAPTURE.md)).
+   Choose a **Quality**: Fast for a preview (a few minutes), Balanced (the
    default), High for the finest surface (much slower). **Mesh size**
    simplifies the result for the web or a slicer.
 6. Press **Build mesh**. The steps list shows progress; the Log tab shows
    the tools' output. On a recent desktop, 60 photos take about 15 minutes
-   at Balanced.
+   at Balanced. Better: press **Place cameras** first. The 3D view opens on
+   the camera placement, with four tools next to the view's name:
+   - **Coverage** shows where photos are missing: a ring per height, gaps
+     shaded orange (red when a whole side is missing), and cameras that
+     matched few others in orange. Take more photos there.
+   - **Crop box** keeps the table out of the model: **Use a crop box**
+     puts a box around the object; drag its yellow handles to fit.
+   - **Scale** gives the model its real size. If you photographed it on
+     the printed marker sheet (**Marker sheet…** here; see the capture
+     guide), that is done already. Otherwise measure two points on the
+     object (its height, say), press **Pick two points**, click them, type
+     the distance and press **Set scale**.
+   - **Upright**: if the model lies tilted, **Level: pick 3 points** on the
+     mat stands it up.
+
+   Then Build mesh.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),
    GLB, and STL/3MF for printing if you chose them. The model stands
-   upright, centred, on the ground.
+   upright, centred, on the ground; with the scale set, STL and 3MF are in
+   millimetres and OBJ and GLB in metres.
 
-**Build splats** trains Gaussian splats from the same camera positions
-(PLY, for splat viewers).
+**Build splats** trains Gaussian splats from the same camera positions.
+They are exported twice: as Brush's PLY, and as a ten times smaller SPZ
+stood upright like the mesh (most splat viewers open either). With **and a mesh
+from them** ticked, it also makes a surface through the splats (on the
+CPU, with vertex colours instead of a texture): a second mesh to compare
+with the textured one, sometimes better on thin or shiny parts.
 
 ## From the command line
 
@@ -59,6 +90,7 @@ ez2d photos ~/scans/skull                           # photo checks
 ez2d masks ~/scans/skull                            # automatic masks
 ez2d run ~/scans/skull --quality balanced --export obj,glb,stl
 ez2d run ~/scans/skull --splat                      # Gaussian splats
+ez2d run ~/scans/skull --splat --splat-mesh         # and a mesh made from them
 ez2d status ~/scans/skull
 ```
 

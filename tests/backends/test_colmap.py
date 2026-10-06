@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import sqlite3
 import struct
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -68,7 +67,6 @@ def test_parse_version(text: str, version: str | None) -> None:
     assert parse_version(text) == version
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch) -> None:
     exe = fake_tool(tmp_path / "colmap", "COLMAP 4.2.1 (Commit abc without CUDA)")
     found = colmap.locate(exe)
@@ -78,7 +76,6 @@ def test_locate(tmp_path: Path, fake_tool: FakeTool, monkeypatch: pytest.MonkeyP
     assert old.version == "3.9.1" and not old.supported
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
 def test_locate_errors(tmp_path: Path, fake_tool: FakeTool) -> None:
     with pytest.raises(BackendMissing, match="not found"):
         colmap.locate(tmp_path / "missing")
@@ -178,6 +175,102 @@ def test_match_features_copies_database(project: Project) -> None:
     assert seq.argv[1] == "sequential_matcher"
     assert _opt(seq, "--SequentialMatching.overlap") == "15"
     assert _opt(seq, "--SequentialMatching.loop_detection") == "0"
+    assert "--SequentialMatching.vocab_tree_path" not in seq.argv
+
+
+def test_matching_for_large_sets(project: Project, tmp_path: Path) -> None:
+    features = _manifest("features")
+    tree = tmp_path / "tree.bin"
+    loops = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("sequential", vocab_tree=tree)
+    )
+    assert _opt(loops, "--SequentialMatching.loop_detection") == "1"
+    assert _opt(loops, "--SequentialMatching.vocab_tree_path") == str(tree)
+    # The tree is recorded by its hash, not where it is.
+    assert loops.parameters["vocab_tree"] == colmap.VOCAB_TREES["sift"].sha256
+    moved = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("sequential", vocab_tree=tmp_path / "x")
+    )
+    assert moved.cache_key() == loops.cache_key()
+
+    spatial = colmap.match_features(TOOL, project, features, options=MatchOptions("spatial"))
+    assert spatial.argv[1] == "spatial_matcher"
+    assert _opt(spatial, "--SpatialMatching.max_num_neighbors") == "50"
+    assert _opt(spatial, "--SpatialMatching.ignore_z") == "1"
+
+    similar = colmap.match_features(
+        TOOL, project, features, options=MatchOptions("vocab_tree", vocab_tree=tree)
+    )
+    assert similar.argv[1] == "vocab_tree_matcher"
+    assert _opt(similar, "--VocabTreeMatching.vocab_tree_path") == str(tree)
+    assert _opt(similar, "--VocabTreeMatching.num_images") == "100"
+    with pytest.raises(BackendError, match="needs the tree"):
+        colmap.match_features(TOOL, project, features, options=MatchOptions("vocab_tree"))
+
+
+def test_learned_features(project: Project, tmp_path: Path) -> None:
+    bundle = _bundle(project, tmp_path, "a.jpg")
+    sift = colmap.extract_features(TOOL, project, [bundle])
+    assert _opt(sift, "--SiftExtraction.max_num_features") == "8192"
+    assert "--FeatureExtraction.type" not in sift.argv
+    model = tmp_path / "aliked.onnx"
+    aliked = colmap.extract_features(
+        TOOL, project, [bundle], options=FeatureOptions(kind="aliked", model=model)
+    )
+    assert _opt(aliked, "--FeatureExtraction.type") == "ALIKED_N16ROT"
+    assert _opt(aliked, "--AlikedExtraction.n16rot_model_path") == str(model)
+    assert _opt(aliked, "--AlikedExtraction.max_num_features") == "2048"
+    assert "--SiftExtraction.max_num_features" not in aliked.argv
+    assert aliked.parameters["model"] == colmap.ALIKED_MODEL.sha256
+    elsewhere = colmap.extract_features(
+        TOOL, project, [bundle], options=FeatureOptions(kind="aliked", model=tmp_path / "x")
+    )
+    assert elsewhere.cache_key() == aliked.cache_key() != sift.cache_key()
+    with pytest.raises(BackendError, match="ALIKED model"):
+        colmap.extract_features(TOOL, project, [bundle], options=FeatureOptions(kind="aliked"))
+
+    features = _manifest("features")
+    glue = tmp_path / "lightglue.onnx"
+    matched = colmap.match_features(
+        TOOL, project, features, options=MatchOptions(features="aliked", lightglue=glue)
+    )
+    assert _opt(matched, "--FeatureMatching.type") == "ALIKED_LIGHTGLUE"
+    assert _opt(matched, "--AlikedMatching.lightglue_model_path") == str(glue)
+    assert matched.parameters["lightglue"] == colmap.LIGHTGLUE_MODEL.sha256
+    assert "--FeatureMatching.type" not in colmap.match_features(TOOL, project, features).argv
+    with pytest.raises(BackendError, match="LightGlue"):
+        colmap.match_features(TOOL, project, features, options=MatchOptions(features="aliked"))
+
+
+def test_pinned_download(server: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    from ez2digitize.core import download
+
+    monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
+    for var in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    data = b"tree" * 1000
+    (tmp_path / "www" / "tree.bin").write_bytes(data)
+    pinned = colmap.Pinned(
+        "tree.bin", f"{server}/tree.bin", hashlib.sha256(data).hexdigest(), len(data)
+    )
+    assert pinned.path == tmp_path / "models" / "tree.bin"
+    assert colmap.find_pinned(pinned) is None
+    # What fetch_pinned does (the tests stand it in, to stay offline).
+    path = download.fetch(pinned.url, pinned.path, pinned.sha256, size=pinned.size)
+    assert colmap.find_pinned(pinned) == path and path.read_bytes() == data
+    path.write_bytes(data[:-1])  # cut short: not the pinned file
+    assert colmap.find_pinned(pinned) is None
+
+
+def test_pinned_files_are_colmaps() -> None:
+    """The URLs and hashes COLMAP 4.2.1's source pins (retrieval/resources.h,
+    feature/resources.h); checked against the downloaded files."""
+    pinned = [*colmap.VOCAB_TREES.values(), colmap.ALIKED_MODEL, colmap.LIGHTGLUE_MODEL]
+    for file in pinned:
+        assert file.url.startswith("https://github.com/colmap/colmap/releases/download/")
+        assert file.url.endswith("/" + file.name) and len(file.sha256) == 64
 
 
 @pytest.mark.parametrize(("kind", "command", "threads"), [

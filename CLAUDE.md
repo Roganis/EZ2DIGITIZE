@@ -36,6 +36,9 @@ The 3D viewer's JavaScript libraries (three.js, Spark) are vendored in
 `src/ez2digitize/ui/viewer_web/vendor/` by `tools/viewer/fetch_vendor.py`,
 pinned by npm integrity hash; don't edit them by hand.
 
+Plugins (user-installed backends, `ez2digitize.plugins`) are described in
+`docs/PLUGINS.md`; `tools/plugins/example-poses` is a working one to copy.
+
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.
 
@@ -64,8 +67,9 @@ when the tool is missing.
 5. **Masks are first-class project data** and are passed to every stage that
    can use them.
 6. **All captures arrive as capture bundles:** original files, untouched, plus
-   a `capture.json`. Folder import, video frames, phone upload and the future
-   Android app all produce this; the pipeline only reads bundles.
+   a `capture.json`. Folder import, video frames, phone upload, the watch
+   folder and the future Android app all produce this; the pipeline only
+   reads bundles.
 7. **Backends are pinned.** Each backend has an exact supported version; a bump
    is its own commit and must pass the regression datasets.
 
@@ -102,3 +106,7 @@ when the tool is missing.
   CI.
 - Don't add dependencies for small things the standard library covers.
 - Commit messages: imperative summary line, body explaining why.
+- A user-visible change adds a line under `## [Unreleased]` in
+  `CHANGELOG.md` in the same commit. The version is `__version__` in
+  `src/ez2digitize/__init__.py`; releases are tags made as in
+  `docs/RELEASING.md` (`tools/packaging/release.py`), never by hand.

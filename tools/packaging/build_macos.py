@@ -22,12 +22,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import shutil
 import sys
 import tarfile
 from pathlib import Path
 
-from build_appimage import EXCLUDED_MODULES, REPO, VIEWER_DATA, output, run, smoke
+from build_appimage import (
+    CTYPES_PACKAGES,
+    EXCLUDED_MODULES,
+    REPO,
+    VIEWER_DATA,
+    add_brush_notices,
+    output,
+    run,
+    smoke,
+)
+from release import Version
 
 from ez2digitize import __version__
 
@@ -47,11 +58,23 @@ def pyinstaller_app(out: Path) -> Path:
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
     cmd += ["--add-data", VIEWER_DATA]
+    for package in CTYPES_PACKAGES:
+        cmd += ["--collect-binaries", package]
     cmd.append(Path(__file__).resolve().parent / "entry.py")
     run(cmd)
     # Named EZ2DIGITIZE directly: macOS file systems ignore case, so a rename
     # from ez2digitize.app would be a no-op (or worse).
     return out / "dist" / f"{APP_NAME}.app"
+
+
+def set_version(app: Path, version: Version) -> None:
+    """The app's version in Info.plist (PyInstaller writes 0.0.0): Finder and About show it."""
+    plist = app / "Contents" / "Info.plist"
+    info = plistlib.loads(plist.read_bytes())
+    # Bundle versions are numbers only: a pre-release (1.2.0rc1) shows as 1.2.0.
+    info["CFBundleShortVersionString"] = version.numeric
+    info["CFBundleVersion"] = version.numeric
+    plist.write_bytes(plistlib.dumps(info))
 
 
 def add_backends(app: Path, archive: Path) -> dict[str, object]:
@@ -75,6 +98,7 @@ def add_brush(app: Path, release: Path) -> str:
     licenses.mkdir(parents=True, exist_ok=True)
     shutil.copy2(release / "LICENSE", licenses / "LICENSE")
     version: str = output([target / "bin" / "brush_app", "--version"]).strip()
+    add_brush_notices(licenses, version)
     return version
 
 
@@ -93,6 +117,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     app = pyinstaller_app(out)
+    set_version(app, Version.parse(__version__))
     report: dict[str, object] = {"backends": add_backends(app, args.backends.resolve())}
     if args.brush:
         report["brush"] = add_brush(app, args.brush.resolve())

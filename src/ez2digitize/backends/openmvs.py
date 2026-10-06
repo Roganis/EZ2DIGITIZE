@@ -32,6 +32,7 @@ from typing import Literal
 from ez2digitize.backends.common import (
     BackendError,
     BackendMissing,
+    executable,
     find_tool,
     result_parameters,
 )
@@ -43,6 +44,10 @@ from ez2digitize.core.stage import Backend, StageManifest, StageSpec, stage_inpu
 NAME = "openmvs"
 PINNED_VERSION = "2.4.0"
 ENV_VAR = "EZ2D_OPENMVS_DIR"
+# The log file every OpenMVS tool writes in its working folder (<tool>-<id>.log),
+# with the same lines it prints; on Windows it prints them to a console of its
+# own, so the app reads this file instead.
+LOG_FILES = "*.log"
 TOOLS = ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh", "RefineMesh", "TextureMesh")
 # Where distribution and source builds install the tools (not on PATH).
 SEARCH_DIRS = (
@@ -68,7 +73,7 @@ class OpenMVS:
         return self.version == PINNED_VERSION
 
     def tool(self, name: str) -> Path:
-        return self.bin_dir / name
+        return executable(self.bin_dir / name) or self.bin_dir / name
 
 
 def parse_version(text: str) -> str | None:
@@ -93,7 +98,9 @@ def locate(explicit_dir: Path | None = None) -> OpenMVS:
     if missing:
         raise BackendMissing(f"OpenMVS in {bin_dir} is incomplete: no {', '.join(missing)}")
     try:
-        text = run_quick([bin_dir / "InterfaceCOLMAP", "--help"])
+        text = run_quick(
+            [executable(bin_dir / "InterfaceCOLMAP") or bin_dir, "--help"], logs=LOG_FILES
+        )
     except ProcessStartError as exc:
         raise BackendMissing(f"OpenMVS in {bin_dir} can't be run: {exc}") from exc
     version = parse_version(text)
@@ -115,6 +122,9 @@ class DensifyOptions:
 
 @dataclass(frozen=True)
 class MeshOptions:
+    # Use the free space between cameras and points to keep surfaces that few
+    # points support (plain walls, floors): for rooms and outdoor scenes.
+    free_space_support: bool = False
     threads: int | None = None
 
 
@@ -161,7 +171,11 @@ def import_colmap(
         inputs={"undistorted": stage_input(undistorted)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
+
+
+ROI_FILE = "crop_box.txt"
 
 
 def densify(
@@ -172,13 +186,18 @@ def densify(
     masks: StageManifest | None = None,
     stage: str = "densify",
     options: DensifyOptions | None = None,
+    roi: str | None = None,
 ) -> StageSpec:
-    """DensifyPointCloud, optionally masked.
+    """DensifyPointCloud, optionally masked and cropped.
 
     `masks` is a `colmap.undistort_masks` stage: one `<stem>.mask.png` per
     undistorted image, where 0 marks background to ignore. The mask paths
     are saved into the dense scene relative to this stage's folder, which
     resolves the same from the later sibling stages.
+
+    `roi` is a region of interest in OpenMVS's text form (see crop.CropBox):
+    the dense cloud keeps only what is inside, instead of the region OpenMVS
+    estimates from the sparse points.
     """
     options = options or DensifyOptions()
     stage_dir = project.stage_dir(stage)
@@ -201,14 +220,23 @@ def densify(
             "0",
         ]
         inputs["masks"] = stage_input(masks)
+    prepare = None
+    if roi is not None:
+        argv += ["--import-roi-file", stage_dir / ROI_FILE, "--crop-to-roi", "1"]
+
+        def prepare(folder: Path) -> None:
+            (folder / ROI_FILE).write_text(roi, encoding="utf-8")
+
     return StageSpec(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters={**result_parameters(options), "masked": masks is not None},
+        parameters={**result_parameters(options), "masked": masks is not None, "roi": roi},
         inputs=inputs,
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
+        prepare=prepare,
     )
 
 
@@ -230,6 +258,8 @@ def reconstruct_mesh(
         "-o", stage_dir / "scene_mesh.mvs",
         "-w", stage_dir,
     ]  # fmt: skip
+    if options.free_space_support:
+        argv += ["--free-space-support", "1"]
     if options.threads:
         argv += ["--max-threads", str(options.threads)]
     return StageSpec(
@@ -240,6 +270,7 @@ def reconstruct_mesh(
         inputs={"dense": stage_input(dense)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 
@@ -273,6 +304,7 @@ def refine_mesh(
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 
@@ -315,6 +347,7 @@ def texture_mesh(
         inputs={"dense": stage_input(dense), "mesh": stage_input(mesh)},
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        log_files=LOG_FILES,
     )
 
 

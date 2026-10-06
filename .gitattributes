@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Vendored files are checked against their pinned hashes (VENDOR.json) and
+# shipped as they are: never convert their line ends (Git for Windows would).
+src/ez2digitize/ui/viewer_web/vendor/** -text

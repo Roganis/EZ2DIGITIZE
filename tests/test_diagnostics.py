@@ -22,7 +22,7 @@ def project(tmp_path: Path) -> Project:
     stage = project.stage_dir("features")
     stage.mkdir(parents=True)
     (stage / "stage.json").write_text("{}")
-    (stage / "log.txt").write_text("x" * 100 + "the end\n")
+    (stage / "log.txt").write_text("x" * 100 + "the end\n", newline="\n")  # no CRLF
     (stage / "database.db").write_bytes(b"big")
     texture = project.stage_dir("texture")
     texture.mkdir(parents=True)

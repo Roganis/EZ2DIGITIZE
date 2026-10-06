@@ -52,6 +52,9 @@ class VideoInfo:
     width: int
     height: int
     codec: str
+    # The display rotation ffprobe reports (counter-clockwise degrees), which
+    # FFmpeg applies when extracting frames.
+    rotation: int = 0
 
 
 def parse_version(text: str) -> str | None:
@@ -79,7 +82,10 @@ def locate(explicit: Path | None = None) -> FFmpeg:
         raise BackendMissing(f"FFmpeg at {path} can't be run: {exc}") from exc
     version = parse_version(text)
     if version is None:
-        raise BackendMissing(f"no FFmpeg version in the output of {path} -version")
+        said = "\n".join(text.strip().splitlines()[-5:]) or "nothing"
+        raise BackendMissing(
+            f"no FFmpeg version in the output of {path} -version; it said:\n{said}"
+        )
     return FFmpeg(path=path, probe=probe, version=version)
 
 
@@ -127,7 +133,8 @@ def parse_probe(text: str, video: Path) -> VideoInfo:
     # Phones store -90 or 90 (or 270); FFmpeg rotates the frames accordingly.
     if rotation % 180:
         width, height = height, width
-    return VideoInfo(duration, rate, width, height, str(stream.get("codec_name", "?")))
+    codec = str(stream.get("codec_name", "?"))
+    return VideoInfo(duration, rate, width, height, codec, rotation)
 
 
 def _rate(value: object) -> float | None:

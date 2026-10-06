@@ -60,11 +60,17 @@ HOST_LIBRARIES = (
 )  # fmt: skip
 HOST_PLUGINS = ("PySide6/Qt/plugins/platformthemes/libqgtk3.so",)
 # Qt modules the app doesn't use (the viewer, with QtWebEngine, comes later).
+# Qt modules the app doesn't use. QtWebEngine (the 3D viewer) is used; it
+# needs QtWebChannel, QtQml, QtQuick and QtPdf's libraries, which PyInstaller's
+# hooks bring along with it.
 EXCLUDED_MODULES = (
-    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
-    "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf", "PySide6.Qt3DCore",
-    "PySide6.QtMultimedia", "PySide6.QtCharts", "PySide6.QtDataVisualization",
+    "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtCharts",
+    "PySide6.QtDataVisualization",
 )  # fmt: skip
+# The viewer's page and JavaScript libraries: package data, which PyInstaller
+# doesn't collect by itself. Same place in the bundle as in the source tree.
+VIEWER_WEB = REPO / "src" / "ez2digitize" / "ui" / "viewer_web"
+VIEWER_DATA = f"{VIEWER_WEB}{os.pathsep}ez2digitize/ui/viewer_web"
 # Runtimes the backends link that a desktop may lack; bundled next to them.
 # The C/C++ runtime itself comes from the host (newer is compatible).
 BACKEND_RUNTIMES = re.compile(r"^lib(gfortran|quadmath|gomp)\.so\.\d+$")
@@ -101,6 +107,7 @@ def pyinstaller(out: Path) -> Path:
         cmd += ["--exclude-module", module]
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
+    cmd += ["--add-data", VIEWER_DATA]
     cmd.append(HERE / "entry.py")
     run(cmd)
     return out / "dist" / NAME
@@ -216,8 +223,8 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
     results: dict[str, object] = {}
 
     gui = output([image, "--self-test"], env=env)
-    if '"self-test": "gui"' not in gui or '"heif": true' not in gui:
-        raise SystemExit(f"GUI self-test failed (or no HEIC decoding):\n{gui}")
+    if not all(s in gui for s in ('"self-test": "gui"', '"heif": true', '"viewer": true')):
+        raise SystemExit(f"GUI self-test failed (or no HEIC decoding, or no viewer):\n{gui}")
     check = output([image, "check"], env=env)
     print(check)
     expected = 3 if brush else 2

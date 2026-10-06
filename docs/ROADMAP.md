@@ -182,8 +182,9 @@ installable on Linux as an AppImage.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification. The automatic part exists: OpenMVS
   estimates a region of interest from the sparse points and crops to it
-  (`--estimate-roi`, `--crop-to-roi`, on by default). Adjusting it needs
-  the viewer (decision (d) in Phase 1).
+  (`--estimate-roi`, `--crop-to-roi`, on by default). The sparse viewer is
+  done (camera placement in the 3D view tab); adjusting the crop box in it
+  is next.
 - Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
 - AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
   workflow): GUI and CLI in one file, backends bundled.
@@ -292,7 +293,13 @@ fails, they can see which stage failed and why.
 
 ## Phase 5: UX and capture guidance
 
-- Unified embedded viewer for sparse cloud, splat and mesh.
+- Unified embedded viewer for sparse cloud, splat and mesh. Done
+  (decision (d): three.js + Spark in QtWebEngine; `ez2digitize.views`,
+  `ui/viewer.py`, the 3D view tab): camera placement (sparse points and a
+  frustum per photo), dense cloud, textured mesh (the upright GLB export,
+  or OpenMVS's PLY converted) and splats, all stood upright; a finished
+  build opens in it. Next on top of it: the crop box, manual orientation,
+  scale from picked points, coverage on the camera rings.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
   what to do with shiny objects (matte spray, cross-polarization). Written

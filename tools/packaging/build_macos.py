@@ -27,7 +27,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from build_appimage import EXCLUDED_MODULES, REPO, output, run, smoke
+from build_appimage import EXCLUDED_MODULES, REPO, VIEWER_DATA, output, run, smoke
 
 from ez2digitize import __version__
 
@@ -46,6 +46,7 @@ def pyinstaller_app(out: Path) -> Path:
         cmd += ["--exclude-module", module]
     for text in ("LICENSE", "THIRD_PARTY_LICENSES"):  # shown under Help -> Licenses
         cmd += ["--add-data", f"{REPO / text}{os.pathsep}."]
+    cmd += ["--add-data", VIEWER_DATA]
     cmd.append(Path(__file__).resolve().parent / "entry.py")
     run(cmd)
     # Named EZ2DIGITIZE directly: macOS file systems ignore case, so a rename

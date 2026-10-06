@@ -38,7 +38,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
 6. Press **Build mesh**. The steps list shows progress; the Log tab shows
    the tools' output. On a recent desktop, 60 photos take about 15 minutes
    at Balanced.
-7. **Open folder** shows the result in `exports/`: OBJ (with its texture),
+7. The finished model opens in the **3D view** tab (turn it with the
+   mouse); it also shows the dense cloud, the camera placement and splats.
+8. **Open folder** shows the result in `exports/`: OBJ (with its texture),
    GLB, and STL/3MF for printing if you chose them. The model stands
    upright, centred, on the ground.
 

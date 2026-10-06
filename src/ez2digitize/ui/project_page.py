@@ -64,6 +64,7 @@ from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 from ez2digitize.ui.sides_panel import SidesPanel
 from ez2digitize.ui.video_import import VideoImporter
+from ez2digitize.ui.view_panel import ViewPanel
 
 STAGE_LABELS = {
     "features": "Find features",
@@ -314,6 +315,8 @@ class ProjectPage(QWidget):
         self.sides_panel.import_other_side.connect(self.choose_other_side)
         self.sides_panel.show_masks.connect(lambda: self.tabs.setCurrentWidget(self.masks_panel))
         self.tabs.addTab(self.sides_panel, "Both sides")
+        self.view_panel = ViewPanel(project)
+        self.tabs.addTab(self.view_panel, "3D view")
         self.tabs.addTab(self.log, "Log")
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -352,6 +355,7 @@ class ProjectPage(QWidget):
         self.photo_checks.refresh()
         self.masks_panel.refresh()
         self.sides_panel.refresh()
+        self.view_panel.refresh()
         if not self.runner.running:
             self._show_previous_stages()
 
@@ -731,6 +735,9 @@ class ProjectPage(QWidget):
         what = "Splats" if isinstance(result, SplatResult) else "Textured mesh"
         self.result_label.setText(f"{what} saved in {folder}" if folder else "Finished.")
         self._update_buttons()
+        # Show the result.
+        self.view_panel.refresh(prefer="splat" if isinstance(result, SplatResult) else "mesh")
+        self.tabs.setCurrentWidget(self.view_panel)
 
     def _on_failed(self, failure: Failure) -> None:
         self.last_failure = failure

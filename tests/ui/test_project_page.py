@@ -79,6 +79,11 @@ def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> 
     assert "Note: 3 of 3 images registered" in page.log.toPlainText()
     assert "--resolution-level 2" in (page.project.stage_dir("densify") / "log.txt").read_text()
     assert page.run_button.isEnabled() and not page.cancel_button.isEnabled()
+    # The result opens in the 3D view (the viewer itself starts when shown).
+    assert page.tabs.currentWidget() is page.view_panel
+    choices = [page.view_panel.choice.itemText(i) for i in range(page.view_panel.choice.count())]
+    assert choices == ["Textured mesh", "Dense point cloud"]  # the fakes write no sparse model
+    assert page.view_panel.choice.currentText() == "Textured mesh"
 
     # Running again reuses every stage.
     page.start_run()

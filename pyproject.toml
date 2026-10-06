@@ -7,6 +7,8 @@ license-files = ["LICENSE", "THIRD_PARTY_LICENSES"]
 requires-python = ">=3.12"
 dynamic = ["version"]
 dependencies = [
+    "numpy>=2.0",
+    "onnxruntime>=1.20",
     "pillow>=11.0",
     "pillow-heif>=1.0",
     "PySide6>=6.8",
@@ -81,7 +83,7 @@ mypy_path = "src:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:to
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["pytestqt.*", "rembg.*", "scipy.*"]
+module = ["onnxruntime.*", "pytestqt.*", "rembg.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

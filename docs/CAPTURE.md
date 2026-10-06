@@ -51,15 +51,21 @@ each stretch (100 frames by default). Photos still give finer detail.
 With the camera on a tripod and the object turning, the background stays
 still and wins: COLMAP places the cameras from the background, so they all
 end up in one spot (the coverage check says so after camera placement).
-Either put a plain cloth behind and under the object and light it evenly,
-or use masks (one PNG per photo, white for the object, black for the rest):
-`ez2d import P photos/ --masks masks/`.
+Use masks: in the **Masks** tab, **Make masks** separates the object from
+the background in every photo (about a second per photo; `ez2d masks P`
+on the command line). On the skull turntable set this is the difference
+between a smeared shell and a clean model. Look through the grid: a mask
+that cut off part of the object is worse than none, so uncheck it. A
+plain cloth behind and under the object, lit evenly, helps both the masks
+and the reconstruction. Masks made elsewhere (one PNG per photo, white for
+the object) can be added with **Add masks…** or `ez2d import P photos/
+--masks masks/`.
 
 ## Both sides of an object
 
 To capture the underside, take a full set, turn the object over, and take a
-second set. Import both; with masks for every photo (so only the object,
-not the table, is matched), both sets join into one model. A guided flip
+second set. Import both and make masks for every photo (so only the
+object, not the table, is matched); both sets then join into one model. A guided flip
 workflow is planned.
 
 ## Difficult objects

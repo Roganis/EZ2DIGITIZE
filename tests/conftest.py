@@ -147,6 +147,32 @@ for done in (steps // 2, steps):
 """
 
 
+# Stands in for mask_worker: writes the masks and report.json the real one
+# would. FAKE_COVERAGE="a.jpg=0" makes a photo's mask empty; FAKE_FAIL=1
+# makes it exit 1.
+FAKE_MASK_WORKER = """
+import json, os, sys
+from pathlib import Path
+from PIL import Image
+args = sys.argv[1:]
+jobs_file = Path(args[args.index("--jobs") + 1])
+jobs = json.loads(jobs_file.read_text())["jobs"]
+coverage = dict(c.split("=") for c in os.environ.get("FAKE_COVERAGE", "").split(",") if c)
+print("model fake loaded, %d images" % len(jobs), flush=True)
+if os.environ.get("FAKE_FAIL"):
+    sys.exit(1)
+report = {}
+for n, job in enumerate(jobs, 1):
+    print("mask %d/%d %s" % (n, len(jobs), Path(job["image"]).name), flush=True)
+    share = float(coverage.get(job["key"], "0.25"))
+    out = Path(job["mask"])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("L", (4, 4), 255 if share > 0 else 0).save(out)
+    report[job["key"]] = {"coverage": share, "uncertain": 0.01}
+(jobs_file.parent / "report.json").write_text(json.dumps(report))
+"""
+
+
 def _script(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!{sys.executable}\n{body}")
@@ -175,10 +201,29 @@ def fake_brush(tmp_path: Path) -> Brush:
     return Brush(_script(tmp_path / "fake" / "brush" / "brush_app", FAKE_BRUSH), "0.3.0")
 
 
+@pytest.fixture
+def fake_mask_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The masking worker's stand-in, and a model file where the app looks for one.
+
+    Returns the model's path (a sparse file of the real model's size).
+    """
+    import ez2digitize.masks
+
+    script = _script(tmp_path / "fake" / "mask_worker.py", FAKE_MASK_WORKER)
+    monkeypatch.setattr(ez2digitize.masks, "worker_argv", lambda: [sys.executable, str(script)])
+    model = ez2digitize.masks.model_file()
+    model.parent.mkdir(parents=True, exist_ok=True)
+    with model.open("wb") as f:
+        f.truncate(ez2digitize.masks.MODEL.size)
+    return model
+
+
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP"):
+def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP", "FAKE_COVERAGE"):
         monkeypatch.delenv(var, raising=False)
+    # Never the user's model cache.
+    monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
 
 
 @pytest.fixture(autouse=True)

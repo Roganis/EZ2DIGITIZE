@@ -47,7 +47,8 @@ when the tool is missing.
    reconstruction backend are run as CLI subprocesses. Never link them, never
    import their Python bindings for compute. Lightweight, permissively licensed
    libraries (EXIF, image checks, mesh export, reading COLMAP models) may run
-   in-process.
+   in-process. Models (the masking model) run in a worker process of our
+   own (`ez2digitize.mask_worker`), started through the process runner.
 2. **Qt stays in the UI.** Only `ez2digitize.ui` and `ez2digitize.app` may
    import PySide6 (enforced by ruff TID251). Everything else must run headless
    so the pipeline works from a CLI and in CI.

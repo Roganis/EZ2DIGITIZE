@@ -125,6 +125,7 @@ def test_check(
     assert main(["check"]) == 0
     out = capsys.readouterr().out
     assert f"COLMAP 4.2.1: ok, {colmap}" in out and "OpenMVS 2.4.0: ok" in out
+    assert "Masking model isnet-general-use: not downloaded yet (179 MB" in out
 
     _tool(colmap, "COLMAP 3.9.1 -- SfM")
     monkeypatch.setenv("EZ2D_OPENMVS_DIR", str(tmp_path / "nothing"))
@@ -137,8 +138,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "upload", "photos", "run", "export", "check", "diagnostics",
-        "licenses", "status",
+        "new", "import", "upload", "photos", "masks", "run", "export", "check",
+        "diagnostics", "licenses", "status",
     }  # fmt: skip
 
 
@@ -178,3 +179,47 @@ def test_licenses(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Source for the bundled backends" in out and "No bundled backends" in out
     assert main(["licenses", "--gpl"]) == 0
     assert "GNU GENERAL PUBLIC LICENSE" in capsys.readouterr().out
+
+
+def test_masks(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    fake_mask_worker: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import Image
+
+    project = tmp_path / "p"
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for n, name in enumerate(("a.jpg", "b.jpg")):
+        Image.new("RGB", (40, 30), (n * 90, 0, 0)).save(photos / name)
+    assert main(["new", str(project)]) == 0
+    assert main(["masks", str(project)]) == 1  # no photos yet
+    assert main(["import", str(project), str(photos)]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setenv("FAKE_COVERAGE", "b.jpg=0")
+    assert main(["masks", str(project)]) == 0
+    out = capsys.readouterr().out
+    assert "2 new masks, 1 dropped (nothing found)" in out
+    assert "masks: 1 automatic, 1 dropped" in out
+    assert "/b.jpg (dropped): nothing found" in out
+
+    assert main(["masks", str(project), "--drop", "a.jpg"]) == 0
+    assert "masks: 2 dropped" in capsys.readouterr().out
+    assert main(["masks", str(project), "--restore", "a.jpg", "b.jpg"]) == 0
+    assert "masks: 2 automatic" in capsys.readouterr().out
+    assert main(["masks", str(project)]) == 0
+    assert "masks unchanged" in capsys.readouterr().out
+
+    imported = tmp_path / "masks"
+    imported.mkdir()
+    Image.new("L", (40, 30), 255).save(imported / "a.jpg.png")
+    assert main(["masks", str(project), "--import", str(imported)]) == 0
+    out = capsys.readouterr().out
+    assert "1 of 2 masks imported" in out and "1 automatic, 1 imported" in out
+    assert main(["masks", str(project), "--clear"]) == 0
+    out = capsys.readouterr().out
+    assert "1 automatic masks removed" in out and "masks: 1 imported, 1 none" in out
+    assert main(["masks", str(project), "--status"]) == 0

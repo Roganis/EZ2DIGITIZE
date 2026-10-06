@@ -241,6 +241,8 @@ wheels = [
 name = "ez2digitize"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
+    { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
     { name = "pyside6" },
@@ -265,6 +267,8 @@ packaging = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "onnxruntime", specifier = ">=1.20" },
     { name = "pillow", specifier = ">=11.0" },
     { name = "pillow-heif", specifier = ">=1.0" },
     { name = "pyside6", specifier = ">=6.8" },

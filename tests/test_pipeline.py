@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from ez2digitize import pipeline
 from ez2digitize.backends.brush import Brush
@@ -36,11 +37,16 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX executabl
 def project(tmp_path: Path) -> Project:
     project = Project.create(tmp_path / "project")
     files = []
-    for name in ("a.jpg", "b.jpg", "c.jpg"):
-        (tmp_path / name).write_bytes(name.encode())
+    for n, name in enumerate(("a.jpg", "b.jpg", "c.jpg")):
+        _jpeg(tmp_path / name, n)
         files.append(tmp_path / name)
     import_files(project, files, source="folder")
     return project
+
+
+def _jpeg(path: Path, shade: int) -> None:
+    # Real images: the features stage reads the size of those without a mask.
+    Image.new("RGB", (8, 6), (shade * 40, 0, 0)).save(path)
 
 
 @pytest.fixture
@@ -258,7 +264,7 @@ def test_same_file_name_in_two_captures_skips_openmvs_masks(
 ) -> None:
     other = tmp_path / "other"
     other.mkdir()
-    (other / "a.jpg").write_bytes(b"another a")
+    _jpeg(other / "a.jpg", 5)
     second = import_files(project, [other / "a.jpg"], source="folder")
     (project.masks_dir / second.id).mkdir(parents=True)
     (project.masks_dir / second.id / "a.jpg.png").write_bytes(b"m")

@@ -221,7 +221,7 @@ def test_import_masks(project: Project, tmp_path: Path) -> None:
     masks = tmp_path / "masks"
     _write(masks / "IMG_1.jpg.png", b"m1")
     _write(masks / "IMG_3.png", b"m3")  # extension replaced: also accepted
-    assert import_masks(project, bundle, masks) == 3
+    assert import_masks(project, bundle, masks) == ["IMG_1.jpg", "IMG_1-2.jpg", "IMG_3.jpg"]
     target = project.masks_dir / bundle.id
     assert sorted(p.name for p in target.iterdir()) == [
         "IMG_1-2.jpg.png",

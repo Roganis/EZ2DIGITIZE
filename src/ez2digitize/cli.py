@@ -7,6 +7,8 @@
     ez2d import ~/scans/skull ~/Videos/skull.mp4 --frames 120
     ez2d photos ~/scans/skull               # photo checks
     ez2d photos ~/scans/skull --exclude Preview.jpg
+    ez2d masks ~/scans/skull                # automatic masks, then a review
+    ez2d masks ~/scans/skull --drop IMG_0012.JPG
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
     ez2d status ~/scans/skull
@@ -30,7 +32,7 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import diagnostics, licenses, presets, video
+from ez2digitize import diagnostics, licenses, masks, presets, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -39,7 +41,6 @@ from ez2digitize.core.capture import (
     CaptureError,
     classify,
     import_folder,
-    import_masks,
     list_bundles,
 )
 from ez2digitize.core.project import Project, ProjectError
@@ -79,7 +80,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         result: int = args.func(args)
-    except (ProjectError, CaptureError, BackendError, PipelineError, ExportError) as exc:
+    except (
+        ProjectError,
+        CaptureError,
+        BackendError,
+        PipelineError,
+        ExportError,
+        masks.MaskingError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return result
@@ -131,6 +139,29 @@ def _parser() -> argparse.ArgumentParser:
     )
     checks.add_argument("--include", nargs="+", default=[], metavar="PHOTO", help="bring back")
     checks.set_defaults(func=_cmd_photos)
+
+    mask = sub.add_parser(
+        "masks",
+        help="separate the object from the background (automatic masks), review them",
+        description="Without options: make automatic masks for the photos that have none "
+        "(the model, 179 MB, is downloaded the first time), then list the masks to look at.",
+    )
+    mask.add_argument("project", type=Path)
+    action = mask.add_mutually_exclusive_group()
+    action.add_argument("--status", action="store_true", help="only list the masks")
+    action.add_argument("--drop", nargs="+", metavar="PHOTO", help="use these photos whole")
+    action.add_argument("--restore", nargs="+", metavar="PHOTO", help="use their masks again")
+    action.add_argument("--clear", action="store_true", help="remove the automatic masks")
+    action.add_argument(
+        "--import",
+        dest="import_folder",
+        type=Path,
+        metavar="FOLDER",
+        help="import a folder of masks (<image name>.png) for --capture",
+    )
+    mask.add_argument("--capture", help="capture id for --import (default: the only one)")
+    mask.add_argument("--force", action="store_true", help="make the automatic masks again")
+    mask.set_defaults(func=_cmd_masks)
 
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
@@ -241,8 +272,8 @@ def _cmd_import(args: argparse.Namespace) -> int:
                 why = "a video: import it on its own" if classify(path) else "not a photo"
                 print(f"  skipped ({why}): {path.name}")
             if args.masks is not None:
-                copied = import_masks(project, bundle, args.masks)
-                print(f"  {copied} of {len(bundle.images)} masks imported")
+                copied = masks.import_folder_masks(project, bundle, args.masks)
+                print(f"  {len(copied)} of {len(bundle.images)} masks imported")
         else:
             bundle = _import_video(project, source, args)
             info = bundle.source_info
@@ -359,6 +390,113 @@ def _check_photos(project: Project) -> None:
             print(f"    {shown}{more}")
 
 
+def _cmd_masks(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    bundles = list_bundles(project)
+    if not bundles:
+        raise CaptureError("this project has no photos yet; import some first")
+    if args.import_folder is not None:
+        bundle = _one_capture(bundles, args.capture)
+        names = masks.import_folder_masks(project, bundle, args.import_folder)
+        print(f"{len(names)} of {len(masks.maskable(bundle))} masks imported into {bundle.id}")
+    elif args.drop or args.restore:
+        for bundle, names in _resolve_photos(bundles, args.drop or args.restore):
+            (masks.drop if args.drop else masks.restore)(project, bundle, names)
+            verb = "dropped" if args.drop else "restored"
+            print(f"{verb}: {', '.join(f'{bundle.id}/{n}' for n in names)}")
+    elif args.clear:
+        removed = sum(masks.clear_auto(project, b) for b in bundles)
+        print(f"{removed} automatic masks removed")
+    elif not args.status:
+        _make_masks(project, bundles, force=args.force)
+    _print_masks(project, bundles)
+    return 0
+
+
+def _one_capture(bundles: Sequence[CaptureBundle], capture: str | None) -> CaptureBundle:
+    if capture is None:
+        if len(bundles) > 1:
+            ids = ", ".join(b.id for b in bundles)
+            raise CaptureError(f"this project has several captures ({ids}); choose with --capture")
+        return bundles[0]
+    for bundle in bundles:
+        if bundle.id == capture:
+            return bundle
+    raise CaptureError(f"no capture {capture!r} in this project")
+
+
+def _make_masks(project: Project, bundles: Sequence[CaptureBundle], *, force: bool) -> None:
+    model = masks.find_model()
+    if model is None:
+        print(f"downloading the masking model ({masks.MODEL.size / 1e6:.0f} MB)...", flush=True)
+        shown = [-1]
+
+        def on_progress(received: int, total: int) -> None:
+            step = received * 10 // max(total, 1)
+            if step > shown[0]:
+                shown[0] = step
+                print(f"  {step * 10}%", flush=True)
+
+        model = masks.download_model(on_progress=on_progress)
+    shown_steps: dict[str, int] = {}
+
+    def on_event(event: object) -> None:
+        if isinstance(event, Progress) and event.fraction is not None:
+            step = int(event.fraction * 10)
+            if shown_steps.get("masks", -1) < step:
+                shown_steps["masks"] = step
+                print(f"  masking: {step * 10}%", flush=True)
+
+    cancel = CancelToken()
+    outcome: list[list[masks.MaskRun] | BaseException] = []
+
+    def work() -> None:
+        try:
+            outcome.append(
+                masks.make_masks(
+                    project, bundles, model, on_event=on_event, cancel=cancel, force=force
+                )
+            )
+        except BaseException as exc:  # handed to the main thread
+            outcome.append(exc)
+
+    # As for `run`: the worker runs in its own session, so Ctrl+C cancels it here.
+    worker = threading.Thread(target=work, name="masks")
+    worker.start()
+    while worker.is_alive():
+        try:
+            worker.join(timeout=0.2)
+        except KeyboardInterrupt:
+            cancel.cancel()
+    result = outcome[0]
+    if isinstance(result, BaseException):
+        raise result
+    for run in result:
+        if run.reused:
+            print(f"capture {run.capture}: masks unchanged")
+        else:
+            dropped = f", {run.dropped} dropped (nothing found)" if run.dropped else ""
+            print(f"capture {run.capture}: {run.added} new masks{dropped}")
+
+
+def _print_masks(project: Project, bundles: Sequence[CaptureBundle]) -> None:
+    entries = masks.review(project, bundles)
+    counts: dict[str, int] = {}
+    for entry in entries:
+        counts[entry.state] = counts.get(entry.state, 0) + 1
+    order = ("automatic", "imported", "dropped", "none")
+    print("masks: " + ", ".join(f"{counts[s]} {s}" for s in order if s in counts))
+    flagged = [e for e in entries if e.flags and e.state != "none"]
+    if flagged:
+        print(f"to look at ({len(flagged)}):")
+        for entry in flagged:
+            state = " (dropped)" if entry.state == "dropped" else ""
+            print(f"  {entry.capture}/{entry.name}{state}: {', '.join(entry.flags)}")
+    if not masks.has_masks(project):
+        return
+    print("`ez2d run` uses the masks; `--no-masks` ignores them")
+
+
 def _cmd_licenses(args: argparse.Namespace) -> int:
     name = licenses.LICENSE if args.gpl else licenses.THIRD_PARTY
     print(licenses.license_text(name) or f"{name} is missing from this copy")
@@ -408,6 +546,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
     else:
         state = "ok" if video_tool.supported else f"older than {ffmpeg.SUPPORTED_MAJOR}.0"
         print(f"FFmpeg {video_tool.version} (for video import): {state}, {video_tool.path}")
+    model = masks.find_model()
+    if model is not None:
+        print(f"Masking model {masks.MODEL.name}: ok, {model}")
+    else:
+        print(
+            f"Masking model {masks.MODEL.name}: not downloaded yet "
+            f"({masks.MODEL.size / 1e6:.0f} MB, the first `ez2d masks` gets it)"
+        )
     gpus = hardware.detect_gpus()
     for gpu in gpus:
         note = " (software renderer: too slow for splats)" if gpu.is_cpu else ""

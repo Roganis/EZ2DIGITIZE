@@ -152,7 +152,13 @@ installable on Linux as an AppImage.
   photos`), plus odd-sized files (a collage in the skull set), duplicates
   and too few photos; flagged photos can be left out and brought back.
 - Automatic masking with the model chosen in Phase 1, with a quick review
-  grid where the user can drop bad masks.
+  grid where the user can drop bad masks. Done (`ez2digitize.masks`,
+  `mask_worker`): ISNet on ONNX Runtime in a worker process, one cached
+  stage per capture; the Masks tab shows every photo with what its mask
+  removes tinted red, flags empty, near-total, unsure and odd masks, and
+  unchecking drops a mask (the photo is then used whole); imported masks
+  (Add masks…) win over automatic ones; `ez2d masks`. Photos without a
+  mask get a white one for COLMAP too, which otherwise skipped them.
 - Camera grouping: one intrinsics set per camera/lens. Done: one per
   capture as before, and when a capture mixes cameras, lenses, zoom
   settings (beyond 5 %) or sizes, features are extracted with a camera per
@@ -211,8 +217,8 @@ fails, they can see which stage failed and why.
   viewable in the embedded viewer. Done except masks and the viewer
   (`backends/brush.py`, `pipeline.run_splat`, Build splats in the GUI, `ez2d
   run --splat`; Brush 0.3.0 bundled in the AppImage). It refuses software
-  renderers. Masking splats (Brush reads alpha) waits for the masking
-  decision; viewing waits for the viewer decision. Rotating splats upright
+  renderers. Masking splats (Brush reads alpha) is next, now that masks
+  exist; viewing waits for the viewer decision. Rotating splats upright
   on export is left out (needs the SH coefficients rotated too).
 - "Export diagnostics" button: logs, manifests and system info zipped for
   bug reports (images only if the user opts in). Done
@@ -292,8 +298,10 @@ fails, they can see which stage failed and why.
   subjects aren't detected.
 - Turntable mode tuned for a static camera (masking is already in place).
   The coverage check spots a camera that didn't move (all views within
-  10°) and says to mask the background; a dedicated mode waits for real
-  turntable captures and the masking decision.
+  10°) and says to mask the background. With automatic masks the skull
+  turntable set reconstructs cleanly (see FINDINGS); a dedicated mode
+  (masks made automatically, the still-camera notice turned into a
+  suggestion to make them) waits for more real turntable captures.
 - Compressed splat export (e.g. SPZ, MIT) and, once adopted, the Khronos glTF
   Gaussian splatting extension.
 

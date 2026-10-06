@@ -34,7 +34,9 @@ my-scan/
                       what the photo checks learned about it, whether it is
                       left out
       IMG_0001.jpg    original files, copied byte for byte
-  masks/              one mask per image (same file stem), optional
+  masks/              optional; masks/<capture id>/<file>.png in use,
+                      .../dropped/ the ones dropped in review, auto.json
+                      which are automatic (ez2digitize.masks)
   stages/
     features/
       stage.json      manifest (see below)
@@ -315,6 +317,17 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   SIGKILL; disk full; no initial pair or empty pose graph; unreadable
   images; no dense points; empty mesh; crashes and illegal instructions)
   and `StageFailed`'s message leads with the explanation and what to try.
+- Automatic masks (`masks.py`): a stage per capture, `masks-<capture id>`,
+  runs the masking worker (`mask_worker.py`, ISNet on ONNX Runtime) as a
+  separate process through the process runner, like a backend: the app
+  starts itself with `-m ez2digitize.mask_worker` (packaged: the `mask-worker`
+  command of the launcher), so ONNX Runtime's 1 GB never sits in the GUI
+  process and a crash in it doesn't take the app down. The stage's inputs
+  are the capture's photos (left-out ones included, so leaving one out
+  re-masks nothing) and the model's sha256; `apply_auto` copies its masks
+  into `masks/`, never over imported ones and keeping review decisions.
+- Feature extraction gets a mask for every image (a white one where there is
+  none): COLMAP skips an image whose mask file is missing.
 - Masks reach OpenMVS through the `mask-undistort` stage (after
   `undistort`, only when the project has masks). COLMAP's
   `image_undistorter_standalone` warps them with each image's camera and the

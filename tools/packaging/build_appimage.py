@@ -234,6 +234,15 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
         new: list[str | Path] = [image, "new", project]
         for cmd in (new, imp):
             print(output(cmd, env=env))
+        # Automatic masks: downloads the model through the app (HTTPS from the
+        # frozen Python), then runs ONNX Runtime in the masking worker. The
+        # imported masks stay; the run below uses those.
+        start = time.monotonic()
+        masked = output([image, "masks", project], env=dict(env, EZ2D_MODELS_DIR=scratch))
+        print(masked)
+        if "new masks" not in masked or not list((project / "stages").glob("masks-*/report.json")):
+            raise SystemExit("automatic masks were not made")
+        results["masks_s"] = round(time.monotonic() - start, 1)
         start = time.monotonic()
         log = output([image, "run", project, "--level", "2", "--export", "glb"], env=env)
         print(log)

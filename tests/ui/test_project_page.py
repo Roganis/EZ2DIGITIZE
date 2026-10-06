@@ -37,6 +37,7 @@ def page(qtbot: QtBot, tmp_path: Path, fake_tools: Tools) -> Iterator[ProjectPag
     qtbot.addWidget(page)
     yield page
     assert page.photo_checks.wait()
+    assert page.masks_panel.wait()
 
 
 def _states(page: ProjectPage) -> dict[str, str]:
@@ -276,3 +277,18 @@ def test_build_splats_without_brush(
     page.import_folder(photos)
     page.start_splats()
     assert not page.runner.running and "Splats need Brush" in warnings[0]
+
+
+def test_making_masks_blocks_runs_then_enables_use_masks(
+    qtbot: QtBot, page: ProjectPage, photos: Path, fake_mask_worker: Path
+) -> None:
+    page.import_folder(photos)
+    assert not page.use_masks.isEnabled()
+    panel = page.masks_panel
+    with qtbot.waitSignal(panel.busy_changed, timeout=TIMEOUT_MS):
+        panel.make_masks()
+    assert not page.run_button.isEnabled() and not page.import_button.isEnabled()
+    qtbot.waitUntil(lambda: not panel.maker.running, timeout=TIMEOUT_MS)
+    assert page.run_button.isEnabled()
+    assert page.use_masks.isEnabled() and page.use_masks.isChecked()
+    assert page.settings().use_masks

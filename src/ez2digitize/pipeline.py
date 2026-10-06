@@ -39,6 +39,7 @@ from ez2digitize.core.runner import Event as ProcessEvent
 from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_stage
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
+from ez2digitize.masks import has_masks
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
 DENSE_STAGES = ("mvs-import", "densify", "mesh", "refine", "texture")
@@ -317,7 +318,7 @@ def run_splat(
             else "no GPU with a Vulkan driver was found"
         )
     with _exclusive():
-        masked = settings.use_masks and _has_masks(project.masks_dir)
+        masked = settings.use_masks and has_masks(project)
         stages = (*(s for s in SPARSE_STAGES if masked or s != "mask-undistort"), SPLAT_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
         run = _Run(project, stages, on_event, cancel, force_from)
@@ -354,7 +355,7 @@ def _sparse(
         total = len(colmap.image_names(bundles))
     except BackendError as exc:
         raise PipelineError(str(exc)) from exc
-    masks = project.masks_dir if settings.use_masks and _has_masks(project.masks_dir) else None
+    masks = project.masks_dir if settings.use_masks and has_masks(project) else None
     stages = stages or _stages(settings, masked=masks is not None)
     run = _Run(project, stages, on_event, cancel, force_from)
     sfm = tools.colmap
@@ -557,10 +558,6 @@ def _auto_matching(bundles: list[CaptureBundle]) -> colmap.MatchOptions:
     if images > EXHAUSTIVE_MAX_IMAGES and all(b.source == "video" for b in bundles):
         return colmap.MatchOptions(mode="sequential")
     return colmap.MatchOptions(mode="exhaustive")
-
-
-def _has_masks(masks_dir: Path) -> bool:
-    return masks_dir.is_dir() and any(masks_dir.rglob("*.png"))
 
 
 def _tail(log: Path, lines: int = 30) -> list[str]:

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import diagnostics, presets, video
+from ez2digitize import diagnostics, masks, presets, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -58,6 +58,7 @@ from ez2digitize.pipeline import (
     run_mesh,
     run_splat,
 )
+from ez2digitize.ui.masks_panel import MasksPanel
 from ez2digitize.ui.phone_upload import PhoneUploadDialog
 from ez2digitize.ui.photo_checks import PhotoChecks
 from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
@@ -295,8 +296,12 @@ class ProjectPage(QWidget):
 
         self.photo_checks = PhotoChecks(project)
         self.photo_checks.exclusions_changed.connect(self._show_counts)
+        self.masks_panel = MasksPanel(project)
+        self.masks_panel.masks_changed.connect(self._show_counts)
+        self.masks_panel.busy_changed.connect(lambda _busy: self._update_buttons())
         self.tabs = QTabWidget()
         self.tabs.addTab(self.photo_checks, "Photo checks")
+        self.tabs.addTab(self.masks_panel, "Masks")
         self.tabs.addTab(self.log, "Log")
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -333,6 +338,7 @@ class ProjectPage(QWidget):
         """Re-read the project folder: captures, masks, earlier stage results."""
         self._show_counts()
         self.photo_checks.refresh()
+        self.masks_panel.refresh()
         if not self.runner.running:
             self._show_previous_stages()
 
@@ -345,10 +351,11 @@ class ProjectPage(QWidget):
             self.captures_label.setText(f"{images} photos in {len(bundles)} import{plural}")
         else:
             self.captures_label.setText("No photos yet: import a folder of photos to start.")
-        has_masks = any(self.project.masks_dir.rglob("*.png"))
-        self.use_masks.setEnabled(has_masks)
+        has_masks = masks.has_masks(self.project)
         self.use_masks.setToolTip(
-            "" if has_masks else "This project has no masks; import them with the photos."
+            "Leave out what the masks remove (the background) in every step"
+            if has_masks
+            else "This project has no masks yet: make them in the Masks tab."
         )
         self._update_buttons()
 
@@ -367,7 +374,8 @@ class ProjectPage(QWidget):
     def _update_buttons(self) -> None:
         importing = self.video_importer.running
         running = self.runner.running
-        busy = running or importing
+        masking = self.masks_panel.maker.running
+        busy = running or importing or masking
         has_photos = any(b.images for b in list_bundles(self.project))
         self.run_button.setEnabled(not busy and has_photos)
         self.splat_button.setEnabled(not busy and has_photos)
@@ -382,7 +390,8 @@ class ProjectPage(QWidget):
         for widget in busy_widgets:
             widget.setEnabled(not busy)
         self.photo_checks.set_locked(busy)
-        self.use_masks.setEnabled(not busy and any(self.project.masks_dir.rglob("*.png")))
+        self.masks_panel.set_locked(running or importing)
+        self.use_masks.setEnabled(not busy and masks.has_masks(self.project))
         self.open_result_button.setVisible(self.last_result is not None)
         self.open_log_button.setVisible(
             self.last_failure is not None and self.last_failure.log is not None
@@ -542,6 +551,7 @@ class ProjectPage(QWidget):
         self.cancel_button.setEnabled(False)
         self.runner.cancel()
         self.video_importer.cancel()
+        self.masks_panel.maker.cancel()
 
     def open_result_folder(self) -> None:
         folder = self._result_folder()

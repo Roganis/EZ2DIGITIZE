@@ -31,7 +31,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
    photos all around the object, from two heights, everything in focus.
 2. **New project** (File → New Project), then **Import photos…** and pick
    the folder. Or **Import video…**, or **From phone…** to send photos over
-   Wi-Fi by scanning a QR code.
+   Wi-Fi by scanning a QR code, or, if the phone already syncs its photos to
+   this computer (Syncthing, iCloud Drive…), to take them from that folder
+   as they arrive.
 3. Read the **Photo checks** tab: it flags photos that are blurry, a
    different size, from another camera, or that can't be read. Uncheck a
    photo to leave it out.

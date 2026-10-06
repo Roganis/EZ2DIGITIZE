@@ -254,8 +254,12 @@ fails, they can see which stage failed and why.
     4 MB chunks resumed after drops (tested in Chromium with a dropped
     chunk), bit-for-bit originals in a new bundle. HEIC: on import (folder
     or phone) a JPEG copy is made next to the original, which is kept and
-    left out (`core.heic`, pillow-heif). Not done: the watch folder (when
-    is a synced set complete?).
+    left out (`core.heic`, pillow-heif). The watch folder too
+    (`ez2digitize.watch`, From phone → From a synced folder…, `ez2d
+    watch`): new photos are those that appear (sync tools keep capture
+    times), one has arrived when unchanged for 5 s, sync tools' temporary
+    files count as arriving, and the set has settled after 30 s without
+    change; the user imports then (the CLI does it itself).
 
 ## Phase 4: Mesh quality for real-world use
 

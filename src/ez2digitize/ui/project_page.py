@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -67,6 +68,7 @@ from ez2digitize.ui.pipeline_runner import Failure, PipelineRunner
 from ez2digitize.ui.sides_panel import SidesPanel
 from ez2digitize.ui.video_import import VideoImporter
 from ez2digitize.ui.view_panel import ViewPanel
+from ez2digitize.ui.watch_dialog import WatchFolderDialog
 
 STAGE_LABELS = {
     "features": "Find features",
@@ -147,8 +149,14 @@ class ProjectPage(QWidget):
         self.import_video_button = QPushButton("Import video…")
         self.import_video_button.clicked.connect(self.choose_video_to_import)
         self.phone_button = QPushButton("From phone…")
-        self.phone_button.setToolTip("Send photos from a phone over Wi-Fi (scan a QR code)")
-        self.phone_button.clicked.connect(self.add_from_phone)
+        self.phone_button.setToolTip(
+            "Send photos from a phone over Wi-Fi (scan a QR code), or take them from the "
+            "folder a phone syncs to"
+        )
+        phone_menu = QMenu(self.phone_button)
+        phone_menu.addAction("Over Wi-Fi (QR code)…", self.add_from_phone)
+        phone_menu.addAction("From a synced folder…", self.add_from_synced_folder)
+        self.phone_button.setMenu(phone_menu)
         self.other_side_button = QPushButton("Other side…")
         self.other_side_button.setToolTip(
             "Scan the underside too: import photos taken with the object turned over"
@@ -512,6 +520,16 @@ class ProjectPage(QWidget):
         dialog = PhoneUploadDialog(self.project, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.bundle is not None:
             self.status.setText(f"Imported {len(dialog.bundle.files)} files from the phone.")
+            self.refresh()
+            self.tabs.setCurrentWidget(self.photo_checks)
+            self.project_changed.emit()
+
+    def add_from_synced_folder(self) -> None:
+        dialog = WatchFolderDialog(self.project, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.bundle is not None:
+            self.status.setText(
+                f"Imported {len(dialog.bundle.files)} files from the synced folder."
+            )
             self.refresh()
             self.tabs.setCurrentWidget(self.photo_checks)
             self.project_changed.emit()

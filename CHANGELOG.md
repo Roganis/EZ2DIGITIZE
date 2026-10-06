@@ -24,7 +24,9 @@ The first release.
   checks and reports how the sides joined.
 - Photo checks on import (blur, size, camera); leave photos out.
 - Videos import as their sharpest frames; iPhone HEIC photos as JPEG copies.
-- Phone upload over Wi-Fi from a QR code.
+- Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
+  its photos to (Syncthing, iCloud Drive...), imported once they have all
+  arrived.
 - Each camera and zoom setting calibrated separately.
 
 ### The 3D view

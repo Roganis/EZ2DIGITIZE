@@ -80,6 +80,23 @@ component and must be photos or videos. `finish` moves the complete files
 into a capture bundle (`source: "upload"`, the phone's user agent as
 device) through `assemble_bundle`; `close` deletes what wasn't imported.
 
+## Watch folder (`watch.py`, `ui/watch_dialog.py`, `ez2d watch`)
+
+For a phone that syncs its photos to a folder. `FolderWatch` polls it (no
+file system notifications: plain polling also works on synced and network
+folders) down to 4 levels, skipping hidden folders such as Syncthing's
+`.stversions`. New photos are those not there when watching started (sync
+tools keep the capture time, so modification times can't tell), or with
+"since", also those modified after a given time. A photo has arrived when
+its size and modification time are unchanged for 5 s; a sync tool's
+temporary file for a photo (`.syncthing.IMG_1.jpg.tmp`, `.IMG_1.jpg.icloud`,
+`IMG_1.jpg.part`...) counts as arriving until renamed, or until unchanged
+for the settle time (abandoned). The set has settled when nothing new or
+changing was seen for 30 s: the dialog says so and leaves Import to the
+user; `ez2d watch` imports then. The bundle has `source: "watch"` and the
+folder in `source_info`; photos already in the project (same size and
+SHA-256) are left out. Videos are counted and left to Import video.
+
 ## Video import (`video.py`, `backends/ffmpeg.py`)
 
 A video becomes a capture bundle (`source: "video"`) holding the original

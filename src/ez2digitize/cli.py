@@ -83,6 +83,7 @@ from ez2digitize.pipeline import (
     run_splat,
 )
 from ez2digitize.upload import UploadSession
+from ez2digitize.watch import SETTLE_S, FolderWatch, import_ready
 
 
 def commands() -> tuple[str, ...]:
@@ -154,6 +155,28 @@ def _parser() -> argparse.ArgumentParser:
     phone.add_argument("project", type=Path)
     phone.add_argument("--port", type=int, default=0, help="port to listen on (default: any)")
     phone.set_defaults(func=_cmd_upload)
+
+    synced = sub.add_parser(
+        "watch",
+        help="import the photos a phone syncs to a folder (Syncthing, iCloud Drive...) "
+        "once they have all arrived",
+    )
+    synced.add_argument("project", type=Path)
+    synced.add_argument("folder", type=Path, help="the folder the phone's photos sync to")
+    synced.add_argument(
+        "--since",
+        type=float,
+        metavar="MINUTES",
+        help="also take the photos already there from the last MINUTES (default: only new ones)",
+    )
+    synced.add_argument(
+        "--settle",
+        type=float,
+        default=SETTLE_S,
+        metavar="SECONDS",
+        help=f"import once nothing new has arrived for this long (default {SETTLE_S:.0f})",
+    )
+    synced.set_defaults(func=_cmd_watch)
 
     checks = sub.add_parser(
         "photos", help="check the photos; leave some out of the reconstruction or bring them back"
@@ -456,6 +479,35 @@ def _cmd_upload(args: argparse.Namespace) -> int:
         print("cancelled; nothing imported", file=sys.stderr)
         return 130
     bundle = session.finish()
+    print(f"{len(bundle.files)} files -> capture {bundle.id}")
+    _check_photos(project)
+    return 0
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    since = time.time() - args.since * 60 if args.since else None
+    watch = FolderWatch(args.folder, since=since, settle=args.settle)
+    print(
+        f"watching {args.folder}: photos are imported once nothing new has arrived for "
+        f"{args.settle:.0f} s (Ctrl+C to stop)",
+        flush=True,
+    )
+    shown = None
+    try:
+        while True:
+            state = watch.poll()
+            counts = (len(state.ready), state.arriving, state.videos)
+            if counts != shown:
+                shown = counts
+                print(f"  {state.describe()}", flush=True)
+            if state.settled:
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("stopped; nothing imported", file=sys.stderr)
+        return 130
+    bundle = import_ready(project, state, args.folder)
     print(f"{len(bundle.files)} files -> capture {bundle.id}")
     _check_photos(project)
     return 0

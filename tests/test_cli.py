@@ -134,8 +134,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "photos", "masks", "crop", "scale", "orient", "run",
-        "export", "check", "diagnostics", "licenses", "status",
+        "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale", "orient",
+        "run", "export", "check", "diagnostics", "licenses", "status",
     }  # fmt: skip
 
 
@@ -347,3 +347,20 @@ def test_orient(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["orient", str(project), "--auto"]) == 0
     assert main(["orient", str(project)]) == 0
     assert "the photos don't say" in capsys.readouterr().out
+
+
+def test_watch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    synced = tmp_path / "Camera"
+    synced.mkdir()
+    for name in ("IMG_1.jpg", "IMG_2.jpg"):
+        (synced / name).write_bytes(name.encode())  # synced a moment ago
+    assert main(["new", str(tmp_path / "scan")]) == 0
+    # The photos already there from the last 10 minutes; settled at once.
+    args = ["watch", str(tmp_path / "scan"), str(synced), "--since", "10", "--settle", "0"]
+    assert main(args) == 0
+    out = capsys.readouterr().out
+    assert "2 new photo(s) ready." in out and "2 files -> capture" in out
+    # Again: nothing new, so nothing to import (the same photos are left out).
+    assert main(args) == 1
+    assert "all 2 photo(s) are already in the project" in capsys.readouterr().err
+    assert main(["watch", str(tmp_path / "scan"), str(tmp_path / "nowhere")]) == 1

@@ -38,6 +38,8 @@ EXIF_DOWN: dict[int, Vector] = {
 # Below this, the photos' down directions disagree too much to trust the mean
 # (1.0: all identical; a level orbit with ±30° tilt gives about 0.9).
 MIN_AGREEMENT = 0.5
+# Images with a measured gravity direction needed to go by those alone.
+MIN_MEASURED = 3
 IDENTITY: Matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
@@ -52,21 +54,30 @@ def estimate_up(
     model_dir: Path,
     orientations: Mapping[str, int] | None = None,
     only: Collection[str] | None = None,
+    measured: Mapping[str, Vector] | None = None,
 ) -> UpEstimate | None:
     """Up from the registered images of a COLMAP model; None if it can't tell.
 
     `only`: the images to go by (the first side of a two-sided scan, see
-    sides.upright_names); None for all.
+    sides.upright_names); None for all. `measured`: gravity's direction in
+    the camera's axes where a motion sensor recorded it (video frames, see
+    ez2digitize.motion). When at least MIN_MEASURED of the images have
+    one, up comes from those alone: a measurement beats a guess.
     """
     images = read_images(model_dir)
-    downs = []
+    guessed, sensed = [], []
     for name, pose in images.items():
         if only is not None and name not in only:
             continue
-        down_camera = EXIF_DOWN.get((orientations or {}).get(name, 1), EXIF_DOWN[1])
         rotation = quaternion_matrix(pose.qvec)  # world to camera
-        downs.append(_mul_transposed(rotation, down_camera))
-    return up_from_downs(downs)
+        if measured and name in measured:
+            sensed.append(_mul_transposed(rotation, measured[name]))
+        else:
+            down_camera = EXIF_DOWN.get((orientations or {}).get(name, 1), EXIF_DOWN[1])
+            guessed.append(_mul_transposed(rotation, down_camera))
+    if len(sensed) >= MIN_MEASURED:
+        return up_from_downs(sensed)
+    return up_from_downs(guessed + sensed)
 
 
 def up_from_downs(downs: Iterable[Vector]) -> UpEstimate | None:

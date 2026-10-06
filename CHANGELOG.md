@@ -28,6 +28,9 @@ The first release.
   photos out. `ez2d photos --exposure` shows how the camera's automatic
   exposure varied and whether those photos were placed less often.
 - Videos import as their sharpest frames; iPhone HEIC photos as JPEG copies.
+- Videos with motion data (GoPro, or Google's CAMM track) record gravity for
+  every frame, and the model is stood upright from it instead of from how
+  the camera was held.
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.

@@ -88,6 +88,20 @@ def test_estimate_up_from_cameras_and_exif(tmp_path: Path) -> None:
     assert sideways is not None and sideways.up == pytest.approx((-1, 0, 0))
 
 
+def test_estimate_up_from_measured_gravity(tmp_path: Path) -> None:
+    names = ["v/frame_0001.jpg", "v/frame_0002.jpg", "v/frame_0003.jpg", "c/a.jpg"]
+    _images_bin(tmp_path / "images.bin", dict.fromkeys(names, (1, 0, 0, 0)))
+    # The sensor says gravity is along the cameras' +x; the photo's guess (+y)
+    # is left out once enough frames have a measurement.
+    measured = dict.fromkeys(names[:3], (1.0, 0.0, 0.0))
+    estimate = estimate_up(tmp_path, measured=measured)
+    assert estimate is not None and estimate.up == pytest.approx((-1, 0, 0))
+    assert estimate.images == 3
+    # Too few measurements: they count with the guesses.
+    few = estimate_up(tmp_path, measured={names[0]: (1.0, 0.0, 0.0)})
+    assert few is not None and few.images == 4
+
+
 def test_quaternion_matrix() -> None:
     # 90° about Z.
     half = math.sqrt(0.5)

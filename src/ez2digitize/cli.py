@@ -44,6 +44,7 @@ from ez2digitize import (
     licenses,
     markers,
     masks,
+    motion,
     plugins,
     presets,
     scale,
@@ -505,6 +506,8 @@ def _cmd_import(args: argparse.Namespace) -> int:
                 f"{source}: {info['frames']} frames, the sharpest of {info['candidates']} "
                 f"extracted -> capture {bundle.id}"
             )
+            if (described := motion.describe(info)) is not None:
+                print(f"  {described}")
     _check_photos(project)
     _print_sides(project)
     return 0

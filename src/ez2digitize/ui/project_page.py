@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize import diagnostics, masks, presets, subject, video
+from ez2digitize import diagnostics, masks, motion, presets, subject, video
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -753,10 +753,12 @@ class ProjectPage(QWidget):
     def _on_video_imported(self, bundle: CaptureBundle) -> None:
         info = bundle.source_info
         self.overall.setValue(1000)
-        self.status.setText(
+        text = (
             f"Imported {info.get('frames')} frames from {info.get('video')}, the sharpest of "
             f"{info.get('candidates')}."
         )
+        described = motion.describe(info)
+        self.status.setText(f"{text} {described}" if described else text)
         self.refresh()
         self.tabs.setCurrentWidget(self.photo_checks)
         self.project_changed.emit()

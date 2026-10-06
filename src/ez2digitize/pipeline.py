@@ -46,6 +46,7 @@ from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
 from ez2digitize.masks import has_masks
+from ez2digitize.motion import measured_downs
 from ez2digitize.subject import Subject
 
 SPARSE_STAGES = ("features", "matching", "mapping", "undistort", "mask-undistort")
@@ -694,7 +695,10 @@ def _coverage_notes(
             )
         if subject == "object":  # all round an object; a room or a street isn't
             analysis = coverage.analyse(
-                model, exif_orientations(bundles), sides.upright_names(bundles)
+                model,
+                exif_orientations(bundles),
+                sides.upright_names(bundles),
+                measured_downs(bundles),
             )
             notes += analysis.findings if analysis else ()
     except (OSError, ValueError, BackendError, sqlite3.Error):

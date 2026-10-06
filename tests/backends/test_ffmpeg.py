@@ -46,7 +46,8 @@ def test_parse_probe() -> None:
 
 def test_parse_probe_applies_rotation() -> None:
     rotated = _probe(side_data_list=[{"rotation": -90}])
-    assert ffmpeg.parse_probe(rotated, Path("v.mp4")).width == 2160
+    info = ffmpeg.parse_probe(rotated, Path("v.mp4"))
+    assert (info.width, info.rotation) == (2160, -90)
 
 
 @pytest.mark.parametrize(

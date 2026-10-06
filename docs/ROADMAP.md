@@ -492,6 +492,21 @@ fails, they can see which stage failed and why.
   the licences of the parsers (or read the tracks ourselves; both formats
   are documented) and record the data in the bundle like the companion
   app's.
+  Started (`ez2digitize.motion`, `core.mp4`): both formats are read with
+  the standard library from their makers' documentation, no parser
+  library. Each video frame's capture.json entry records gravity's
+  direction in the camera's axes and the turning rate; the up direction
+  (orientation.estimate_up) uses measured gravity when at least three
+  placed frames have it. Checked on GoPro's sample files (HERO5 to MAX):
+  on the HERO6 sample, COLMAP's cameras and the measured gravity agree to
+  within 9° on every frame, while the guess from how the camera was held
+  was 51° off where it looked down at a table. Not done yet: frames chosen
+  by angle travelled and turning rate (step 2; the rate is recorded
+  already), a real CAMM file (none at hand; the tests build them from the
+  specification), and GoPro's in-camera stabilisation (HyperSmooth turns
+  the image against the body, so the accelerometer's gravity is off by
+  that turn; the MAX's and HERO8's fused gravity vector, used when
+  present, accounts for it).
 
 ## Testing and validation
 

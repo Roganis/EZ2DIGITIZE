@@ -34,6 +34,7 @@ from ez2digitize.core.files import FormatError
 from ez2digitize.core.photos import exif_orientations
 from ez2digitize.core.project import Project
 from ez2digitize.crop import camera_run
+from ez2digitize.motion import measured_downs
 from ez2digitize.orientation import (
     IDENTITY,
     Matrix,
@@ -95,7 +96,9 @@ def automatic(project: Project) -> Matrix | None:
         return None
     try:
         bundles = list_bundles(project)
-        estimate = estimate_up(model, exif_orientations(bundles), upright_names(bundles))
+        estimate = estimate_up(
+            model, exif_orientations(bundles), upright_names(bundles), measured_downs(bundles)
+        )
     except (OSError, ValueError, BackendError, FormatError):
         return None
     if estimate is None:

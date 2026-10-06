@@ -6,7 +6,9 @@ import threading
 from pathlib import Path
 
 import pytest
+from mp4_files import TrackSpec, camm, write_mp4
 
+from ez2digitize import motion
 from ez2digitize.backends import ffmpeg
 from ez2digitize.backends.ffmpeg import FFmpeg, VideoInfo
 from ez2digitize.core import photos
@@ -87,6 +89,41 @@ def test_import_keeps_the_sharp_frames(project: Project, clip: Path, fake_ffmpeg
     assert CaptureBundle.load(bundle.root).to_dict() == bundle.to_dict()
     messages = {e.message for e in events if isinstance(e, Progress)}
     assert messages == {"Extracting frames", "Choosing the sharpest frames"}
+
+
+def test_import_records_the_motion_track(
+    project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg
+) -> None:
+    """A video with a CAMM track: each kept frame notes gravity and the turning rate."""
+    clip = tmp_path / "VID_0001.mp4"
+    readings = [camm(3, 0.0, -9.81, 0.0), camm(2, 0.0, 0.5, 0.0)] * 3000  # 10 ms apart
+    write_mp4(clip, [TrackSpec("meta", "camm", 1000, [(r, 10) for r in readings])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    assert bundle.source_info["motion"] == {
+        "format": "camm",
+        "device": "",
+        "gravity": "accelerometer",
+        "gravity_samples": 3000,
+        "gyro_samples": 3000,
+    }
+    frames = [f for f in bundle.files if f.kind == "image"]
+    assert all(f.metadata["motion"]["down"] == [0, 1, 0] for f in frames)
+    assert frames[0].metadata["motion"]["turn_deg_s"] == pytest.approx(28.65, abs=0.01)
+    downs = motion.measured_downs([bundle])
+    assert downs[f"{bundle.id}/frame_0001.jpg"] == (0, 1, 0) and len(downs) == 20
+    bundle.set_excluded(["frame_0001.jpg"])
+    assert len(motion.measured_downs([bundle])) == 19  # only the photos in use
+
+
+def test_unreadable_motion_track_is_noted(
+    project: Project, tmp_path: Path, fake_ffmpeg: FFmpeg
+) -> None:
+    clip = tmp_path / "GX010001.MP4"
+    broken = b"DEVC\0\x04\xff\xff" + b"\0" * 8
+    write_mp4(clip, [TrackSpec("meta", "gpmd", 1000, [(broken, 1000)])])
+    bundle = import_video(project, clip, fake_ffmpeg, frames=20)
+    assert "unreadable motion track" in bundle.source_info["motion"]["error"]
+    assert all("motion" not in f.metadata for f in bundle.files)
 
 
 def test_video_frames_get_no_focal_length_warning(

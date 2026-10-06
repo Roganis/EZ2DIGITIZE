@@ -57,6 +57,14 @@ Video works for a quick capture: walk slowly around the object in good
 light, 30 seconds to 2 minutes. EZ2DIGITIZE keeps the sharpest frame of
 each stretch (100 frames by default). Photos still give finer detail.
 
+Videos from a GoPro (HERO5 and later, and the MAX in its single-lens
+mode), and from phones and cameras that write Google's camera motion track
+(CAMM), carry the camera's motion sensors. EZ2DIGITIZE reads them on
+import and notes gravity's direction for every frame, so the model is
+stood upright by measurement rather than by guessing how the camera was
+held, which goes wrong when you shoot steeply from above or below. The
+import says when a video has such data.
+
 ## Turntables
 
 With the camera on a tripod and the object turning, the background stays

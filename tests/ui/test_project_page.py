@@ -13,7 +13,7 @@ from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.common import BackendMissing
 from ez2digitize.backends.ffmpeg import FFmpeg
 from ez2digitize.core.project import Project
-from ez2digitize.pipeline import Tools
+from ez2digitize.pipeline import MeshResult, Tools
 from ez2digitize.ui.project_page import ProjectPage
 
 TIMEOUT_MS = 20_000
@@ -57,7 +57,7 @@ def test_import_enables_run(page: ProjectPage, photos: Path) -> None:
 def test_run_to_textured_mesh(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
     page.import_folder(photos)
     page.quality.setCurrentIndex(0)  # Fast -> resolution level 2
-    page.start_run()
+    page.run_button.click()  # the button, not start_run(): its signal passes an argument
     assert page.runner.running and not page.run_button.isEnabled()
     assert page.cancel_button.isEnabled()
     _wait_idle(qtbot, page)
@@ -320,3 +320,16 @@ def test_place_cameras_then_look(qtbot: QtBot, page: ProjectPage, photos: Path) 
     assert page.tabs.currentWidget() is page.view_panel
     assert page.last_result is None  # no mesh yet: nothing to open
     assert page.run_button.isEnabled() and page.place_button.isEnabled()
+
+
+def test_a_bug_shows_where_it_happened(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
+    def broken(*_args: object, **_kwargs: object) -> MeshResult:
+        raise TypeError("'bool' object is not callable")
+
+    page.import_folder(photos)
+    page.start_run(broken)
+    _wait_idle(qtbot, page)
+    assert page.status.text().startswith("Stopped: unexpected error: TypeError")
+    assert page.last_failure is not None and not page.last_failure.tail
+    log = page.log.toPlainText()
+    assert "where it happened" in log and "in broken" in log

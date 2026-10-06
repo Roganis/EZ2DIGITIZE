@@ -277,7 +277,7 @@ class ProjectPage(QWidget):
         self.place_button.clicked.connect(lambda: self.start_run(run_sparse))
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
-        self.run_button.clicked.connect(self.start_run)
+        self.run_button.clicked.connect(lambda: self.start_run(run_mesh))
         self.splat_button = QPushButton("Build splats")
         self.splat_button.setToolTip(
             "Gaussian splats with Brush, on the GPU: a photo-real view of the object, "
@@ -839,6 +839,9 @@ class ProjectPage(QWidget):
         if failure.tail:
             self.log.appendPlainText("── last lines of the log ──")
             self.log.appendPlainText("\n".join(failure.tail))
+        if failure.trace:
+            self.log.appendPlainText("── where it happened (please include it in a bug report) ──")
+            self.log.appendPlainText("\n".join(failure.trace))
         self.result_label.setText(
             "Something went wrong. The last lines of the tool's output are in the log."
             if failure.tail

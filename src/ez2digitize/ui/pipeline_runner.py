@@ -12,6 +12,7 @@ most every FLUSH_S seconds, to keep the GUI responsive.
 from __future__ import annotations
 
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,17 +39,22 @@ from ez2digitize.pipeline import (
 )
 
 FLUSH_S = 0.1
+TRACEBACK_LINES = 12
 
 PipelineFunction = Callable[..., SparseResult | MeshResult | SplatResult]
 
 
 @dataclass(frozen=True)
 class Failure:
-    """Why a run stopped, ready to show: message, log tail, full log if any."""
+    """Why a run stopped, ready to show: message, log tail, full log if any.
+
+    `trace`: for an unexpected error (a bug), where in the code it happened.
+    """
 
     message: str
     tail: tuple[str, ...] = ()
     log: Path | None = None
+    trace: tuple[str, ...] = ()
 
 
 class _Worker(QThread):
@@ -89,7 +95,9 @@ class _Worker(QThread):
             r.failed.emit(Failure(str(exc)))
         except Exception as exc:  # a bug, a full disk...: report it, don't kill the thread silently
             self._flush()
-            r.failed.emit(Failure(f"unexpected error: {exc!r}"))
+            # Where it happened, for a bug report.
+            where = tuple(traceback.format_exc().rstrip().splitlines()[-TRACEBACK_LINES:])
+            r.failed.emit(Failure(f"unexpected error: {exc!r}", trace=where))
         else:
             self._flush()
             r.succeeded.emit(result)

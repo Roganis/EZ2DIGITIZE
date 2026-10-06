@@ -21,6 +21,7 @@ from ez2digitize import __version__
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.ui.backends_dialog import BackendsDialog, locate_ffmpeg, locate_tools
 from ez2digitize.ui.licenses_dialog import LicensesDialog
+from ez2digitize.ui.plugins_dialog import PluginsDialog
 from ez2digitize.ui.project_page import ProjectPage, ToolsFactory
 
 ABOUT_TEXT = f"""<h3>EZ2DIGITIZE {__version__}</h3>
@@ -82,6 +83,8 @@ class MainWindow(QMainWindow):
         settings_menu = self.menuBar().addMenu("&Settings")
         tools_action = settings_menu.addAction("&Reconstruction tools…")
         tools_action.triggered.connect(self.edit_backends)
+        plugins_action = settings_menu.addAction("&Plugins…")
+        plugins_action.triggered.connect(self.edit_plugins)
 
         help_menu = self.menuBar().addMenu("&Help")
         self.diagnostics_action = help_menu.addAction("Export &Diagnostics…")
@@ -230,6 +233,9 @@ class MainWindow(QMainWindow):
 
     def edit_backends(self) -> None:
         BackendsDialog(self.settings, self).exec()
+
+    def edit_plugins(self) -> None:
+        PluginsDialog(self).exec()
 
     def show_about(self) -> None:
         QMessageBox.about(self, "About EZ2DIGITIZE", ABOUT_TEXT)

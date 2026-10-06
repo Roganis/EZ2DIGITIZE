@@ -52,6 +52,7 @@ from ez2digitize.core.stage import (
     StageManifest,
     StageSpec,
     capture_input,
+    load_manifest,
     stage_input,
     tree_input,
 )
@@ -217,7 +218,7 @@ def extract_features(
     def prepare(folder: Path) -> None:
         (folder / IMAGE_LIST).write_text("\n".join(names) + "\n", encoding="utf-8")
         if masks is not None:
-            _stage_masks(project, masks, names, folder / MASKS_OUT)
+            stage_masks(project, masks, names, folder / MASKS_OUT)
 
     return StageSpec(
         name=stage,
@@ -230,7 +231,7 @@ def extract_features(
     )
 
 
-def _stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
+def stage_masks(project: Project, masks: Path, names: Sequence[str], folder: Path) -> None:
     """A mask for every image: the project's, or a white one (keep everything).
 
     COLMAP skips an image whose mask is missing, so photos without a mask
@@ -500,6 +501,22 @@ def _link_or_copy(source: Path, target: Path) -> None:
 
 
 # --- results -------------------------------------------------------------------
+
+
+def matched_database(project: Project) -> Path | None:
+    """The matching stage's database, if the current camera placement came from it.
+
+    Not when a plugin placed the cameras: the database left from an earlier
+    COLMAP run would describe other matches.
+    """
+    matching = load_manifest(project.stage_dir("matching"))
+    mapping = load_manifest(project.stage_dir("mapping"))
+    if matching is None or mapping is None or not matching.succeeded:
+        return None
+    if mapping.inputs.get("matching") != f"run:{matching.run_id}":
+        return None
+    database = project.stage_dir("matching") / DATABASE
+    return database if database.is_file() else None
 
 
 def registered_images(model: Path) -> int:

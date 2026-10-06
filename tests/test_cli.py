@@ -135,7 +135,8 @@ def test_commands_list_matches_parser() -> None:
 
     assert set(commands()) == {
         "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale",
-        "markers", "orient", "run", "export", "check", "diagnostics", "licenses", "status",
+        "markers", "orient", "run", "export", "check", "diagnostics", "plugins", "licenses",
+        "status",
     }  # fmt: skip
 
 

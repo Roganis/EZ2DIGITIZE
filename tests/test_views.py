@@ -19,12 +19,14 @@ from ez2digitize.core.stage import MANIFEST_FILE, StageManifest
 BACKEND = Colmap(Path("colmap"), "4.2.1").backend
 
 
-def _succeed(project: Project, stage: str, run_id: str) -> Path:
+def _succeed(
+    project: Project, stage: str, run_id: str, inputs: dict[str, str] | None = None
+) -> Path:
     folder = project.stage_dir(stage)
     folder.mkdir(parents=True, exist_ok=True)
     manifest = StageManifest(
         stage=stage, run_id=run_id, status="succeeded", cache_key="k", backend=BACKEND,
-        command=[], parameters={}, inputs={}, started="", finished="2026-10-06T08:00:00",
+        command=[], parameters={}, inputs=inputs or {}, started="", finished="2026-10-06T08:00:00",
         wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
     )  # fmt: skip
     write_json_atomic(folder / MANIFEST_FILE, manifest.to_dict())
@@ -105,8 +107,8 @@ def test_camera_placement_coverage(project: Project, tmp_path: Path) -> None:
     _sparse_model(undistort / "sparse")
     # 24 photos on a low ring all round, 12 on a high one half way round.
     write_images(undistort / "sparse" / "images.bin", ring(24, 10) + ring(12, 45, span=180))
-    matching = project.stage_dir("matching")
-    matching.mkdir(parents=True)
+    matching = _succeed(project, "matching", "m1")
+    _succeed(project, "mapping", "p1", {"matching": "run:m1"})
     with contextlib.closing(sqlite3.connect(matching / "database.db")) as db, db:
         db.execute("CREATE TABLE images (image_id INTEGER, name TEXT)")
         db.execute(
@@ -128,6 +130,11 @@ def test_camera_placement_coverage(project: Project, tmp_path: Path) -> None:
     # Without an up direction there are no rings; the cameras still show.
     data = json.loads(views.sparse_scene(view.source)[1])
     assert data["coverage"] is None and len(data["cameras"]) == 36
+
+    # Cameras placed by a plugin: the matches of an earlier COLMAP run don't apply.
+    _succeed(project, "mapping", "p2", {"captures": "capture:..."})
+    [view] = views.available(project)
+    assert views.camera_coverage(view)[1] == []
 
 
 def test_all_results_best_first(project: Project, tmp_path: Path) -> None:

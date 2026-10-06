@@ -17,6 +17,7 @@ Primary platform: Linux with an AMD GPU. Secondary: macOS on Apple Silicon.
 - [Quick start](docs/QUICKSTART.md)
 - [Capturing a small object](docs/CAPTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Plugins](docs/PLUGINS.md): tools you install yourself
 - [Contributing](CONTRIBUTING.md)
 
 ## Development

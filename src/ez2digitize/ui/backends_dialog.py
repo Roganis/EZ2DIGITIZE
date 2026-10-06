@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ez2digitize import plugins
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.backends.ffmpeg import FFmpeg
@@ -32,9 +33,10 @@ BRUSH_KEY = "backends/brush"
 
 
 def locate_tools(settings: QSettings) -> Tools:
-    """Find both tools: paths from the settings if set, else the usual search.
+    """Find both tools: paths from the settings if set, else the usual search;
+    and the plugins chosen in Settings -> Plugins.
 
-    Raises BackendError (BackendMissing) with a message for the user.
+    Raises BackendError (BackendMissing, or PluginError) with a message for the user.
     """
     colmap_path = str(settings.value(COLMAP_KEY, "") or "")
     openmvs_dir = str(settings.value(OPENMVS_KEY, "") or "")
@@ -47,6 +49,8 @@ def locate_tools(settings: QSettings) -> Tools:
         colmap=colmap.locate(Path(colmap_path) if colmap_path else None),
         openmvs=openmvs.locate(Path(openmvs_dir) if openmvs_dir else None),
         brush=splats,
+        poses=plugins.chosen("poses"),
+        splats=plugins.chosen("splats"),
     )
 
 
@@ -152,6 +156,8 @@ class BackendsDialog(QDialog):
                     f"Brush {tools.brush.version}"
                     f"{_untested(tools.brush.supported, brush.PINNED_VERSION)}: {tools.brush.path}"
                 )
+            for plugin in tools.used_plugins():
+                lines.append(f"{plugins.SLOT_LABELS[plugin.slot]}: {plugins.describe(plugin)}")
         try:
             video = locate_ffmpeg(self.settings)
         except BackendError as exc:

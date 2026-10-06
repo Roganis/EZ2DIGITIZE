@@ -36,6 +36,9 @@ The 3D viewer's JavaScript libraries (three.js, Spark) are vendored in
 `src/ez2digitize/ui/viewer_web/vendor/` by `tools/viewer/fetch_vendor.py`,
 pinned by npm integrity hash; don't edit them by hand.
 
+Plugins (user-installed backends, `ez2digitize.plugins`) are described in
+`docs/PLUGINS.md`; `tools/plugins/example-poses` is a working one to copy.
+
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.
 

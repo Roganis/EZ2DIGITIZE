@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from scripts import python_script
+from scripts import FAKE_BRUSH, python_script
 
 from ez2digitize.backends.brush import Brush
 from ez2digitize.backends.colmap import Colmap
@@ -145,36 +145,6 @@ print("progress=end", flush=True)
 
 # Brush: checks the dataset layout, prints a progress bar like the real one
 # (with colour codes) and writes the splat file.
-FAKE_BRUSH = """
-import os, struct, sys
-from pathlib import Path
-args = sys.argv[1:]
-if args == ["--version"]:
-    print("brush-cli 0.3.0")
-    sys.exit(0)
-if os.environ.get("FAKE_FAIL") == "brush":
-    sys.exit(1)
-opt = lambda name: args[args.index(name) + 1]
-dataset = Path(args[0])
-assert (dataset / "sparse" / "0").is_dir() and (dataset / "images").is_dir(), "bad dataset"
-steps = int(opt("--total-steps"))
-masks = sorted((dataset / "images" / "masks").glob("*"))
-assert all(m.resolve().is_file() for m in masks), "dangling mask link"
-print(f"masks: {len(masks)}", flush=True)
-print("\\x1b[34mi\\x1b[0m Completed loading", flush=True)
-for done in (steps // 2, steps):
-    print(f"[1s] \\x1b[36m###\\x1b[0m   {done}/{steps}   Steps (9/s, 0s remaining)", flush=True)
-# Two splats, SH degree 0, in Brush's property order.
-names = ["f_dc_0", "f_dc_1", "f_dc_2", "opacity", "rot_0", "rot_1", "rot_2", "rot_3",
-         "scale_0", "scale_1", "scale_2", "x", "y", "z"]
-header = "ply\\nformat binary_little_endian 1.0\\ncomment Exported from Brush\\n"
-header += "element vertex 2\\n" + "".join(f"property float {n}\\n" for n in names)
-header += "end_header\\n"
-rows = [[0.1, 0.2, 0.3, 2.0, 1, 0, 0, 0, -3, -3, -3, 0, 0, 0],
-        [-0.1, 0.0, 0.1, 2.0, 1, 0, 0, 0, -3, -3, -3, 1, 1, 1]]
-body = struct.pack("<28f", *rows[0], *rows[1])
-(Path(opt("--export-path")) / opt("--export-name")).write_bytes(header.encode() + body)
-"""
 
 
 # Stands in for mask_worker: writes the masks and report.json the real one
@@ -250,8 +220,9 @@ def fake_mask_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for var in ("FAKE_FAIL", "FAKE_MODELS", "FAKE_SLEEP", "FAKE_COVERAGE"):
         monkeypatch.delenv(var, raising=False)
-    # Never the user's model cache.
+    # Never the user's model cache or plugins.
     monkeypatch.setenv("EZ2D_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("EZ2D_PLUGINS_DIR", str(tmp_path / "plugins"))
 
 
 @pytest.fixture(autouse=True)

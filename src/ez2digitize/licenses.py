@@ -16,6 +16,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from ez2digitize import plugins
 from ez2digitize.backends.common import bundled_bin_dir
 
 LICENSE = "LICENSE"
@@ -72,4 +73,8 @@ def summary() -> str:
         lines.append(f"Their license files: {folder / 'licenses'}")
     else:
         lines.append("No bundled backends: the tools installed on this computer are used.")
+    found = plugins.installed().plugins
+    if found:
+        lines.append("Plugins you installed (not part of EZ2DIGITIZE, under their own licenses):")
+        lines += [f"  {p.label()}: {p.license_summary()}, in {p.folder}" for p in found]
     return "\n".join(lines)

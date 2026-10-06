@@ -18,6 +18,8 @@
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
     ez2d check                              # which COLMAP and OpenMVS are used
+    ez2d plugins install ~/vggt-plugin      # a plugin: read its licenses, accept,
+    ez2d plugins use poses vggt             # and use it to place the cameras
 
 The same code the GUI uses; this is how regression datasets run on the
 reference machines and in CI.
@@ -42,6 +44,7 @@ from ez2digitize import (
     licenses,
     markers,
     masks,
+    plugins,
     presets,
     scale,
     sides,
@@ -391,6 +394,37 @@ def _parser() -> argparse.ArgumentParser:
     diag.add_argument("project", type=Path)
     diag.add_argument("-o", "--output", type=Path, help="zip file (default: in the current folder)")
     diag.set_defaults(func=_cmd_diagnostics)
+
+    plug = sub.add_parser(
+        "plugins", help="backends you install yourself: list, install, accept, use, remove"
+    )
+    plug.set_defaults(func=_cmd_plugins_list)
+    actions = plug.add_subparsers(dest="action", metavar="ACTION")
+    actions.add_parser("list", help="installed plugins and which are used").set_defaults(
+        func=_cmd_plugins_list
+    )
+    inst = actions.add_parser("install", help="install a plugin from its folder or a .zip")
+    inst.add_argument("source", type=Path, metavar="FOLDER_OR_ZIP")
+    inst.add_argument("--update", action="store_true", help="replace an installed version")
+    inst.add_argument(
+        "--accept", action="store_true", help="accept its licenses without asking (read them!)"
+    )
+    inst.set_defaults(func=_cmd_plugins_install)
+    show = actions.add_parser("license", help="print a plugin's licenses")
+    show.add_argument("plugin")
+    show.set_defaults(func=_cmd_plugins_license)
+    acc = actions.add_parser("accept", help="accept a plugin's licenses (after reading them)")
+    acc.add_argument("plugin")
+    acc.set_defaults(func=_cmd_plugins_accept)
+    use = actions.add_parser(
+        "use", help="use a plugin for camera placement (poses) or splats; 'built-in' to stop"
+    )
+    use.add_argument("slot", choices=plugins.SLOTS)
+    use.add_argument("plugin", help="plugin id, or built-in")
+    use.set_defaults(func=_cmd_plugins_use)
+    rm = actions.add_parser("remove", help="uninstall a plugin")
+    rm.add_argument("plugin")
+    rm.set_defaults(func=_cmd_plugins_remove)
 
     lic = sub.add_parser("licenses", help="third-party components, licenses and sources")
     lic.add_argument("--gpl", action="store_true", help="print EZ2DIGITIZE's own license")
@@ -840,6 +874,91 @@ def _cmd_orient(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_plugins_list(args: argparse.Namespace) -> int:
+    found = plugins.installed()
+    print(f"plugins folder: {plugins.plugins_dir()}")
+    for slot in plugins.SLOTS:
+        chosen = plugins.chosen_id(slot)
+        print(f"{plugins.SLOT_LABELS[slot]} ({slot}): {chosen or plugins.BUILT_IN[slot]}")
+    if not found.plugins:
+        print("no plugins installed")
+    for plugin in found.plugins:
+        state = "licenses accepted" if plugins.accepted(plugin) else "licenses not accepted yet"
+        elsewhere = "" if plugin.runs_here else "; not for this system"
+        print(f"  {plugin.id}  {plugin.label()}, {plugin.slot}: {state}{elsewhere}")
+        print(f"      {plugin.license_summary()}")
+    for problem in found.problems:
+        print(f"  not usable: {problem}")
+    return 0
+
+
+def _installed(plugin_id: str) -> plugins.Plugin:
+    plugin = plugins.installed().get(plugin_id)
+    if plugin is None:
+        raise plugins.PluginError(f"no plugin {plugin_id!r} is installed (see `ez2d plugins`)")
+    return plugin
+
+
+def _print_licenses(plugin: plugins.Plugin) -> None:
+    for lic in plugin.licenses:
+        free = "" if lic.free else "  (not known to be a free license: check its terms)"
+        print(f"=== {plugin.name}: {lic.covers}, {lic.spdx}{free} ===")
+        print(lic.text().rstrip())
+        print()
+
+
+def _cmd_plugins_install(args: argparse.Namespace) -> int:
+    plugin = plugins.install(args.source, replace_existing=args.update)
+    print(f"installed {plugin.label()} ({plugin.slot}) in {plugin.folder}")
+    if plugins.accepted(plugin):
+        print("its licenses are unchanged and still accepted")
+        return 0
+    if args.accept:
+        plugins.accept(plugin)
+        print(f"accepted its licenses: {plugin.license_summary()}")
+    elif sys.stdin.isatty():
+        _print_licenses(plugin)
+        if input("Accept these licenses? [y/N] ").strip().lower() in ("y", "yes"):
+            plugins.accept(plugin)
+            print("accepted")
+    if plugins.accepted(plugin):
+        print(f"use it with: ez2d plugins use {plugin.slot} {plugin.id}")
+    else:
+        print(f"read its licenses (ez2d plugins license {plugin.id}), then accept them "
+              f"(ez2d plugins accept {plugin.id}) to use it")  # fmt: skip
+    return 0
+
+
+def _cmd_plugins_license(args: argparse.Namespace) -> int:
+    _print_licenses(_installed(args.plugin))
+    return 0
+
+
+def _cmd_plugins_accept(args: argparse.Namespace) -> int:
+    plugin = _installed(args.plugin)
+    plugins.accept(plugin)
+    print(f"accepted {plugin.name}'s licenses: {plugin.license_summary()}")
+    return 0
+
+
+def _cmd_plugins_use(args: argparse.Namespace) -> int:
+    slot = cast(plugins.Slot, args.slot)
+    if args.plugin.lower() in ("built-in", "builtin", plugins.BUILT_IN[slot].lower()):
+        plugins.choose(slot, None)
+        print(f"{plugins.SLOT_LABELS[slot]}: {plugins.BUILT_IN[slot]} (built in)")
+        return 0
+    plugin = _installed(args.plugin)
+    plugins.choose(slot, plugin)
+    print(f"{plugins.SLOT_LABELS[slot]}: {plugins.describe(plugin)}")
+    return 0
+
+
+def _cmd_plugins_remove(args: argparse.Namespace) -> int:
+    plugins.remove(args.plugin)
+    print(f"removed {args.plugin}")
+    return 0
+
+
 def _cmd_licenses(args: argparse.Namespace) -> int:
     name = licenses.LICENSE if args.gpl else licenses.THIRD_PARTY
     print(licenses.license_text(name) or f"{name} is missing from this copy")
@@ -897,6 +1016,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
             f"Masking model {masks.MODEL.name}: not downloaded yet "
             f"({masks.MODEL.size / 1e6:.0f} MB, the first `ez2d masks` gets it)"
         )
+    for slot in plugins.SLOTS:
+        try:
+            chosen = plugins.chosen(slot)
+        except plugins.PluginError as exc:
+            print(f"{plugins.SLOT_LABELS[slot]} plugin: {exc}")
+            ok = False
+        else:
+            if chosen is not None:
+                print(f"{plugins.SLOT_LABELS[slot]}: {plugins.describe(chosen)}")
     gpus = hardware.detect_gpus()
     for gpu in gpus:
         note = " (software renderer: too slow for splats)" if gpu.is_cpu else ""
@@ -936,10 +1064,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     project = Project.open(args.project)
+    splat_plugin = plugins.chosen("splats") if args.splat else None
     tools = Tools(
         colmap=colmap.locate(args.colmap),
         openmvs=openmvs.locate(args.openmvs_dir),
-        brush=brush.locate(args.brush) if args.splat else None,
+        brush=brush.locate(args.brush) if args.splat and splat_plugin is None else None,
+        poses=plugins.chosen("poses"),
+        splats=splat_plugin,
     )
     checked: list[tuple[str, colmap.Colmap | openmvs.OpenMVS | brush.Brush, str]] = [
         ("COLMAP", tools.colmap, colmap.PINNED_VERSION),

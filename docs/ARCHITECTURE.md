@@ -260,6 +260,39 @@ outputs.
 - `tests/backends/test_real_pipeline.py` runs the whole mesh path on the
   synthetic scene; the Backends workflow runs it against the fresh builds.
 
+## Plugins (`plugins.py`, `ui/plugins_dialog.py`, `ez2d plugins`)
+
+Backends the user installs: tools that can't be bundled (non-commercial
+code or weights) or that the user prefers. See [PLUGINS.md](PLUGINS.md)
+for the format.
+
+- A plugin is a folder with `ez2d-plugin.toml`: the slot it fills, a
+  command with placeholders, and a `[[license]]` per part (code and weights
+  separately). It lives in the user's data folder (`plugins_dir()`). It
+  runs like the bundled backends, through `run_stage` (manifest, cache,
+  cancellation, log); it is never imported.
+- Slots are contracts on stage folders. `poses` is the `mapping` stage: the
+  photos as COLMAP sees them in, a binary COLMAP model in `sparse/0` out.
+  Undistortion and everything after it are unchanged. `splats` is the
+  `splat` stage: Brush's dataset in, `splat.ply` out.
+- The backend in the manifest is `plugin:<id>` with the plugin's version,
+  and its build is the program's hash. The manifest file's hash is a
+  parameter, since a plugin run as `python3 run.py` has the interpreter as
+  its program.
+- `plugins.json` records the plugin chosen for each slot, and the hash of
+  the license texts the user accepted. A plugin can only be chosen once
+  accepted. If the texts change, it must be accepted again. A chosen
+  plugin that can't be used stops `Tools.locate` with a `PluginError`
+  rather than falling back, which would quietly change the result.
+- `Tools` carries the chosen plugins (`poses`, `splats`); the pipeline
+  skips features and matching for a camera placement plugin, and announces
+  each plugin run with its licenses as a Notice. The matching database
+  feeds coverage only if the current mapping came from it
+  (`colmap.matched_database`).
+- From a packaged app, a plugin's process gets the user's library path back
+  (PyInstaller puts the bundle's first), so the plugin's own Python and
+  libraries load.
+
 ## Export (`export.py`, `core/meshio.py`)
 
 Formats: `obj`, `glb` (textured), `ply` (OpenMVS's own), `stl` and `3mf`

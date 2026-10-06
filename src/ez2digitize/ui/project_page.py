@@ -61,6 +61,7 @@ from ez2digitize.pipeline import (
     run_sparse,
     run_splat,
 )
+from ez2digitize.plugins import PluginError
 from ez2digitize.ui.masks_panel import MasksPanel
 from ez2digitize.ui.phone_upload import PhoneUploadDialog
 from ez2digitize.ui.photo_checks import PhotoChecks
@@ -565,6 +566,9 @@ class ProjectPage(QWidget):
     def start_run(self, function: PipelineFunction = run_mesh) -> None:
         try:
             tools = self.tools_factory()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Plugin can't be used", str(exc))
+            return
         except BackendError as exc:
             QMessageBox.warning(
                 self,
@@ -593,7 +597,7 @@ class ProjectPage(QWidget):
         self._stage_items.clear()
         self.overall.setValue(0)
         self.status.setText("Starting…")
-        if function is run_splat and tools.brush is None:
+        if function is run_splat and tools.brush is None and tools.splats is None:
             QMessageBox.warning(
                 self,
                 "Brush not found",
@@ -604,7 +608,7 @@ class ProjectPage(QWidget):
             ("COLMAP", tools.colmap, colmap.PINNED_VERSION),
             ("OpenMVS", tools.openmvs, openmvs.PINNED_VERSION),
         ]
-        if function is run_splat and tools.brush is not None:
+        if function is run_splat and tools.brush is not None and tools.splats is None:
             checked.append(("Brush", tools.brush, brush.PINNED_VERSION))
         for name, tool, pinned in checked:
             if not tool.supported:
@@ -676,6 +680,8 @@ class ProjectPage(QWidget):
                 "version": tools.openmvs.version,
                 "path": str(tools.openmvs.bin_dir),
             }
+            for plugin in tools.used_plugins():
+                report[f"{plugin.slot}_plugin"] = {"id": plugin.id, "version": plugin.version}
         try:
             tool = self.ffmpeg_factory()
         except BackendError as exc:

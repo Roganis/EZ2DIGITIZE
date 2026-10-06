@@ -5,6 +5,11 @@
     sparse: features -> matching -> mapping -> undistort
             [-> mask-undistort]                                  (COLMAP)
     dense:  mvs-import -> densify -> mesh [-> refine] -> texture (OpenMVS)
+    splat:  sparse, then splat                                   (Brush)
+
+A plugin chosen for camera placement (see ez2digitize.plugins) runs as the
+mapping stage instead of features, matching and mapping; one chosen for
+splats runs as the splat stage instead of Brush.
 
 The two halves run separately because the user adjusts the crop box on the
 sparse result before densifying (Phase 2). `run_mesh` runs both.
@@ -25,7 +30,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage, crop, markers, scale, sides
+from ez2digitize import coverage, crop, markers, plugins, scale, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -58,16 +63,30 @@ class Tools:
     openmvs: openmvs.OpenMVS
     # Only needed for splats; None if it isn't installed.
     brush: brush.Brush | None = None
+    # Plugins chosen instead of COLMAP's camera placement and of Brush.
+    poses: plugins.Plugin | None = None
+    splats: plugins.Plugin | None = None
+
+    def used_plugins(self) -> list[plugins.Plugin]:
+        """The plugins these tools use."""
+        return [p for p in (self.poses, self.splats) if p is not None]
 
     @classmethod
     def locate(cls) -> Tools:
-        """Find the backends (raises backends.common.BackendMissing for COLMAP
-        or OpenMVS; Brush is optional)."""
+        """Find the backends and the chosen plugins (raises backends.common.
+        BackendMissing for COLMAP or OpenMVS, plugins.PluginError for a chosen
+        plugin that can't be used; Brush is optional)."""
         try:
             splats: brush.Brush | None = brush.locate()
         except BackendMissing:
             splats = None
-        return cls(colmap=colmap.locate(), openmvs=openmvs.locate(), brush=splats)
+        return cls(
+            colmap=colmap.locate(),
+            openmvs=openmvs.locate(),
+            brush=splats,
+            poses=plugins.chosen("poses"),
+            splats=plugins.chosen("splats"),
+        )
 
 
 @dataclass(frozen=True)
@@ -304,13 +323,17 @@ def run_splat(
     days, unless `allow_software_gpu` (tests, CI).
     """
     settings = settings or MeshSettings()
-    if tools.brush is None:
+    if tools.brush is None and tools.splats is None:
         raise PipelineError(
             "splats need Brush, which wasn't found; set its location in the "
             "reconstruction tools settings"
         )
-    gpus = detect_gpus()
-    if not allow_software_gpu and not any(not g.is_cpu for g in gpus):
+    gpus = detect_gpus() if tools.splats is None or tools.splats.gpu else []
+    if (
+        not allow_software_gpu
+        and (tools.splats is None or tools.splats.gpu)
+        and not any(not g.is_cpu for g in gpus)
+    ):
         raise PipelineError(
             "training splats needs a GPU with a Vulkan driver (or Metal on macOS); only a "
             "software renderer was found"
@@ -319,21 +342,36 @@ def run_splat(
         )
     with _exclusive():
         masked = settings.use_masks and has_masks(project)
-        stages = (*(s for s in SPARSE_STAGES if masked or s != "mask-undistort"), SPLAT_STAGE)
+        stages = (*_sparse_stages(tools, masked=masked), SPLAT_STAGE)
         sparse = _sparse(project, tools, settings, on_event, cancel, force_from, stages=stages)
         run = _Run(project, stages, on_event, cancel, force_from)
         masks = sparse.masks
         if masks is not None and (clash := _stem_clash(project)):
             run.emit(Notice(f"training splats without masks: {clash}"))
             masks = None
-        manifest = run(
-            brush.train(
+        if tools.splats is not None:
+            run.emit(Notice(f"training splats with {plugins.describe(tools.splats)}"))
+            spec = _plugin_spec(
+                lambda p: plugins.splat_stage(
+                    p,
+                    project,
+                    sparse.undistorted,
+                    sfm=tools.colmap,
+                    options=settings.splat,
+                    masks=masks,
+                ),
+                tools.splats,
+            )
+        else:
+            assert tools.brush is not None
+            spec = brush.train(
                 tools.brush, project, sparse.undistorted, options=settings.splat, masks=masks
             )
-        )
+        manifest = run(spec)
         file = project.stage_dir(SPLAT_STAGE) / brush.SPLAT_FILE
         if not file.is_file():
-            raise PipelineError("Brush finished but wrote no splat file; see its log")
+            trainer = tools.splats.name if tools.splats is not None else "Brush"
+            raise PipelineError(f"{trainer} finished but wrote no splat file; see its log")
         exports: list[Path] = []
         if settings.export_formats:
             try:
@@ -362,52 +400,25 @@ def _sparse(
     except BackendError as exc:
         raise PipelineError(str(exc)) from exc
     masks = project.masks_dir if settings.use_masks and has_masks(project) else None
-    stages = stages or _stages(settings, masked=masks is not None)
+    stages = stages or _stages(settings, tools, masked=masks is not None)
     run = _Run(project, stages, on_event, cancel, force_from)
     for problem in sides.check(project, bundles, use_masks=settings.use_masks):
         run.emit(Notice(f"two-sided scan: {problem}"))
     sfm = tools.colmap
-
-    feature_options = settings.features
-    for bundle in bundles:  # usually done at import; quick
-        photos.inspect_bundle(bundle)
-    groups = photos.camera_groups(bundles)
-    if groups and feature_options.camera_grouping == "per_capture":
-        # COLMAP would calibrate a capture as one camera: extract a camera per
-        # photo, then merge them by camera and zoom setting before matching.
-        feature_options = replace(feature_options, camera_grouping="per_image")
-        count = len(set(groups.values()))
-        run.emit(Notice(f"calibrating {count} cameras or zoom settings separately"))
+    if tools.poses is not None:
+        mapping = _plugin_mapping(project, tools, tools.poses, bundles, masks, run)
     else:
-        groups = {}
-    if feature_options.threads is None:
-        cpus, available = cpu_threads(), available_memory()
-        threads = colmap.feature_threads(feature_options.max_image_size, available, cpus)
-        feature_options = replace(feature_options, threads=threads)
-        if threads < cpus:
-            run.emit(
-                Notice(
-                    f"finding features with {threads} of {cpus} CPU threads, to stay within "
-                    f"the {available / GIB:.1f} GB of free memory"
-                )
-            )
-    features = run(
-        colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
-    )
-    matching_options = settings.matching or _auto_matching(bundles)
-    matching = run(
-        colmap.match_features(
-            sfm, project, features, options=matching_options, camera_groups=groups or None
-        )
-    )
-    mapping = run(
-        colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
-    )
+        mapping = _colmap_mapping(project, tools, settings, bundles, masks, run, total)
     sparse_dir = project.stage_dir("mapping") / "sparse"
     model = colmap.best_model(sparse_dir)
     if model is None:
         raise PipelineError(
-            "COLMAP could not reconstruct any cameras: the photos probably overlap too "
+            (
+                f"{tools.poses.name} placed no cameras (or wrote no COLMAP model in "
+                "sparse/0; see its log)"
+            )
+            if tools.poses is not None
+            else "COLMAP could not reconstruct any cameras: the photos probably overlap too "
             "little or the object has too little texture"
         )
     registered = colmap.registered_images(model)
@@ -457,6 +468,80 @@ def _sparse(
     )
 
 
+def _plugin_mapping(
+    project: Project,
+    tools: Tools,
+    plugin: plugins.Plugin,
+    bundles: list[CaptureBundle],
+    masks: Path | None,
+    run: _Run,
+) -> StageManifest:
+    run.emit(Notice(f"placing the cameras with {plugins.describe(plugin)}"))
+    if masks is not None and not plugin.with_masks:
+        run.emit(Notice(f"{plugin.name} doesn't use masks; the dense cloud still does"))
+    return run(
+        _plugin_spec(
+            lambda p: plugins.pose_stage(p, project, bundles, sfm=tools.colmap, masks=masks),
+            plugin,
+        )
+    )
+
+
+def _plugin_spec(build: Callable[[plugins.Plugin], StageSpec], plugin: plugins.Plugin) -> StageSpec:
+    try:
+        return build(plugin)
+    except BackendError as exc:
+        raise PipelineError(str(exc)) from exc
+
+
+def _colmap_mapping(
+    project: Project,
+    tools: Tools,
+    settings: MeshSettings,
+    bundles: list[CaptureBundle],
+    masks: Path | None,
+    run: _Run,
+    total: int,
+) -> StageManifest:
+    """COLMAP's camera placement: features, matching, mapping."""
+    sfm = tools.colmap
+    feature_options = settings.features
+    for bundle in bundles:  # usually done at import; quick
+        photos.inspect_bundle(bundle)
+    groups = photos.camera_groups(bundles)
+    if groups and feature_options.camera_grouping == "per_capture":
+        # COLMAP would calibrate a capture as one camera: extract a camera per
+        # photo, then merge them by camera and zoom setting before matching.
+        feature_options = replace(feature_options, camera_grouping="per_image")
+        count = len(set(groups.values()))
+        run.emit(Notice(f"calibrating {count} cameras or zoom settings separately"))
+    else:
+        groups = {}
+    if feature_options.threads is None:
+        cpus, available = cpu_threads(), available_memory()
+        threads = colmap.feature_threads(feature_options.max_image_size, available, cpus)
+        feature_options = replace(feature_options, threads=threads)
+        if threads < cpus:
+            run.emit(
+                Notice(
+                    f"finding features with {threads} of {cpus} CPU threads, to stay within "
+                    f"the {available / GIB:.1f} GB of free memory"
+                )
+            )
+    features = run(
+        colmap.extract_features(sfm, project, bundles, masks=masks, options=feature_options)
+    )
+    matching_options = settings.matching or _auto_matching(bundles)
+    matching = run(
+        colmap.match_features(
+            sfm, project, features, options=matching_options, camera_groups=groups or None
+        )
+    )
+    return run(
+        colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
+    )
+
+
 def _dense(
     project: Project,
     tools: Tools,
@@ -469,7 +554,7 @@ def _dense(
     masked = sparse.masks is not None
     if settings.export_formats and settings.texture.export_type != "ply":
         raise PipelineError("exporting needs the texture step's PLY output (export_type 'ply')")
-    run = _Run(project, _stages(settings, masked=masked), on_event, cancel, force_from)
+    run = _Run(project, _stages(settings, tools, masked=masked), on_event, cancel, force_from)
     mvs = tools.openmvs
 
     imported = run(openmvs.import_colmap(mvs, project, sparse.undistorted))
@@ -537,8 +622,8 @@ def _coverage_notes(project: Project, model: Path, bundles: list[CaptureBundle])
                 f"not placed: {coverage.name_list(unplaced)}. They overlap too little with "
                 "the others, or are blurry or of something else."
             )
-        database = project.stage_dir("matching") / colmap.DATABASE
-        weak = [name for name in coverage.weak_photos(database) if name in placed]
+        database = colmap.matched_database(project)
+        weak = [n for n in coverage.weak_photos(database) if n in placed] if database else []
         if weak:
             notes.append(
                 f"few matches with the others: {coverage.name_list(weak)}. More photos "
@@ -592,13 +677,18 @@ def _stem_clash(project: Project) -> str | None:
     return None
 
 
-def _stages(settings: MeshSettings, *, masked: bool) -> tuple[str, ...]:
+def _sparse_stages(tools: Tools, *, masked: bool) -> tuple[str, ...]:
     skip = set()
-    if settings.refine is None:
-        skip.add("refine")
+    if tools.poses is not None:
+        skip |= {"features", "matching"}  # the plugin is the mapping stage
     if not masked:
         skip.add("mask-undistort")
-    return tuple(s for s in STAGES if s not in skip)
+    return tuple(s for s in SPARSE_STAGES if s not in skip)
+
+
+def _stages(settings: MeshSettings, tools: Tools, *, masked: bool) -> tuple[str, ...]:
+    dense = tuple(s for s in DENSE_STAGES if settings.refine is not None or s != "refine")
+    return _sparse_stages(tools, masked=masked) + dense
 
 
 # Up to this many images, every pair is matched even for video: it closes the

@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# An example camera placement plugin, to copy when writing one: it places
+# the cameras with COLMAP's features, matching and incremental mapper, using
+# the COLMAP the app uses ({colmap}). See docs/PLUGINS.md.
+api = 1
+id = "example-poses"
+name = "Example camera placement"
+version = "1.0.0"
+provides = "poses"
+description = "COLMAP's incremental mapper, run by a plugin: a template for writing one."
+homepage = "https://github.com/Roganis/EZ2DIGITIZE/blob/main/docs/PLUGINS.md"
+# On Windows, "python" instead of "python3".
+command = [
+    "python3", "{plugin}/run.py",
+    "--images", "{captures}",
+    "--image-list", "{image_list}",
+    "--output", "{output}",
+    "--threads", "{threads}",
+    "--colmap", "{colmap}",
+]
+with_masks = ["--masks", "{masks}"]
+
+[progress]
+pattern = 'step (\d+) of (\d+)'
+message = "Placing the cameras (example plugin)"
+
+[[license]]
+covers = "code"
+spdx = "GPL-3.0-or-later"
+file = "LICENSE.txt"

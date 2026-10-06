@@ -51,6 +51,13 @@ The first release.
 - Common backend failures explained in plain words, and a diagnostics zip
   for bug reports.
 
+### Plugins
+
+- Plugins for tools that can't come with the app (such as research code or
+  model weights for non-commercial use only): camera placement or splat
+  training by a program you install, with its licenses shown and accepted
+  first (Settings → Plugins, `ez2d plugins`). See docs/PLUGINS.md.
+
 ### Packages
 
 - Linux AppImage, macOS app (Apple Silicon) and a portable Windows zip, each

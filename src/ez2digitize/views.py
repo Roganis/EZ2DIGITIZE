@@ -114,7 +114,7 @@ def available(project: Project) -> list[View]:
             project.stage_dir("undistort") / "sparse",
             up,
             undistorted.finished,
-            project.stage_dir("matching") / colmap.DATABASE,
+            colmap.matched_database(project),
         )
     return [views[k] for k in ORDER if k in views]
 

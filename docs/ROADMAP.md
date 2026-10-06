@@ -387,6 +387,12 @@ fails, they can see which stage failed and why.
 ## Phase 7: Beyond v1
 
 - Plugin system for third-party backends (user-installed, license shown).
+  Done (`ez2digitize.plugins`, docs/PLUGINS.md): plugins for camera
+  placement and for splats, installed from a folder or `.zip`, licenses
+  shown and accepted before use (Settings → Plugins, `ez2d plugins`), run
+  as stages like the bundled tools. An example plugin is in
+  `tools/plugins/example-poses`. More slots (features and matching, mesh
+  from splats) can follow once a real plugin needs them.
 - Larger scenes (rooms, outdoor) with appropriate matchers and presets.
 - Better features/matching inside COLMAP: learned local features and
   matchers (e.g. ALIKED or DISK with LightGlue, permissively licensed;

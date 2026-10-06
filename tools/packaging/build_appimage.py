@@ -279,6 +279,22 @@ def smoke(image: Path, photos: Path, *, brush: bool = False) -> dict[str, object
             raise SystemExit("the pipeline run produced no GLB")
         results["pipeline_s"] = round(time.monotonic() - start, 1)
         results["glb_bytes"] = glbs[0].stat().st_size
+        # A plugin, installed and run by the app: the example camera placement,
+        # whose own python3 must start with this computer's libraries, not the
+        # bundle's, and which runs the bundled COLMAP.
+        start = time.monotonic()
+        plugin_env = dict(env, EZ2D_PLUGINS_DIR=str(Path(scratch) / "plugins"))
+        example = REPO / "tools" / "plugins" / "example-poses"
+        install: list[str | Path] = [image, "plugins", "install", example, "--accept"]
+        print(output(install, env=plugin_env))
+        print(output([image, "plugins", "use", "poses", "example-poses"], env=plugin_env))
+        placed = output([image, "run", project, "--sparse-only"], env=plugin_env)
+        print(placed)
+        if "placing the cameras with Example camera placement" not in placed or (
+            "sparse model:" not in placed
+        ):
+            raise SystemExit("the example plugin did not place the cameras")
+        results["plugin_s"] = round(time.monotonic() - start, 1)
     return results
 
 

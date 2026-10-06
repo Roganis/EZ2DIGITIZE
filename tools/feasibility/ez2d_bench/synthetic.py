@@ -134,6 +134,14 @@ def generate(
     images_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     focal = 0.9 * width
+    # The focal length in EXIF, as a camera writes it: COLMAP's prior is
+    # FocalLengthIn35mmFilm / 35 * the longer side. Without it COLMAP guesses
+    # 1.2 * the longer side, a third too long, and its global mapper (which
+    # needs good priors) lost every point on macOS with ALIKED features.
+    exif = Image.Exif()
+    exif[0x010F] = "EZ2DIGITIZE"  # Make
+    exif[0x0110] = "synthetic scene"  # Model
+    exif.get_ifd(0x8769)[0xA405] = round(focal / max(width, height) * 35)
     cameras: dict[str, dict[str, object]] = {}
     n = 0
     for radius, height_z, offset in ((2.6, 1.0, 0.0), (2.2, 2.0, 0.5)):
@@ -142,7 +150,7 @@ def generate(
             eye = np.array([radius * math.cos(angle), radius * math.sin(angle), height_z])
             rgb, mask = render_view(eye, textures, width, height, focal)
             name = f"view_{n:03d}.jpg"
-            Image.fromarray(rgb).save(images_dir / name, quality=95)
+            Image.fromarray(rgb).save(images_dir / name, quality=95, exif=exif)
             Image.fromarray(mask).save(masks_dir / f"{name}.png")
             right, up, forward = _look_at(eye, np.array([0.0, 0.0, 0.3]))
             cameras[name] = {

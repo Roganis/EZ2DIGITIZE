@@ -297,3 +297,14 @@ def test_making_masks_blocks_runs_then_enables_use_masks(
     assert page.run_button.isEnabled()
     assert page.use_masks.isEnabled() and page.use_masks.isChecked()
     assert page.settings().use_masks
+
+
+def test_place_cameras_then_look(qtbot: QtBot, page: ProjectPage, photos: Path) -> None:
+    page.import_folder(photos)
+    page.place_button.click()
+    _wait_idle(qtbot, page)
+    assert list(_states(page)) == ["features", "matching", "mapping", "undistort"]
+    assert page.status.text().startswith("Cameras placed: 3 of 3 photos.")
+    assert page.tabs.currentWidget() is page.view_panel
+    assert page.last_result is None  # no mesh yet: nothing to open
+    assert page.run_button.isEnabled() and page.place_button.isEnabled()

@@ -138,8 +138,8 @@ def test_commands_list_matches_parser() -> None:
     from ez2digitize.cli import commands
 
     assert set(commands()) == {
-        "new", "import", "flip", "upload", "photos", "masks", "run", "export", "check",
-        "diagnostics", "licenses", "status",
+        "new", "import", "flip", "upload", "photos", "masks", "crop", "run", "export",
+        "check", "diagnostics", "licenses", "status",
     }  # fmt: skip
 
 
@@ -253,3 +253,32 @@ def test_two_sided_import_and_flip(tmp_path: Path, capsys: pytest.CaptureFixture
     assert main(["status", str(project)]) == 0
     assert "(turned over)" in capsys.readouterr().out
     assert main(["flip", str(project), "nope"]) == 1
+
+
+def test_crop(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ez2digitize.core.files import write_json_atomic
+    from ez2digitize.core.project import Project
+    from ez2digitize.core.stage import MANIFEST_FILE, Backend, StageManifest
+
+    project = tmp_path / "p"
+    assert main(["new", str(project)]) == 0
+    assert main(["crop", str(project)]) == 0
+    assert "no crop box" in capsys.readouterr().out
+    assert main(["crop", str(project), "--set", "0", "0", "0", "1", "1", "1"]) == 1
+    assert "place the cameras first" in capsys.readouterr().err
+
+    mapping = Project.open(project).stage_dir("mapping")
+    mapping.mkdir(parents=True)
+    manifest = StageManifest(
+        stage="mapping", run_id="m1", status="succeeded", cache_key="k",
+        backend=Backend("colmap", "4.2.1"), command=[], parameters={}, inputs={},
+        started="", finished="", wall_s=1.0, cpu_s=1.0, peak_rss_mb=None, exit_code=0, host={},
+    )  # fmt: skip
+    write_json_atomic(mapping / MANIFEST_FILE, manifest.to_dict())
+    args = ["crop", str(project), "--set", "1", "2", "3", "0.5", "0.5", "1", "--yaw", "15"]
+    assert main(args) == 0
+    assert "crop box: centre (1, 2, 3), size (1, 1, 2), turned 15.0°" in capsys.readouterr().out
+    assert main(["crop", str(project), "--auto"]) == 1  # no sparse points in this project
+    assert main(["crop", str(project), "--clear"]) == 0
+    assert main(["crop", str(project)]) == 0
+    assert "no crop box" in capsys.readouterr().out

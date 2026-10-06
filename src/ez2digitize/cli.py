@@ -12,6 +12,7 @@
     ez2d import ~/scans/skull ~/Pictures/skull-under --flipped   # the other side
     ez2d run ~/scans/skull                  # everything
     ez2d run ~/scans/skull --sparse-only    # stop before densifying
+    ez2d crop ~/scans/skull --auto          # crop box around the sparse points
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
     ez2d check                              # which COLMAP and OpenMVS are used
@@ -33,7 +34,7 @@ from typing import TextIO, cast
 
 import segno
 
-from ez2digitize import diagnostics, licenses, masks, presets, sides, video
+from ez2digitize import crop, diagnostics, licenses, masks, presets, sides, video, views
 from ez2digitize.backends import brush, colmap, ffmpeg, openmvs
 from ez2digitize.backends.common import BackendError, bundled_bin_dir
 from ez2digitize.core import hardware, photos
@@ -177,6 +178,28 @@ def _parser() -> argparse.ArgumentParser:
     mask.add_argument("--capture", help="capture id for --import (default: the only one)")
     mask.add_argument("--force", action="store_true", help="make the automatic masks again")
     mask.set_defaults(func=_cmd_masks)
+
+    box = sub.add_parser(
+        "crop",
+        help="the crop box: what the dense reconstruction keeps",
+        description="Without options: show the crop box. Coordinates are in the upright "
+        "frame the 3D view shows (Y up), after camera placement (`ez2d run --sparse-only`).",
+    )
+    box.add_argument("project", type=Path)
+    change = box.add_mutually_exclusive_group()
+    change.add_argument(
+        "--auto", action="store_true", help="a box around most of the sparse points"
+    )
+    change.add_argument(
+        "--set",
+        nargs=6,
+        type=float,
+        metavar=("CX", "CY", "CZ", "HX", "HY", "HZ"),
+        help="centre and half sizes",
+    )
+    change.add_argument("--clear", action="store_true", help="no box: OpenMVS's own estimate")
+    box.add_argument("--yaw", type=float, default=0.0, help="degrees about the vertical axis")
+    box.set_defaults(func=_cmd_crop)
 
     run = sub.add_parser("run", help="reconstruct a textured mesh")
     run.add_argument("project", type=Path)
@@ -540,6 +563,41 @@ def _print_masks(project: Project, bundles: Sequence[CaptureBundle]) -> None:
     if not masks.has_masks(project):
         return
     print("`ez2d run` uses the masks; `--no-masks` ignores them")
+
+
+def _cmd_crop(args: argparse.Namespace) -> int:
+    project = Project.open(args.project)
+    if args.clear:
+        crop.save(project, None)
+        print("crop box removed: OpenMVS estimates the region itself")
+        return 0
+    if args.auto or args.set is not None:
+        placement = crop.camera_run(project)
+        if placement is None:
+            raise PipelineError("place the cameras first (`ez2d run --sparse-only`)")
+        if args.auto:
+            upright_box = crop.automatic_for(project)
+            if upright_box is None:
+                raise PipelineError("the camera placement has no sparse points")
+        else:
+            c, h = args.set[:3], args.set[3:]
+            if min(h) <= 0:
+                raise PipelineError("half sizes must be positive")
+            upright_box = crop.UprightBox((c[0], c[1], c[2]), (h[0], h[1], h[2]), args.yaw)
+        crop.save(
+            project, crop.from_upright(upright_box, views.upright_rotation(project), placement)
+        )
+    box = crop.stored(project)
+    if box is None:
+        print("no crop box: OpenMVS estimates the region from the sparse points")
+        return 0
+    shown = crop.to_upright(box, views.upright_rotation(project))
+    centre = ", ".join(f"{v:.4g}" for v in shown.centre)
+    size = ", ".join(f"{2 * v:.4g}" for v in shown.half_size)
+    print(f"crop box: centre ({centre}), size ({size}), turned {shown.yaw:.1f}°")
+    if crop.current(project) is None:
+        print("  drawn on an earlier camera placement: not used until set again")
+    return 0
 
 
 def _cmd_licenses(args: argparse.Namespace) -> int:

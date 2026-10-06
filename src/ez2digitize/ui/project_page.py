@@ -53,9 +53,11 @@ from ez2digitize.pipeline import (
     MeshResult,
     MeshSettings,
     PipelineFunction,
+    SparseResult,
     SplatResult,
     Tools,
     run_mesh,
+    run_sparse,
     run_splat,
 )
 from ez2digitize.ui.masks_panel import MasksPanel
@@ -233,6 +235,12 @@ class ProjectPage(QWidget):
         self.mesh_size.currentIndexChanged.connect(self._show_values)
         self._show_values()
 
+        self.place_button = QPushButton("Place cameras")
+        self.place_button.setToolTip(
+            "Only place the cameras, then look at them in the 3D view and set the crop box "
+            "before building the mesh"
+        )
+        self.place_button.clicked.connect(lambda: self.start_run(run_sparse))
         self.run_button = QPushButton("Build mesh")
         self.run_button.setDefault(True)
         self.run_button.clicked.connect(self.start_run)
@@ -251,6 +259,7 @@ class ProjectPage(QWidget):
         self.status = QLabel("Ready")
         self.status.setWordWrap(True)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.place_button)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.splat_button)
         buttons.addWidget(self.cancel_button)
@@ -395,6 +404,7 @@ class ProjectPage(QWidget):
         busy = running or importing or masking
         has_photos = any(b.images for b in list_bundles(self.project))
         self.run_button.setEnabled(not busy and has_photos)
+        self.place_button.setEnabled(not busy and has_photos)
         self.splat_button.setEnabled(not busy and has_photos)
         self.cancel_button.setEnabled(busy)
         self.import_button.setEnabled(not busy)
@@ -409,6 +419,7 @@ class ProjectPage(QWidget):
         self.photo_checks.set_locked(busy)
         self.masks_panel.set_locked(running or importing)
         self.sides_panel.set_locked(busy)
+        self.view_panel.set_locked(busy)
         self.other_side_button.setEnabled(not busy)
         self.use_masks.setEnabled(not busy and masks.has_masks(self.project))
         self.open_result_button.setVisible(self.last_result is not None)
@@ -727,7 +738,17 @@ class ProjectPage(QWidget):
             item.setText(1, {"succeeded": "Done", "failed": "Failed"}.get(status, "Cancelled"))
             item.setText(2, f"{seconds:.1f} s")
 
-    def _on_succeeded(self, result: MeshResult | SplatResult) -> None:
+    def _on_succeeded(self, result: SparseResult | MeshResult | SplatResult) -> None:
+        if isinstance(result, SparseResult):
+            self.overall.setValue(1000)
+            self.status.setText(
+                f"Cameras placed: {result.registered_images} of {result.total_images} photos. "
+                "Look at them in the 3D view, set the crop box if you like, then Build mesh."
+            )
+            self._update_buttons()
+            self.view_panel.refresh(prefer="cameras")
+            self.tabs.setCurrentWidget(self.view_panel)
+            return
         self.last_result = result
         self.overall.setValue(1000)
         self.status.setText("Finished")

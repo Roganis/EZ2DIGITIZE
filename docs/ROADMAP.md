@@ -182,9 +182,14 @@ installable on Linux as an AppImage.
 - **Sparse viewer** with camera frustums after SfM, and a **crop box** the
   user adjusts before densification. The automatic part exists: OpenMVS
   estimates a region of interest from the sparse points and crops to it
-  (`--estimate-roi`, `--crop-to-roi`, on by default). The sparse viewer is
-  done (camera placement in the 3D view tab); adjusting the crop box in it
-  is next.
+  (`--estimate-roi`, `--crop-to-roi`, on by default). Done (`ez2digitize.crop`):
+  Place cameras stops after camera placement and opens the 3D view; there
+  "Crop box" starts from a box around most of the sparse points, its faces
+  are dragged by their handles and it turns about the vertical; the box is
+  saved in project.json with the camera placement it belongs to, and
+  densification keeps only what is inside (`DensifyPointCloud
+  --import-roi-file`; checked on the skull set: the stand cut off level).
+  `ez2d crop` sets it headless.
 - Export OBJ (+MTL + textures) and GLB. Done (`ez2digitize.export`).
 - AppImage with pinned backend binaries. Done (`tools/packaging`, AppImage
   workflow): GUI and CLI in one file, backends bundled.
@@ -298,8 +303,9 @@ fails, they can see which stage failed and why.
   `ui/viewer.py`, the 3D view tab): camera placement (sparse points and a
   frustum per photo), dense cloud, textured mesh (the upright GLB export,
   or OpenMVS's PLY converted) and splats, all stood upright; a finished
-  build opens in it. Next on top of it: the crop box, manual orientation,
-  scale from picked points, coverage on the camera rings.
+  build opens in it. The crop box is edited in it (Phase 2). Next on top of
+  it: manual orientation, scale from picked points, coverage on the camera
+  rings.
 - Capture guide for small objects: diffuse lighting, a patterned mat,
   two or three height rings, enough depth of field, the flip workflow, and
   what to do with shiny objects (matte spray, cross-polarization). Written

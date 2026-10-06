@@ -37,7 +37,6 @@ from PySide6.QtCore import (
     QCoreApplication,
     QFile,
     QIODevice,
-    Qt,
     QUrl,
     Signal,
 )
@@ -189,6 +188,8 @@ class ViewerWidget(QWidget):
     ready = Signal(dict)  # the page is up: {"gpu": ..., "webgl2": ...}
     loaded = Signal(dict)
     failed = Signal(str)
+    # The user dragged the crop box: {"centre", "half_size", "yaw"} (upright frame).
+    crop_changed = Signal(dict)
 
     def __init__(self, cache: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -196,6 +197,7 @@ class ViewerWidget(QWidget):
         self.is_ready = False
         self.shown: views.View | None = None
         self._pending: views.View | None = None
+        self._crop: tuple[dict[str, Any] | None, bool] = (None, False)
         self.message = QLabel()
         self.message.setWordWrap(True)
         layout = QStackedLayout(self)
@@ -217,9 +219,11 @@ class ViewerWidget(QWidget):
         self.page = _Page(self.profile, self)
         _profiles[self.profile] = self.page
         self.page.destroyed.connect(partial(_release, self.profile))
+        global _quit_connected
         app = QCoreApplication.instance()
-        if app is not None:
-            app.aboutToQuit.connect(_shutdown, Qt.ConnectionType.UniqueConnection)
+        if app is not None and not _quit_connected:
+            app.aboutToQuit.connect(_shutdown)
+            _quit_connected = True
         self.view.setPage(self.page)
         layout.addWidget(self.view)
         layout.setCurrentWidget(self.view)
@@ -249,6 +253,16 @@ class ViewerWidget(QWidget):
         spec = views.spec(view, urls)
         self.page.runJavaScript(f"ez2d.show({json.dumps(spec)})")
 
+    def set_crop_box(self, box: dict[str, Any] | None, *, editable: bool = True) -> None:
+        """Show the crop box ({centre, half_size, yaw}, upright frame) or hide it (None)."""
+        self._crop = (box, editable)
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript(f"ez2d.setCropBox({json.dumps(box)}, {json.dumps(editable)})")
+
+    def frame_crop_box(self) -> None:
+        if AVAILABLE and self.is_ready:
+            self.page.runJavaScript("ez2d.frameCropBox()")
+
     def clear(self) -> None:
         self.shown = None
         self._pending = None
@@ -260,6 +274,8 @@ class ViewerWidget(QWidget):
         if kind == "ready":
             self.is_ready = True
             self.ready.emit(event)
+            if self._crop[0] is not None:
+                self.set_crop_box(self._crop[0], editable=self._crop[1])
             if event.get("webgl") is False:
                 self.failed.emit(
                     "The 3D view needs WebGL, which this graphics driver doesn't offer "
@@ -271,6 +287,9 @@ class ViewerWidget(QWidget):
                 self.show_view(pending)
         elif kind == "loaded":
             self.loaded.emit(event)
+        elif kind == "cropbox":
+            self._crop = (event, self._crop[1])
+            self.crop_changed.emit(event)
         elif kind in ("error", "console-error"):
             self.failed.emit(str(event.get("message", "unknown error")))
 
@@ -280,6 +299,7 @@ class ViewerWidget(QWidget):
 # `_release` follows; at exit, when Python would tear them down in any
 # order, `_shutdown` deletes all pages, then all profiles.
 _profiles: dict[Any, Any] = {}
+_quit_connected = False
 
 
 def _release(profile: Any, *_args: object) -> None:

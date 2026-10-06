@@ -410,3 +410,29 @@ def test_two_sided_scan_notices(
     notices = [e.message for e in events if isinstance(e, Notice)]
     assert not any(n.startswith("two-sided scan") for n in notices)
     assert any(n.startswith("both sides joined: 3 of 3 photos") for n in notices)
+
+
+def test_crop_box_reaches_densify(project: Project, tools: Tools) -> None:
+    from ez2digitize import crop
+
+    pipeline.run_sparse(project, tools)
+    run = crop.camera_run(project)
+    assert run is not None
+    upright_box = crop.UprightBox((0.0, 0.0, 0.0), (1.0, 2.0, 3.0))
+    crop.save(project, crop.from_upright(upright_box, None, run))
+    events, handler = _collect()
+    pipeline.run_dense(project, tools, on_event=handler)
+    densify = project.stage_dir("densify")
+    log = (densify / "log.txt").read_text()
+    assert f"--import-roi-file {densify / 'crop_box.txt'} --crop-to-roi 1" in log
+    assert (densify / "crop_box.txt").read_text().splitlines()[-1] == "1.0 2.0 3.0"
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert "the dense cloud keeps what is inside the crop box" in notices
+
+    # A new camera placement: the old box doesn't fit its coordinates.
+    pipeline.run_sparse(project, tools, force_from="mapping")
+    events, handler = _collect()
+    pipeline.run_dense(project, tools, on_event=handler)
+    assert "--import-roi-file" not in (densify / "log.txt").read_text()
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any("drawn on an earlier camera placement" in n for n in notices)

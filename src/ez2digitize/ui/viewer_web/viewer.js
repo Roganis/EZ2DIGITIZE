@@ -245,7 +245,165 @@ async function show(spec) {
   report("loaded", { kind: spec.kind, count: loaded.count, unit: loaded.unit, load_ms: loadMs });
 }
 
+// --- The crop box -------------------------------------------------------------
+//
+// A box in the upright frame (Y up), turned about Y by `yaw` degrees: what
+// the dense reconstruction keeps (ez2digitize.crop). Dragging one of its six
+// handles moves that face along its axis, the opposite face staying put;
+// the new box is reported when the drag ends ("cropbox" event).
+
+const cropGroup = new THREE.Group();
+cropGroup.visible = false;
+scene.add(cropGroup);
+const cropBox = { centre: new THREE.Vector3(), half: new THREE.Vector3(1, 1, 1), yaw: 0 };
+let cropEditable = false;
+const unitBox = new THREE.BoxGeometry(2, 2, 2);
+const boxFaces = new THREE.Mesh(
+  unitBox,
+  new THREE.MeshBasicMaterial({ color: 0xfbbc04, transparent: true, opacity: 0.06, depthWrite: false }),
+);
+const boxEdges = new THREE.LineSegments(
+  new THREE.EdgesGeometry(unitBox),
+  new THREE.LineBasicMaterial({ color: 0xfbbc04 }),
+);
+cropGroup.add(boxFaces, boxEdges);
+const handleGeometry = new THREE.SphereGeometry(1, 16, 12);
+const handles = [];
+for (let axis = 0; axis < 3; axis++) {
+  for (const sign of [-1, 1]) {
+    const handle = new THREE.Mesh(handleGeometry, new THREE.MeshBasicMaterial({ color: 0xfbbc04 }));
+    handle.userData = { axis, sign };
+    handles.push(handle);
+    cropGroup.add(handle);
+  }
+}
+
+function layoutCropBox() {
+  cropGroup.position.copy(cropBox.centre);
+  cropGroup.rotation.set(0, THREE.MathUtils.degToRad(cropBox.yaw), 0);
+  boxFaces.scale.copy(cropBox.half);
+  boxEdges.scale.copy(cropBox.half);
+  for (const handle of handles) {
+    const { axis, sign } = handle.userData;
+    handle.position.set(0, 0, 0).setComponent(axis, sign * cropBox.half.getComponent(axis));
+    handle.visible = cropEditable;
+  }
+}
+
+// Handles keep the same size on screen (about 7 px), however far the view is.
+const HANDLE_PX = 7;
+function scaleHandles() {
+  if (!cropGroup.visible) return;
+  const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / renderer.domElement.clientHeight;
+  const position = new THREE.Vector3();
+  for (const handle of handles) {
+    handle.getWorldPosition(position);
+    handle.scale.setScalar(position.distanceTo(camera.position) * perPixel * HANDLE_PX);
+  }
+}
+
+function cropReport() {
+  report("cropbox", {
+    centre: cropBox.centre.toArray(),
+    half_size: cropBox.half.toArray(),
+    yaw: cropBox.yaw,
+  });
+}
+
+const pointer = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+let drag = null;
+
+function setPointer(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointer, camera);
+}
+
+// Where the mouse ray passes closest to the line `origin + t * direction`: t.
+function closestOnLine(origin, direction) {
+  const ray = raycaster.ray;
+  const w0 = origin.clone().sub(ray.origin);
+  const b = direction.dot(ray.direction);
+  const d = direction.dot(w0);
+  const e = ray.direction.dot(w0);
+  const denom = 1 - b * b; // both unit vectors
+  return Math.abs(denom) < 1e-9 ? 0 : (b * e - d) / denom;
+}
+
+renderer.domElement.addEventListener("pointerdown", (event) => {
+  if (!cropGroup.visible || !cropEditable || event.button !== 0) return;
+  setPointer(event);
+  const hit = raycaster.intersectObjects(handles, false)[0];
+  if (!hit) return;
+  const { axis, sign } = hit.object.userData;
+  const direction = new THREE.Vector3().setComponent(axis, sign).applyQuaternion(cropGroup.quaternion);
+  const face = cropBox.centre.clone().addScaledVector(direction, cropBox.half.getComponent(axis));
+  const opposite = cropBox.centre.clone().addScaledVector(direction, -cropBox.half.getComponent(axis));
+  drag = { axis, direction, face, opposite, start: closestOnLine(face, direction) };
+  controls.enabled = false;
+  try {
+    renderer.domElement.setPointerCapture(event.pointerId);
+  } catch {
+    // synthetic events (tests) have no capturable pointer
+  }
+});
+
+renderer.domElement.addEventListener("pointermove", (event) => {
+  if (!drag) return;
+  setPointer(event);
+  const moved = closestOnLine(drag.face, drag.direction) - drag.start;
+  const face = drag.face.clone().addScaledVector(drag.direction, moved);
+  const minimum = (framedBox ? framedBox.getSize(new THREE.Vector3()).length() : 1) * 0.005;
+  const extent = Math.max(face.clone().sub(drag.opposite).dot(drag.direction), minimum);
+  cropBox.half.setComponent(drag.axis, extent / 2);
+  cropBox.centre.copy(drag.opposite).addScaledVector(drag.direction, extent / 2);
+  layoutCropBox();
+});
+
+function endDrag(event) {
+  if (!drag) return;
+  drag = null;
+  controls.enabled = true;
+  try {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+  } catch {
+    // see pointerdown
+  }
+  cropReport();
+}
+renderer.domElement.addEventListener("pointerup", endDrag);
+renderer.domElement.addEventListener("pointercancel", endDrag);
+
 window.ez2d = {
+  // box: {centre, half_size, yaw} in the upright frame, or null to hide it.
+  setCropBox(box, editable = true) {
+    cropGroup.visible = Boolean(box);
+    cropEditable = Boolean(box) && editable;
+    if (box) {
+      cropBox.centre.fromArray(box.centre);
+      cropBox.half.fromArray(box.half_size);
+      cropBox.yaw = box.yaw ?? 0;
+      layoutCropBox();
+    }
+  },
+  // Where a handle is on screen (client pixels), for tests that drag it.
+  handleOnScreen(axis, sign) {
+    const handle = handles.find((h) => h.userData.axis === axis && h.userData.sign === sign);
+    scene.updateMatrixWorld(true);
+    const p = handle.getWorldPosition(new THREE.Vector3()).project(camera);
+    const rect = renderer.domElement.getBoundingClientRect();
+    return [rect.left + ((p.x + 1) / 2) * rect.width, rect.top + ((1 - p.y) / 2) * rect.height];
+  },
+  // Frame the view on the crop box (after "Fit to the points").
+  frameCropBox() {
+    if (!cropGroup.visible) return;
+    cropGroup.updateMatrixWorld(true);
+    frame(new THREE.Box3().setFromObject(boxEdges).expandByScalar(cropBox.half.length() * 0.3));
+  },
   show(spec) {
     show(spec).catch((err) => {
       hud.textContent = `${spec.label}: could not be shown`;
@@ -263,6 +421,7 @@ window.ez2d = {
 
 renderer.setAnimationLoop(() => {
   controls.update();
+  scaleHandles();
   renderer.render(scene, camera);
 });
 

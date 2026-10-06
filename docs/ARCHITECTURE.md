@@ -369,6 +369,18 @@ the 3D view tab is first shown.
 - Without WebGL the page still loads and says so; the packaged apps'
   self-test checks that the page loads (QtWebEngine works in the bundle).
 
+## Crop box (`crop.py`)
+
+An oriented box in the reconstruction's coordinates (OpenMVS's region of
+interest: rotation rows, centre, half sizes), stored in project.json
+`settings["crop_box"]` with the run id of the mapping stage it was drawn
+on; a new camera placement makes it stale (ignored, with a notice). The
+densify stage writes it to `crop_box.txt` and passes `--import-roi-file`,
+replacing OpenMVS's own estimate; its text is part of the stage's
+parameters, so a changed box re-runs densification and what follows.
+The viewer edits it in the upright frame, level and turned about the
+vertical (`UprightBox`); `from_upright`/`to_upright` convert.
+
 Splat path (Phase 3) branches after `undistort`:
 
 ```

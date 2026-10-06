@@ -27,6 +27,7 @@ from ez2digitize.pipeline import (
     PipelineCancelled,
     PipelineError,
     PipelineEvent,
+    SparseResult,
     SplatResult,
     StageFailed,
     StageFinished,
@@ -38,7 +39,7 @@ from ez2digitize.pipeline import (
 
 FLUSH_S = 0.1
 
-PipelineFunction = Callable[..., MeshResult | SplatResult]
+PipelineFunction = Callable[..., SparseResult | MeshResult | SplatResult]
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,7 @@ class PipelineRunner(QObject):
     output = Signal(list)  # lines of tool output
     notice = Signal(str)
     stage_finished = Signal(str, str, bool, float)  # stage, status, reused, seconds
-    succeeded = Signal(object)  # MeshResult
+    succeeded = Signal(object)  # SparseResult, MeshResult or SplatResult
     failed = Signal(object)  # Failure
     cancelled = Signal()
 

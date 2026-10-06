@@ -77,7 +77,7 @@ class View:
 def available(project: Project) -> list[View]:
     """The views this project has results for, best first (see ORDER)."""
     views: dict[ViewKey, View] = {}
-    up = _upright(project)
+    up = upright_rotation(project)
 
     texture = _succeeded(project, "texture")
     if texture is not None:
@@ -222,7 +222,7 @@ def _dense_ply(project: Project) -> Path:
     return project.stage_dir("densify") / "scene_dense.ply"
 
 
-def _upright(project: Project) -> Matrix | None:
+def upright_rotation(project: Project) -> Matrix | None:
     """The rotation that stands the reconstruction up (as the export does)."""
     model = project.stage_dir("undistort") / "sparse"
     if not (model / "images.bin").is_file():

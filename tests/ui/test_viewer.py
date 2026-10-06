@@ -80,3 +80,42 @@ def test_page_shows_a_view(qtbot: QtBot, tmp_path: Path) -> None:
     event = loaded.args[0]
     assert event["kind"] == "cameras" and event["count"] == 2
     assert event["unit"] == "points, 1 cameras"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_dragging_a_crop_box_face(qtbot: QtBot, tmp_path: Path) -> None:
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(500, 400)
+    widget.show()
+    widget.show_view(_camera_view(tmp_path))
+    with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS):
+        pass
+    box = {"centre": [0.0, 0.0, 4.5], "half_size": [0.5, 0.5, 0.5], "yaw": 0.0}
+    widget.set_crop_box(box)
+    widget.frame_crop_box()
+
+    def call(script: str) -> object:
+        with qtbot.waitCallback(timeout=TIMEOUT_MS) as callback:
+            widget.page.runJavaScript(script, 0, callback)
+        assert callback.args is not None
+        return callback.args[0]
+
+    qtbot.wait(300)  # a frame or two with the new camera
+    # Arrays don't cross into Python as they are: JSON.
+    x, y = json.loads(str(call("JSON.stringify(ez2d.handleOnScreen(0, 1))")))  # the +X face
+    events = (
+        f"const c = document.querySelector('canvas');"
+        f"const ev = (type, x) => c.dispatchEvent(new PointerEvent(type, {{clientX: x, "
+        f"clientY: {y}, button: 0, pointerId: 1, bubbles: true}}));"
+        f"ev('pointerdown', {x}); ev('pointermove', {x} + 60); ev('pointerup', {x} + 60); 1"
+    )
+    with qtbot.waitSignal(widget.crop_changed, timeout=TIMEOUT_MS) as changed:
+        call(events)
+    assert changed.args is not None
+    moved = changed.args[0]
+    # The +X face moved out; the -X face stayed: the box grew and its centre followed.
+    assert moved["half_size"][0] > 0.55
+    assert moved["centre"][0] - moved["half_size"][0] == pytest.approx(-0.5, abs=1e-3)
+    assert moved["half_size"][1:] == [0.5, 0.5] and moved["centre"][1:] == [0.0, 4.5]

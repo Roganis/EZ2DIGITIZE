@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ez2digitize import coverage, sides
+from ez2digitize import coverage, crop, sides
 from ez2digitize.backends import brush, colmap, colmap_model, openmvs
 from ez2digitize.backends.common import BackendError, BackendMissing
 from ez2digitize.core import photos
@@ -125,7 +125,7 @@ class Notice:
 
 
 PipelineEvent = StageStarted | StageOutput | StageFinished | Notice
-PipelineFunction = Callable[..., "MeshResult | SplatResult"]
+PipelineFunction = Callable[..., "SparseResult | MeshResult | SplatResult"]
 PipelineHandler = Callable[[PipelineEvent], None]
 
 
@@ -471,9 +471,26 @@ def _dense(
     mvs = tools.openmvs
 
     imported = run(openmvs.import_colmap(mvs, project, sparse.undistorted))
+    box = crop.current(project)
+    if box is None and crop.stored(project) is not None:
+        run.emit(
+            Notice(
+                "the crop box was drawn on an earlier camera placement, so it is not used; "
+                "set it again in the 3D view"
+            )
+        )
     dense = run(
-        openmvs.densify(mvs, project, imported, masks=sparse.masks, options=settings.densify)
+        openmvs.densify(
+            mvs,
+            project,
+            imported,
+            masks=sparse.masks,
+            options=settings.densify,
+            roi=box.roi_text() if box is not None else None,
+        )
     )
+    if box is not None:
+        run.emit(Notice("the dense cloud keeps what is inside the crop box"))
     mesh = run(openmvs.reconstruct_mesh(mvs, project, dense, options=settings.mesh))
     if settings.refine is not None:
         mesh = run(openmvs.refine_mesh(mvs, project, dense, mesh, options=settings.refine))

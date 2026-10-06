@@ -164,6 +164,9 @@ def import_colmap(
     )
 
 
+ROI_FILE = "crop_box.txt"
+
+
 def densify(
     mvs: OpenMVS,
     project: Project,
@@ -172,13 +175,18 @@ def densify(
     masks: StageManifest | None = None,
     stage: str = "densify",
     options: DensifyOptions | None = None,
+    roi: str | None = None,
 ) -> StageSpec:
-    """DensifyPointCloud, optionally masked.
+    """DensifyPointCloud, optionally masked and cropped.
 
     `masks` is a `colmap.undistort_masks` stage: one `<stem>.mask.png` per
     undistorted image, where 0 marks background to ignore. The mask paths
     are saved into the dense scene relative to this stage's folder, which
     resolves the same from the later sibling stages.
+
+    `roi` is a region of interest in OpenMVS's text form (see crop.CropBox):
+    the dense cloud keeps only what is inside, instead of the region OpenMVS
+    estimates from the sparse points.
     """
     options = options or DensifyOptions()
     stage_dir = project.stage_dir(stage)
@@ -201,14 +209,22 @@ def densify(
             "0",
         ]
         inputs["masks"] = stage_input(masks)
+    prepare = None
+    if roi is not None:
+        argv += ["--import-roi-file", stage_dir / ROI_FILE, "--crop-to-roi", "1"]
+
+        def prepare(folder: Path) -> None:
+            (folder / ROI_FILE).write_text(roi, encoding="utf-8")
+
     return StageSpec(
         name=stage,
         backend=mvs.backend,
         argv=argv,
-        parameters={**result_parameters(options), "masked": masks is not None},
+        parameters={**result_parameters(options), "masked": masks is not None, "roi": roi},
         inputs=inputs,
         parse_line=OpenMVSProgress(),
         use_pty=True,
+        prepare=prepare,
     )
 
 

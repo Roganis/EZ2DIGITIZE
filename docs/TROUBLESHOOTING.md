@@ -44,8 +44,12 @@ logs and settings, never your photos. The logs do contain file paths.
   photos split into separate groups", "no photos from about 120° of the way
   around", "the camera hardly moved". Each points to the capture.
 - **The table or mat is part of the model.** Expected without masks; the
-  export keeps everything the photos saw. Make masks (Masks tab) and build
-  again; cropping in the app comes with the viewer.
+  export keeps everything the photos saw. Make masks (Masks tab), or set a
+  crop box (3D view, camera placement or dense cloud: Crop box), and build
+  again.
+- **"The crop box was drawn on an earlier camera placement".** The cameras
+  were placed again (new photos, other settings), which changes the
+  coordinates; set the box again in the 3D view.
 - **Part of the object is missing after using masks.** A mask cut it off.
   In the Masks tab, look at "To look at" first, then the rest: uncheck the
   photos whose red tint covers part of the object, and build again.

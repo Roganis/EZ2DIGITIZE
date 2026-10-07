@@ -98,9 +98,8 @@ if [ "$OS" = windows ]; then
     LIBOMP_LIB=$(cygpath -m "$(cygpath -u "$VCToolsInstallDir")/lib/x64/libomp.lib")
     [ -e "$LIBOMP_LIB" ] || { echo "error: $LIBOMP_LIB not found" >&2; exit 1; }
     # CMake's defaults for clang-cl (written with "-": Git Bash rewrites
-    # arguments starting with "/" as paths), and -w: COLMAP adds -Wall for compilers
-    # other than MSVC, which clang-cl takes as every warning there is
-    # (35,000 of them, 350,000 lines of log).
+    # arguments starting with "/" as paths), and -w: clang-cl's warnings
+    # on these sources ran to 35,000, 350,000 lines of log.
     PLATFORM_ARGS+=(
       -DCMAKE_C_FLAGS="-DWIN32 -D_WINDOWS -w"
       -DCMAKE_CXX_FLAGS="-DWIN32 -D_WINDOWS -GR -EHsc -w"
@@ -116,16 +115,14 @@ if [ "$OS" = windows ]; then
 fi
 
 # COLMAP picks its Windows settings by compiler ID ("MSVC"), which clang-cl
-# isn't ("Clang"): the definitions it would add are given here, and its
-# link-time optimisation, which it turns on for every compiler but GCC, is
-# left off as with GCC on Linux (it would make lld-link do the work again).
+# isn't ("Clang"): without them, Windows' min/max macros break its code and
+# faiss is built in a SIMD mode COLMAP says MSVC can't do. COLMAP only ever
+# sets IS_MSVC to true, so setting it here gives back all its MSVC settings
+# (those the MSVC build uses). Its link-time optimisation, on for every
+# compiler but GCC, stays off as with GCC on Linux.
 COLMAP_ARGS=()
 if [ "$OS" = windows ] && [ "$WINDOWS_COMPILER" = clang-cl ]; then
-  COLMAP_ARGS=(
-    -DCMAKE_CXX_FLAGS="-DWIN32 -D_WINDOWS -GR -EHsc -w -DNOMINMAX -DGLOG_USE_GLOG_EXPORT -DGLOG_NO_ABBREVIATED_SEVERITIES -DGL_GLEXT_PROTOTYPES"
-    -DCMAKE_C_FLAGS="-DWIN32 -D_WINDOWS -w -DNOMINMAX"
-    -DIPO_ENABLED=OFF
-  )
+  COLMAP_ARGS=(-DIS_MSVC=TRUE -DIPO_ENABLED=OFF)
 fi
 
 PREFIX=$WORK/prefix

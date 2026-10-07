@@ -97,7 +97,12 @@ if [ "$OS" = windows ]; then
     # and libomp140.x86_64.dll in the redistributable, shipped below).
     LIBOMP_LIB=$(cygpath -m "$(cygpath -u "$VCToolsInstallDir")/lib/x64/libomp.lib")
     [ -e "$LIBOMP_LIB" ] || { echo "error: $LIBOMP_LIB not found" >&2; exit 1; }
+    # CMake's defaults for clang-cl, and -w: COLMAP adds -Wall for compilers
+    # other than MSVC, which clang-cl takes as every warning there is
+    # (35,000 of them, 350,000 lines of log).
     PLATFORM_ARGS+=(
+      -DCMAKE_C_FLAGS="/DWIN32 /D_WINDOWS -w"
+      -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /GR /EHsc -w"
       -DCMAKE_C_COMPILER="$(cygpath -m "$CLANG_CL")"
       -DCMAKE_CXX_COMPILER="$(cygpath -m "$CLANG_CL")"
       -DCMAKE_LINKER="$(cygpath -m "$LLD_LINK")"
@@ -107,6 +112,19 @@ if [ "$OS" = windows ]; then
     )
     "$CLANG_CL" --version | head -1
   fi
+fi
+
+# COLMAP picks its Windows settings by compiler ID ("MSVC"), which clang-cl
+# isn't ("Clang"): the definitions it would add are given here, and its
+# link-time optimisation, which it turns on for every compiler but GCC, is
+# left off as with GCC on Linux (it would make lld-link do the work again).
+COLMAP_ARGS=()
+if [ "$OS" = windows ] && [ "$WINDOWS_COMPILER" = clang-cl ]; then
+  COLMAP_ARGS=(
+    -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /GR /EHsc -w /DNOMINMAX /DGLOG_USE_GLOG_EXPORT /DGLOG_NO_ABBREVIATED_SEVERITIES /DGL_GLEXT_PROTOTYPES"
+    -DCMAKE_C_FLAGS="/DWIN32 /D_WINDOWS -w /DNOMINMAX"
+    -DIPO_ENABLED=OFF
+  )
 fi
 
 PREFIX=$WORK/prefix
@@ -130,6 +148,7 @@ cmake -S colmap -B colmap-build -G Ninja \
   -DONNX_ENABLED=ON -DCGAL_ENABLED=OFF -DDOWNLOAD_ENABLED=OFF -DTESTS_ENABLED=OFF \
   -DCCACHE_ENABLED=OFF \
   ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} \
+  ${COLMAP_ARGS[@]+"${COLMAP_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/colmap-install"
 cmake --build colmap-build --parallel "$JOBS"
 cmake --install colmap-build

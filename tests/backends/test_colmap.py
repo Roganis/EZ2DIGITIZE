@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+import math
 import sqlite3
 import struct
 from collections.abc import Callable
@@ -206,6 +207,44 @@ def test_matching_for_large_sets(project: Project, tmp_path: Path) -> None:
     assert _opt(similar, "--VocabTreeMatching.num_images") == "100"
     with pytest.raises(BackendError, match="needs the tree"):
         colmap.match_features(TOOL, project, features, options=MatchOptions("vocab_tree"))
+
+
+def test_nearby_pairs() -> None:
+    """Nearest neighbours looking the same way, whatever the unit."""
+    ring = {}
+    for k in range(8):  # a ring of cameras looking in
+        angle = 2 * math.pi * k / 8
+        x, z = math.cos(angle), math.sin(angle)
+        ring[f"{k}.jpg"] = ((3 * x, 0.0, 3 * z), (-x, 0.0, -z))
+    pairs = colmap.nearby_pairs(ring, neighbours=2, max_angle_deg=50)
+    assert pairs == sorted({tuple(sorted((f"{k}.jpg", f"{(k + 1) % 8}.jpg"))) for k in range(8)})
+    metres = {n: ((1000 * x, 1000 * y, 1000 * z), v) for n, ((x, y, z), v) in ring.items()}
+    assert colmap.nearby_pairs(metres, neighbours=2, max_angle_deg=50) == pairs
+    assert colmap.nearby_pairs(ring, neighbours=2, max_angle_deg=30) == []
+
+
+def test_matching_listed_pairs(project: Project) -> None:
+    pairs = [("c/a.jpg", "c/b.jpg"), ("c/b.jpg", "c/c.jpg")]
+    spec = colmap.match_listed(TOOL, project, _manifest("features"), pairs, mode="known_poses")
+    matching_dir = project.stage_dir("matching")
+    assert spec.argv[1] == "matches_importer"
+    assert _opt(spec, "--match_list_path") == str(matching_dir / colmap.PAIRS)
+    assert _opt(spec, "--match_type") == "pairs"
+    assert spec.parameters["mode"] == "known_poses"
+    assert spec.inputs == {"features": "run:abc"}
+    fewer = colmap.match_listed(TOOL, project, _manifest("features"), pairs[:1])
+    assert fewer.cache_key() != spec.cache_key()
+
+    features_dir = project.stage_dir("features")
+    features_dir.mkdir()
+    (features_dir / "database.db").write_bytes(b"db")
+    matching_dir.mkdir()
+    assert spec.prepare is not None
+    spec.prepare(matching_dir)
+    assert (matching_dir / "database.db").read_bytes() == b"db"
+    assert (matching_dir / "pairs.txt").read_text() == "c/a.jpg c/b.jpg\nc/b.jpg c/c.jpg\n"
+    with pytest.raises(BackendError, match="no photo pairs"):
+        colmap.match_listed(TOOL, project, _manifest("features"), [])
 
 
 def test_learned_features(project: Project, tmp_path: Path) -> None:

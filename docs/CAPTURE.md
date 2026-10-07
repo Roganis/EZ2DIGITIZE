@@ -140,7 +140,9 @@ an object), and plain walls and floors are kept when meshing.
   COLMAP's vocabulary tree, which is downloaded once. Without it, each
   photo is compared with those taken just before and after it, so take
   them in order then. Videos are compared frame by frame, with the tree
-  finding where a walk comes back to its start.
+  finding where a walk comes back to its start; a video whose motion track
+  records where the camera was (CAMM, from ARCore-style tracking apps)
+  compares each frame with those seeing the same side instead.
 - **Size and memory.** Large scenes need far more memory in the dense
   step. Start with Fast, and use the crop box to keep only the part you
   want.

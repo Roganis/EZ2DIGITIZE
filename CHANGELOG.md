@@ -32,7 +32,9 @@ The first release.
   every frame, and the model is stood upright from it instead of from how
   the camera was held. Their frames are spaced by the angle the camera
   turned rather than by time, and frames taken while it swung fast are
-  passed over.
+  passed over. Long videos (over 200 frames) whose CAMM track records the
+  camera's position as well are matched by those poses: each frame with
+  the ones looking at the same side.
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.

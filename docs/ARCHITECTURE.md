@@ -418,7 +418,12 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
   stage is reused and `force_from` re-runs a stage and everything after it.
 - Matching (`_matching`) is exhaustive up to 200 images, which take about
-  3 minutes; pairs grow with the square. Beyond that: video frames
+  3 minutes; pairs grow with the square. Beyond that, if every image has a
+  recorded pose from one recording (`motion.known_poses`, CAMM's 6DoF
+  samples), the pairs come from the poses (`_pose_guided_pairs`:
+  `colmap.nearby_pairs`, the 20 nearest looking within 60°, plus the next 5
+  frames; run by `colmap.match_listed`, `matches_importer`, like the
+  refinement of a plugin's poses). Otherwise: video frames
   sequentially, with loop detection by COLMAP's vocabulary tree; photos by
   their EXIF GPS position if 90% have one (`spatial`); else by image
   retrieval with the vocabulary tree (`vocab_tree`); else sequentially in

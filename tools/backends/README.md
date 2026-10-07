@@ -76,7 +76,22 @@ Windows. It then runs the benchmark harness (POSIX only, so not on Windows) on t
 binaries ([`backends-smoke.toml`](../feasibility/plans/backends-smoke.toml))
 and the app's own backend modules on the same scene
 (`tests/backends/test_real_pipeline.py`), and uploads the archives as
-artifacts for 14 days.
+artifacts for 90 days. It runs only when `tools/backends` or the workflow
+changes.
+
+The [Backend tests workflow](../../.github/workflows/backend-tests.yml) runs
+`tests/backends` on all three platforms without building: it takes the
+archives of the newest Backends run (the branch's, then main's), so a change
+to the app's side (`src/`) is checked against the real tools in about ten
+minutes.
+
+Build time on the CI runners, with the vcpkg cache: Linux and macOS about
+15 minutes; Windows took 1 hour 22 minutes, 55 of them linking OpenMVS with
+MSVC's link-time code generation, now turned off (see Patches). Without the
+cache, Windows took over 3 and a half hours. The cache is saved only when the build added
+packages to it, since every saved copy takes about 800 MB of the
+repository's 10 GB; caches belong to their branch, and a pull request also
+reads main's.
 
 ## Results of the first CI builds
 
@@ -103,7 +118,7 @@ vcpkg 2026.07.29).
 ## Patches
 
 `patches/openmvs-*.patch` are upstream OpenMVS fixes released after the
-pinned version; `build.sh` applies them to the checkout and lists them in
+pinned version, and one build change of ours; `build.sh` applies them to the checkout and lists them in
 `BUILDINFO.json` (`openmvs_patches`). Each patch's header says what it fixes
 and which upstream commit it comes from. Drop a patch when the pin moves
 past that commit.
@@ -112,6 +127,13 @@ past that commit.
   they held float colours, so TextureMesh's local seam leveling fills
   the atlas with black blobs and saturated red/green/blue specks (seen on
   the skull turntable set). Fixed upstream in `eeedab7`.
+- `openmvs-2.4.0-msvc-ipo-option.patch` (ours, not upstream): under MSVC,
+  OpenMVS always adds `/GL` and `/LTCG` to Release builds. With the static
+  dependencies, link-time code generation took 55 of the 58 minutes of the
+  OpenMVS build on the Windows runner. The patch makes those flags follow
+  `OpenMVS_ENABLE_IPO` (default on, as upstream), and `build.sh` turns it
+  off on Windows. `build.sh` also builds only the five OpenMVS tools the
+  app runs.
 
 `patches/vcpkg-*.patch` fix ports of the pinned vcpkg release. On Windows,
 `build.sh` and `collect_sources.sh` copy the ports they touch, apply them

@@ -1,0 +1,28 @@
+OpenMVS 2.4.0: MSVC's whole-program optimization follows OpenMVS_ENABLE_IPO.
+
+Not an upstream fix: an EZ2DIGITIZE build-time change. Under MSVC,
+fix_default_compiler_settings adds /GL and /LTCG to every Release build,
+whatever OpenMVS_ENABLE_IPO says. With the vcpkg dependencies linked
+statically, link-time code generation took 55 of the 58 minutes of the
+OpenMVS build on the Windows CI runner (TextureMesh alone 20 minutes). The
+flags now follow OpenMVS_ENABLE_IPO (default ON, so upstream's behaviour
+is unchanged), which build.sh turns off on Windows. Other compilers don't
+read this block.
+
+diff --git a/build/Utils.cmake b/build/Utils.cmake
+index 28cc3e5..ef7cac3 100644
+--- a/build/Utils.cmake
++++ b/build/Utils.cmake
+@@ -752,10 +752,12 @@ macro(fix_default_compiler_settings)
+ 			endforeach()
+ 		endif()
+ 		# Set WholeProgramOptimization flags for release
++		if(OpenMVS_ENABLE_IPO)
+ 		SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /GL")
+ 		SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+ 		SET(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
+ 		SET(CMAKE_MODULE_LINKER_FLAGS_RELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE} /LTCG")
++		endif()
+ 	endif()
+ 	# Save libs and executables in the same place
+ 	SET(LIBRARY_OUTPUT_PATH "${CMAKE_BINARY_DIR}/lib${PACKAGE_LIB_SUFFIX}" CACHE PATH "Output directory for libraries")

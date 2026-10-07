@@ -162,3 +162,29 @@ def test_progress() -> None:
         None,
         None,
     ]
+
+
+def test_progress_from_the_log_file() -> None:
+    # On Windows the counters go to OpenMVS's own console; the log file has a
+    # line per depth map and pass instead.
+    parse = OpenMVSProgress()
+    lines = [
+        "23:03:47 [ScnDense] Selecting images for dense reconstruction completed: 4 images (2ms)",
+        "23:03:49 [ScnDense] Depth-map for image   1 estimated using  4 images: 630x472 (2s538ms)",
+        "23:03:51 [ScnDense] Depth-map for image  25 estimated using  2 images: 630x472 (1s640ms)",
+        "23:03:52 [ScnDense] Depth-map for image   3 estimated using  2 images: 630x472 (1s)",
+        "23:03:53 [ScnDense] Depth-map for image   1 estimated using  4 images: 630x472 (1s)",
+        "23:03:54 [ScnDense] Depth-map for image   3 estimated using  2 images: 630x472 (1s)",
+        "23:03:55 [ScnDense] Depth-map for image   3 estimated using  2 images: 630x472 (1s)",
+    ]
+    geometric = "Geometric-consistent estimated depth-maps"
+    assert [parse(line) for line in lines] == [
+        Progress("Selecting images for dense reconstruction completed"),
+        Progress("Estimated depth-maps", 0.25),
+        Progress("Estimated depth-maps", 0.5),
+        Progress("Estimated depth-maps", 0.75),  # one image had no depth map
+        Progress(geometric, 0.25),
+        Progress(geometric, 0.5),
+        Progress(geometric, 0.25),
+    ]
+    assert OpenMVSProgress()(lines[1]) is None  # the image count not seen

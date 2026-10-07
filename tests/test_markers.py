@@ -123,3 +123,40 @@ def test_cli(
     # Correcting the distance needs points picked by hand, not the markers' edge.
     assert main(["scale", str(project.root), "--distance", "50"]) == 1
     assert "pick two points first" in capsys.readouterr().err
+
+
+def test_detector_freed_before_its_families() -> None:
+    # pupil-apriltags frees the families first, then the detector reads them:
+    # a use after free at exit that sometimes aborted the process.
+    freed: list[str] = []
+
+    class Call:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.restype: object = "int"
+
+        def __call__(self, pointer: object) -> None:
+            freed.append(f"{self.name}({pointer})")
+
+    class Libc:
+        def __getattr__(self, name: str) -> Call:
+            call = Call(name)
+            setattr(self, name, call)
+            return call
+
+    class Detector:
+        tag_detector_ptr: object = "detector"
+        tag_families = {"tag36h11": "family"}
+        libc = Libc()
+
+    detector = Detector()
+    markers._destroy(detector)
+    markers._destroy(detector)  # already freed: nothing more
+    assert freed == ["apriltag_detector_destroy(detector)", "tag36h11_destroy(family)"]
+    assert detector.tag_detector_ptr is None
+
+
+def test_real_detector_frees_cleanly() -> None:
+    detector = type(markers._detector())(families=markers.FAMILY)
+    assert detector.detect(np.full((64, 64), 255, np.uint8)) == []
+    del detector  # with the library's own order this corrupted the heap

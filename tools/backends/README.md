@@ -129,8 +129,11 @@ macOS, and ignores `/GL`. On the same runner (Backends run 37669421809):
 
 Without link-time optimisation the binaries are no slower: the `compare`
 job ran the app's pipeline on 40 photos, two rounds per build, and the
-clang-cl build took 0.97× MSVC's time overall (densify, three quarters of
-it, 0.95×). Linux has never had link-time optimisation either (COLMAP
+clang-cl build took 0.97× MSVC's time overall (run 37669421809, with
+Visual Studio's OpenMP runtime) and 1.01× (run 37688019224, with LLVM's
+`libomp.dll` as shipped; a slower runner, 9.7 minutes for MSVC's build
+against 6.3). Densify, about three quarters of the run, came out at 0.95×
+and 1.02×: within the runner's noise. Linux has never had link-time optimisation either (COLMAP
 turns it off for GCC; OpenMVS only uses it with MSVC).
 
 What it takes:

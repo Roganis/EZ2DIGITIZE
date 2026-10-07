@@ -73,7 +73,10 @@ next to the photos or the video (`<name>.motion.json`, described in
 `src/ez2digitize/motion_log.py`; for a video, named after it, e.g.
 `VID_0001.motion.json`). Importing the folder, or the video, picks it up,
 and the photos get the same treatment as frames of a video with a motion
-track. This is the format the planned Android app will write.
+track. This is the format the planned Android app will write. When the
+log tracked the phone's position in metres (ARCore), the model gets a
+rough real size from it (within a percent or so, worse if the tracking
+drifted); the marker sheet still measures it better and replaces it.
 
 ## Turntables
 

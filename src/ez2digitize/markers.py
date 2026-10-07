@@ -398,12 +398,15 @@ def auto_scale(project: Project) -> str | None:
     """After camera placement: the scale from the markers, if the photos have any.
 
     A scale set by hand on this camera placement is kept (the markers are
-    compared with it); one from markers isn't measured again. Returns what
+    compared with it); one from markers isn't measured again, and one from
+    the phone's tracking is replaced. Returns what
     to tell the user, or None (no markers, or nothing new). Advice only:
     problems reading the placement are not errors here.
     """
     run = camera_run(project)
     current = scale.current(project)
+    if current is not None and current.source == "tracking":
+        current = None  # the markers measure it better
     if run is None or (current is not None and current.source == "markers"):
         return None
     size = project_size(project)

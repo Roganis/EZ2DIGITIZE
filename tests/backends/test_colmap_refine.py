@@ -200,10 +200,7 @@ for i, name in enumerate(names, 1):
 
 def _relative_rotation_errors(model: Path, truth: dict[str, dict[str, object]]) -> list[float]:
     """Degrees between each pair's relative rotation and the true one: frame-free."""
-    placed = {
-        name: np.array(colmap_refine._rotation(pose.qvec))
-        for name, pose in read_images(model).items()
-    }
+    placed = {name: np.array(pose.rotation) for name, pose in read_images(model).items()}
     names = sorted(placed)
     errors = []
     for i, a in enumerate(names):

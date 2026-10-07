@@ -46,7 +46,7 @@ from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
 from ez2digitize.masks import has_masks
-from ez2digitize.motion import known_poses, measured_downs
+from ez2digitize.motion import known_poses, measured_downs, metric_poses
 from ez2digitize.subject import Subject
 
 # "poses", "triangulation" and "pose-check": a camera placement plugin's poses
@@ -512,6 +512,8 @@ def _sparse(
     )
     if (note := markers.auto_scale(project)) is not None:
         run.emit(Notice(note))
+    if (note := _tracking_scale(project, model, bundles)) is not None:
+        run.emit(Notice(note))
     warped = None
     if masks is not None:
         try:
@@ -600,6 +602,29 @@ def _refined_mapping(
         )
     except BackendError as exc:
         raise PipelineError(f"refining the camera placement: {exc}") from exc
+
+
+def _tracking_scale(project: Project, model: Path, bundles: list[CaptureBundle]) -> str | None:
+    """The scale from camera positions tracked in metres (scale.from_tracking), if any.
+
+    Each recording has its own world, so the one with the most placed
+    photos is used.
+    """
+    metric = metric_poses(bundles)
+    by_world: dict[str, dict[str, tuple[float, float, float]]] = {}
+    for name, (world, pose) in known_poses(bundles).items():
+        if name in metric:
+            by_world.setdefault(world, {})[name] = (pose[0][3], pose[1][3], pose[2][3])
+    if not by_world:
+        return None
+    try:
+        placed = colmap_model.read_images(model)
+    except BackendError:
+        return None
+    centres = {name: image.centre for name, image in placed.items()}
+    tracked = max(by_world.values(), key=lambda poses: len(set(poses) & set(centres)))
+    measured = scale.measure_tracking(centres, tracked)
+    return None if measured is None else scale.from_tracking(project, measured)
 
 
 def _plugin_spec(build: Callable[[plugins.Plugin], StageSpec], plugin: plugins.Plugin) -> StageSpec:

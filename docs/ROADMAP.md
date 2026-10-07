@@ -495,6 +495,16 @@ fails, they can see which stage failed and why.
      it).
   4. A default scale from ARCore's metres (accuracy to measure; the marker
      sheet stays the precise way).
+     Done (`scale.measure_tracking`, `from_tracking`; after camera
+     placement, from poses a motion log marks metric): the median ratio of
+     distances between tracked cameras to those between the same cameras
+     placed by COLMAP, from at least 5 cameras that moved at least 15 cm.
+     Markers replace it, a scale set by hand is kept and compared. On the
+     synthetic 240-frame orbit (0.39 m radius) placed by COLMAP, with the
+     tracked positions drifting as a random walk of 1, 2 and 5 cm over the
+     recording, the scale came out 0.2, 0.3 and 0.8 % off (median of 20
+     runs; 0.6, 1.1 and 2.7 % at worst). ARCore's real drift on a small
+     orbit waits for the app.
   5. Known poses for MapAnything (`camera_poses` input, next to the EXIF
      focal length the plugin already passes) and as position priors for
      COLMAP's mapper (check what the pinned 4.2.1 supports).

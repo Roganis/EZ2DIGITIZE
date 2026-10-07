@@ -61,7 +61,8 @@ The first release.
     that matched few others.
   - A crop box: the dense cloud and mesh keep only what is inside.
   - Real-world scale from two picked points and their measured distance, or
-    by itself from a printed sheet of markers in the photos.
+    by itself from a printed sheet of markers in the photos, or roughly from
+    the phone's tracking when a motion log recorded it in metres.
   - Upright: which way is up comes from how the photos were held, or is
     set by hand (level on three points, tip, turn).
 

@@ -39,7 +39,6 @@ database only has a guess from EXIF, and the triangulation holds them).
 from __future__ import annotations
 
 import contextlib
-import math
 import sqlite3
 import struct
 from collections import defaultdict
@@ -71,28 +70,11 @@ def pose_pairs(
     max_angle_deg: float = colmap.MAX_PAIR_ANGLE_DEG,
 ) -> list[tuple[str, str]]:
     """The photo pairs worth matching, from a model's poses (`colmap.nearby_pairs`)."""
-    cameras = {}
-    for name, pose in read_images(model_dir).items():
-        r = _rotation(pose.qvec)  # world to camera
-        t = pose.tvec
-        centre = (
-            -(r[0][0] * t[0] + r[1][0] * t[1] + r[2][0] * t[2]),
-            -(r[0][1] * t[0] + r[1][1] * t[1] + r[2][1] * t[2]),
-            -(r[0][2] * t[0] + r[1][2] * t[1] + r[2][2] * t[2]),
-        )
-        cameras[name] = (centre, r[2])  # r[2]: the camera's z axis in the world
+    cameras = {
+        name: (pose.centre, pose.rotation[2])  # rotation[2]: the camera's z axis in the world
+        for name, pose in read_images(model_dir).items()
+    }
     return colmap.nearby_pairs(cameras, neighbours=neighbours, max_angle_deg=max_angle_deg)
-
-
-def _rotation(q: tuple[float, float, float, float]) -> tuple[Vector, Vector, Vector]:
-    w, x, y, z = q
-    n = math.sqrt(w * w + x * x + y * y + z * z) or 1.0
-    w, x, y, z = w / n, x / n, y / n, z / n
-    return (
-        (1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
-        (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
-        (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
-    )
 
 
 # --- the known-poses model -----------------------------------------------------------

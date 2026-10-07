@@ -222,8 +222,21 @@ if [ "$OS" = windows ]; then
   # with the GCC runtime). Windows' own DLLs are found nowhere here and skipped.
   CRT=$(dirname "$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name vcruntime140.dll -path '*.CRT*' | head -1)")
   # LLVM's OpenMP runtime, for code built with clang-cl.
-  OMP_LLVM_DLL=$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name 'libomp140*.dll' -path '*OpenMP.LLVM*' | head -1)
-  OMP_LLVM=$( [ -n "$OMP_LLVM_DLL" ] && dirname "$OMP_LLVM_DLL" || echo /nonexistent)
+  # Visual Studio 2022 has it in the redistributable's OpenMP.LLVM folder;
+  # where it isn't, the Visual C++ runtime installed on the machine (in
+  # System32) carries the same file.
+  OMP_LLVM_DLL=$(find "$(cygpath -u "$VCToolsRedistDir")" -iname libomp140.x86_64.dll \
+    -not -path '*debug*' -not -path '*onecore*' -path '*/x64/*' | head -1)
+  SYSTEM_OMP=$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32/libomp140.x86_64.dll
+  [ -n "$OMP_LLVM_DLL" ] || { [ -e "$SYSTEM_OMP" ] && OMP_LLVM_DLL=$SYSTEM_OMP; } || true
+  # Searched on its own (System32 holds Windows' DLLs too, never shipped).
+  OMP_LLVM=$WORK/omp-llvm
+  rm -rf "$OMP_LLVM" && mkdir -p "$OMP_LLVM"
+  [ -z "$OMP_LLVM_DLL" ] || cp "$OMP_LLVM_DLL" "$OMP_LLVM/"
+  if [ "${WINDOWS_COMPILER:-}" = clang-cl ]; then
+    echo "LLVM OpenMP runtime: ${OMP_LLVM_DLL:-not found}"
+    find "$(cygpath -u "$VCINSTALLDIR")" -iname 'libomp140*.dll' 2>/dev/null | sed 's/^/  in Visual Studio: /'
+  fi
   while true; do
     added=0
     for dll in $(for f in "$PREFIX"/bin/*.exe "$PREFIX"/bin/*.dll; do

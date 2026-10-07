@@ -481,6 +481,27 @@ fails, they can see which stage failed and why.
   5. Known poses for MapAnything (`camera_poses` input, next to the EXIF
      focal length the plugin already passes) and as position priors for
      COLMAP's mapper (check what the pinned 4.2.1 supports).
+     Checked, and not worth wiring in yet. COLMAP 4.2.1 keeps priors in
+     its database (`pose_priors`: a position with its covariance, and a
+     gravity direction in the camera's axes). Only `pose_prior_mapper`, the
+     incremental mapper, uses positions, and only in bundle adjustment and
+     the final alignment: they don't help it register photos. The global
+     mapper, our default, normalizes positions away (a TODO in its source)
+     and uses gravity only in rotation averaging
+     (`--GlobalMapper.ra_use_gravity`). On the synthetic scene with the
+     real COLMAP, against its ground truth: position priors left the
+     accuracy unchanged (0.03° median rotation error), even with noise at
+     12% of the camera ring's radius, and with every prior at one point (a
+     still phone over a turntable); they only put the model in the
+     recording's frame (within 0.3% of the radius with good priors).
+     Gravity priors left the global mapper's accuracy unchanged too (0.023°)
+     and stood the model upright, but as far off as each frame's gravity
+     (10° per frame gave 10°): the app's own upright estimate averages the
+     same measured gravity over the frames (orientation.estimate_up). So
+     the gain is only the frame, and the one worth having, scale from
+     ARCore's metres, needs the incremental mapper and a real CAMM file
+     showing metres. Revisit with such a file, or when a COLMAP release
+     uses priors in the global mapper or to register photos.
 
   The motion sensors see nothing when a turntable turns the object under a
   still phone: there only gravity helps.

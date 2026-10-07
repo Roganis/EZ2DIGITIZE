@@ -124,12 +124,11 @@ fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
 prepare_openmvs openmvs "$REPO"
 # Only the tools the app runs, not Tests, TransformScene or the other
 # Interface* importers: on Windows each of those took minutes to link.
+# (MSVC's link-time code generation, /GL and /LTCG, which OpenMVS always
+# turns on, is left alone: without it the OpenMVS build took 2 h 47 min
+# on the CI runner instead of 58 min, single source files taking over an
+# hour to optimise where the linker spreads the same work over threads.)
 OPENMVS_TOOLS=(InterfaceCOLMAP DensifyPointCloud ReconstructMesh RefineMesh TextureMesh)
-OPENMVS_ARGS=()
-# MSVC's link-time code generation over the static dependencies took 55 of
-# the 58 minutes of the OpenMVS build on the CI runner; the patch
-# openmvs-*-msvc-ipo-option.patch makes OpenMVS_ENABLE_IPO control it.
-[ "$OS" = windows ] && OPENMVS_ARGS=(-DOpenMVS_ENABLE_IPO=OFF)
 cmake -S openmvs -B openmvs-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
@@ -138,7 +137,6 @@ cmake -S openmvs -B openmvs-build -G Ninja \
   -DOpenMVS_USE_CUDA=OFF -DOpenMVS_USE_PYTHON=OFF -DOpenMVS_BUILD_VIEWER=OFF \
   -DOpenMVS_USE_OPENMP=ON \
   ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} \
-  ${OPENMVS_ARGS[@]+"${OPENMVS_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/openmvs-install"
 cmake --build openmvs-build --parallel "$JOBS" --target "${OPENMVS_TOOLS[@]}"
 for tool in "${OPENMVS_TOOLS[@]}"; do

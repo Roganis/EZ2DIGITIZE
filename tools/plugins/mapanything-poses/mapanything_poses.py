@@ -98,8 +98,8 @@ def main() -> int:
     poses, why = mapanything_inputs.known_poses(args.priors, names) if args.priors else (None, "")
     metric = poses is not None and mapanything_inputs.poses_are_metric(args.priors, names)
     if poses is not None:
-        scale = "in metres" if metric else "their scale left to it"
-        print(f"giving MapAnything the {why} ({scale})", flush=True)
+        unit = "in metres" if metric else "their scale left to it"
+        print(f"giving MapAnything the {why} ({unit})", flush=True)
     elif why:
         print(f"not giving MapAnything poses: {why}", flush=True)
     views = []

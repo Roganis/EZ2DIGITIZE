@@ -40,7 +40,7 @@ import bisect
 import math
 import struct
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +50,9 @@ from ez2digitize.core.mp4 import Mp4Error, Track, read_samples, read_tracks
 Vector = tuple[float, float, float]
 Matrix = tuple[Vector, Vector, Vector]
 
-# A video frame's capture.json entry: {"down": [x, y, z], "turn_deg_s": n}.
+# A video frame's (or a logged photo's) capture.json entry: {"down": [x, y, z],
+# "turn_deg_s": n}, and where the camera was tracked, "camera_to_world"
+# (3 x 4) with "metric": true if in metres.
 MOTION_KEY = "motion"
 GPMF_FORMAT = "gpmd"
 CAMM_FORMAT = "camm"
@@ -279,6 +281,7 @@ class MotionTrack:
     # CAMM's 6DoF poses: camera to world rotations, and camera centres.
     orientations: list[tuple[float, Matrix]] = field(default_factory=list)
     positions: list[tuple[float, Vector]] = field(default_factory=list)
+    metric: bool = False  # the positions are in metres (CAMM doesn't say)
 
     def rotated(self, degrees: int) -> MotionTrack:
         """The same, in the axes of the frames turned by `degrees` clockwise."""
@@ -288,8 +291,16 @@ class MotionTrack:
         # Camera to world: a frame vector is turned back to the stored axes first.
         back = _transpose(turn_matrix)
         orientations = [(t, _matmul(r, back)) for t, r in self.orientations]
-        return MotionTrack(
-            self.format, self.device, self.gravity, down, gyro, orientations, self.positions
+        return replace(self, down=down, gyro=gyro, orientations=orientations)
+
+    def shifted(self, seconds: float) -> MotionTrack:
+        """The same, with every time moved by `seconds` (onto a video's clock, say)."""
+        return replace(
+            self,
+            down=[(t + seconds, v) for t, v in self.down],
+            gyro=[(t + seconds, v) for t, v in self.gyro],
+            orientations=[(t + seconds, r) for t, r in self.orientations],
+            positions=[(t + seconds, c) for t, c in self.positions],
         )
 
     def pose_at(self, time_s: float) -> tuple[Matrix, Vector] | None:
@@ -361,7 +372,7 @@ class MotionTrack:
         return [_interpolate(grid_times, path, t) for t in times]
 
     def summary(self) -> dict[str, Any]:
-        return {
+        summary = {
             "format": self.format,
             "device": self.device,
             "gravity": self.gravity,
@@ -369,6 +380,9 @@ class MotionTrack:
             "gyro_samples": len(self.gyro),
             "pose_samples": len(self.positions),
         }
+        if self.metric:
+            summary["metric"] = True
+        return summary
 
 
 def read_motion(path: Path, rotation_deg: int = 0) -> MotionTrack | None:
@@ -412,10 +426,12 @@ def frame_motion(motion: MotionTrack, time_s: float) -> dict[str, Any]:
         entry["camera_to_world"] = [
             [round(c, 7) for c in (*row, centre[i])] for i, row in enumerate(rotation)
         ]
+        if motion.metric:
+            entry["metric"] = True
     return entry
 
 
-FORMAT_NAMES = {GPMF_FORMAT: "GoPro", CAMM_FORMAT: "CAMM"}
+FORMAT_NAMES = {GPMF_FORMAT: "GoPro", CAMM_FORMAT: "CAMM", "log": "motion log"}
 
 
 def describe(source_info: dict[str, Any]) -> str | None:
@@ -468,6 +484,16 @@ def known_poses(bundles: Iterable[CaptureBundle]) -> dict[str, tuple[str, list[l
                 rows = [[float(c) for c in row] for row in pose]
                 found[f"{bundle.id}/{file.name}"] = (bundle.id, rows)
     return found
+
+
+def metric_poses(bundles: Iterable[CaptureBundle]) -> set[str]:
+    """COLMAP image names whose known pose (known_poses) is in metres."""
+    return {
+        f"{bundle.id}/{file.name}"
+        for bundle in bundles
+        for file in bundle.used
+        if isinstance(entry := file.metadata.get(MOTION_KEY), dict) and entry.get("metric") is True
+    }
 
 
 def _nearest(samples: list[tuple[float, Any]], time_s: float) -> Any:

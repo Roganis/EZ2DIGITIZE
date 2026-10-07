@@ -68,6 +68,13 @@ so slowing down or pausing on one side doesn't crowd the frames there,
 and frames taken while the camera swung fast are left out.
 The import says when a video has such data.
 
+A capture app can also record the phone's motion in a file of its own,
+next to the photos or the video (`<name>.motion.json`, described in
+`src/ez2digitize/motion_log.py`; for a video, named after it, e.g.
+`VID_0001.motion.json`). Importing the folder, or the video, picks it up,
+and the photos get the same treatment as frames of a video with a motion
+track. This is the format the planned Android app will write.
+
 ## Turntables
 
 With the camera on a tripod and the object turning, the background stays

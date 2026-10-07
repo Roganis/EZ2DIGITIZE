@@ -865,17 +865,19 @@ EXHAUSTIVE_MAX_IMAGES = 200
 GPS_SHARE = 0.9
 
 
-# With known poses, each frame is also matched with this many after it in
-# the video, whatever the poses say: a glitch in the recorded track then
-# costs a few pairs, not the frame's place in the model.
+# With known poses, each photo is also matched with this many after it (in
+# name order: a video's frames, or photos as taken), whatever the poses say:
+# a glitch in the recorded track then costs a few pairs, not the photo's
+# place in the model.
 POSE_SEQUENTIAL = 5
 
 
 def _pose_guided_pairs(bundles: list[CaptureBundle], run: _Run) -> list[tuple[str, str]] | None:
     """Pairs from the poses the photos were recorded with, beyond EXHAUSTIVE_MAX_IMAGES.
 
-    Only when every photo has one (motion.known_poses: CAMM's 6DoF samples,
-    from ARCore-style tracking) and all are from one recording, since each
+    Only when every photo has one (motion.known_poses: CAMM's 6DoF samples
+    or a motion log, from ARCore-style tracking) and all are from one
+    recording, since each
     recording has its own world. The gyroscope alone isn't enough: GoPro's
     stabilisation turns the image against the body, so on its sample clips
     the integrated gyroscope and COLMAP disagreed by 15-40° within seconds.
@@ -899,7 +901,7 @@ def _pose_guided_pairs(bundles: list[CaptureBundle], run: _Run) -> list[tuple[st
         pairs.update((a, b) for b in names[i + 1 : i + 1 + POSE_SEQUENTIAL])
     run.emit(
         Notice(
-            f"{images} video frames with recorded camera poses: each is matched with "
+            f"{images} photos with recorded camera poses: each is matched with "
             "those its pose says see the same side"
         )
     )

@@ -264,7 +264,7 @@ def test_matching_by_recorded_poses(
     expected.append((names["b.jpg"], names["c.jpg"]))  # next in the video only
     assert (matching / "pairs.txt").read_text() == "".join(f"{a} {b}\n" for a, b in expected)
     notices = [e.message for e in events if isinstance(e, Notice)]
-    assert any(n.startswith("3 video frames with recorded camera poses") for n in notices)
+    assert any(n.startswith("3 photos with recorded camera poses") for n in notices)
 
     # A frame without a pose: the usual matching.
     del bundle.files[1].metadata["motion"]

@@ -132,7 +132,8 @@ This step replaces COLMAP's features, matching and mapping. It runs as the
   be ignored.
 - **Known poses:** `{priors}` is a JSON file of the camera poses already
   known, from a video whose motion track records them (CAMM's 6DoF samples,
-  written by ARCore-style tracking apps):
+  written by ARCore-style tracking apps) or a motion log recorded with the
+  photos or video (`ez2digitize.motion_log`):
 
   ```json
   {"version": 1, "images": {"<capture id>/frame_0001.jpg": {
@@ -143,7 +144,8 @@ This step replaces COLMAP's features, matching and mapping. It runs as the
   OpenCV camera axes (x right, y down, z forward), camera to world, the
   last column the camera centre. Poses with different `frame`s are in
   different worlds (each recording has its own) and can't be mixed;
-  `metric` false means the unit isn't guaranteed. Photos without a known
+  `metric` true means metres (a motion log that says so), false that the
+  unit isn't guaranteed (CAMM leaves it to the app). Photos without a known
   pose are absent, and the file is written (with no images) for every run.
 - **Out:** a binary COLMAP model in `{output}/sparse/0`: `cameras.bin`,
   `images.bin` and `points3D.bin` (the points may be few, but the file must

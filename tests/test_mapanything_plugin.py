@@ -98,6 +98,9 @@ def test_known_poses(tmp_path: Path) -> None:
     write({n: {"camera_to_world": pose, "frame": "v", "metric": False} for n in names})
     poses, why = mapanything_inputs.known_poses(priors, names)
     assert poses is not None and why == "known poses for all 2 photos"
+    assert not mapanything_inputs.poses_are_metric(priors, names)
+    write({n: {"camera_to_world": pose, "frame": "v", "metric": True} for n in names})
+    assert mapanything_inputs.poses_are_metric(priors, names)
     assert poses[1][:3, 3].tolist() == [0.5, 0.0, 2.0] and poses[1][3].tolist() == [0, 0, 0, 1]
 
     write({names[0]: {"camera_to_world": pose, "frame": "v", "metric": False}})

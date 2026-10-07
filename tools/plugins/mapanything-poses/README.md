@@ -19,7 +19,9 @@ How it differs from the VGGT plugin:
   CAMM track, with orientation and position) gives every frame a pose. The
   plugin passes them to MapAnything when every photo has one from the same
   video, leaving the scale to MapAnything since the format doesn't promise
-  metres.
+  metres. Poses from a motion log recorded with the photos or video (see
+  `ez2digitize.motion_log`) that says they are in metres are passed as
+  metric.
 - **Weights for commercial use with no access request.** The code is under
   Apache-2.0, and so are the `map-anything-apache` weights, trained on data
   that allows commercial use.

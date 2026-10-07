@@ -35,6 +35,11 @@ The first release.
   passed over. Long videos (over 200 frames) whose CAMM track records the
   camera's position as well are matched by those poses: each frame with
   the ones looking at the same side.
+- Motion logs: a capture app can record the phone's motion beside its
+  photos or video (`<name>.motion.json`: gyroscope, gravity, tracked poses,
+  and when each photo was taken). It is kept with the capture, and the
+  photos get the same benefits as videos with a motion track. Capture
+  folders written by this version can't be read by older ones.
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.

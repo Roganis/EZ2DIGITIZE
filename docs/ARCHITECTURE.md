@@ -35,6 +35,8 @@ my-scan/
                       left out; `flipped` for the turned-over side of a
                       two-sided scan
       IMG_0001.jpg    original files, copied byte for byte
+      x.motion.json   optional: the motion recorded with them
+                      (ez2digitize.motion_log)
   masks/              optional; masks/<capture id>/<file>.png in use,
                       .../dropped/ the ones dropped in review, auto.json
                       which are automatic (ez2digitize.masks)
@@ -66,6 +68,17 @@ my-scan/
   `bundle.images` and `bundle.videos` are the files in use, and a bundle's
   cache fingerprint covers only those, so leaving a photo out re-runs the
   pipeline from feature extraction and bringing it back reuses the old run.
+- capture.json has its own `schema_version` (2 since motion logs, a file
+  kind version 1 readers would reject) and `MIGRATIONS` in `core.capture`;
+  older bundles load migrated and are written back in the new version.
+- Motion logs (`motion_log.py`): a capture app records the phone's motion
+  in `<name>.motion.json` (gyroscope, accelerometer, gravity and tracked
+  poses on the camera's clock, and when each photo was taken). It is kept
+  in the bundle as a file of kind "motion", and when the bundle is
+  assembled each photo it lists gets its `metadata["motion"]` entry, as
+  video frames get theirs from GPMF or CAMM. A video's log
+  (`<video stem>.motion.json` next to it) replaces its own track. Poses
+  from a log that says `metric` are marked so, for plugins and the scale.
 - JSON files are written atomically (temporary file, fsync, rename).
 
 ## Phone upload (`upload.py`, `ui/phone_upload.py`)

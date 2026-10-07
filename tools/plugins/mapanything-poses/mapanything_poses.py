@@ -96,8 +96,10 @@ def main() -> int:
     if chosen.get("exif_focal", True) and not use_focal:
         print("not every photo has a focal length in EXIF: MapAnything estimates it", flush=True)
     poses, why = mapanything_inputs.known_poses(args.priors, names) if args.priors else (None, "")
+    metric = poses is not None and mapanything_inputs.poses_are_metric(args.priors, names)
     if poses is not None:
-        print(f"giving MapAnything the {why} (their scale left to it)", flush=True)
+        scale = "in metres" if metric else "their scale left to it"
+        print(f"giving MapAnything the {why} ({scale})", flush=True)
     elif why:
         print(f"not giving MapAnything poses: {why}", flush=True)
     views = []
@@ -115,10 +117,10 @@ def main() -> int:
             k = place.input_intrinsics(photo.focal, photo.focal, place.width / 2, place.height / 2)
             view["intrinsics"] = torch.from_numpy(k).float()[None]
         if poses is not None:
-            # OpenCV axes, camera to world, as MapAnything takes them; the
-            # recording app's unit isn't guaranteed, so MapAnything sets the scale.
+            # OpenCV axes, camera to world, as MapAnything takes them. Unless
+            # the poses are in metres, MapAnything sets the scale.
             view["camera_poses"] = torch.from_numpy(poses[i]).float()[None]
-            view["is_metric_scale"] = torch.tensor([False])
+            view["is_metric_scale"] = torch.tensor([metric])
         views.append(view)
 
     step(3, f"predicting cameras and depth at {size[0]} x {size[1]}")

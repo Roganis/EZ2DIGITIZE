@@ -36,6 +36,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ez2digitize import motion_log
 from ez2digitize.backends import ffmpeg as ffmpeg_backend
 from ez2digitize.backends.common import BackendError
 from ez2digitize.backends.ffmpeg import FFmpeg, FFmpegProgress, VideoInfo
@@ -183,9 +184,13 @@ def import_video(
     emit = on_event or (lambda _event: None)
     motion: MotionTrack | None = None
     motion_error = None
+    log = motion_log.log_for(video)
     try:
-        motion = read_motion(video, info.rotation)
-    except MotionError as exc:
+        if log is not None:
+            motion = motion_log.video_track(log, video.name, info.rotation)
+        else:
+            motion = read_motion(video, info.rotation)
+    except (MotionError, motion_log.MotionLogError) as exc:
         motion_error = str(exc)  # recorded; the frames are still worth having
     source_info: dict[str, Any] = {
         "video": video.name,
@@ -200,8 +205,10 @@ def import_video(
         source_info[MOTION_KEY] = {"error": motion_error}
 
     def fill(staging: Path) -> list[CaptureFile]:
-        original = copy_into(staging, video, set())
+        used: set[str] = set()
+        original = copy_into(staging, video, used)
         original.metadata[VIDEO_KEY] = asdict(info)
+        logged = [copy_into(staging, log, used)] if log is not None else []
         work = staging / CANDIDATES_DIR
         work.mkdir()
         argv = ffmpeg_backend.extract_frames_argv(
@@ -238,7 +245,7 @@ def import_video(
             source_info["spacing"] = {"by": "angle" if progress else "time", "turned_deg": turned}
         if not chosen:
             raise CaptureError(f"none of the frames extracted from {video.name} can be read")
-        files = [original]
+        files = [original, *logged]
         for number, index in enumerate(chosen, start=1):
             name = f"frame_{number:04d}.jpg"
             time_s = round(index / plan.candidate_rate, 3)

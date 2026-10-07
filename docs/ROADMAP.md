@@ -461,7 +461,11 @@ fails, they can see which stage failed and why.
     on the camera frames' clock (Android stamps sensors and frames with
     the same one on most phones). A sidecar file in the bundle, named in
     `capture.json` (a schema bump with its migration); the video and
-    photos stay untouched. ARCore wants to drive the camera itself, often
+    photos stay untouched. The desktop side is done
+    (`ez2digitize.motion_log`): the format (`<name>.motion.json`), read at
+    folder and video import, kept in the bundle as kind "motion"
+    (capture.json version 2, migrated from 1), each listed photo given its
+    motion entry, and `metric` poses passed as such to plugins. ARCore wants to drive the camera itself, often
     below full resolution, which conflicts with the locked full-quality
     capture above; its shared-camera mode may reconcile them, to try on a
     real phone. The raw sensors have no such conflict, so they are always
@@ -476,6 +480,19 @@ fails, they can see which stage failed and why.
      by time. Needs only the gyroscope.
   3. Matching guided by the poses: compare only photos that look at the
      same side, as GPS positions already do for large sets.
+     Done for recorded 6DoF poses (`pipeline._pose_guided_pairs`): beyond
+     200 photos, when every one has a pose from one recording, each is
+     matched with its 20 nearest looking within 60°, plus the next 5 in
+     order. On a synthetic 240-frame orbit with poses 2° and 4% of the
+     radius off, against today's sequential matching with loops found by
+     the vocabulary tree: both placed all 240 frames, 0.025° median
+     rotation error; the poses' pairs all verified (2665 of 2665, against
+     2251 of 2596) and matching took 33 s instead of 52 s, with no tree to
+     download. The gyroscope alone isn't enough: integrated, it agreed
+     with COLMAP within 2-7° over 8 s on GoPro's HERO6 sample but was off
+     by 15-40°, about as much as the camera turned, on the HERO5 and HERO7
+     ones (stabilisation turning the image against the body would explain
+     it).
   4. A default scale from ARCore's metres (accuracy to measure; the marker
      sheet stays the precise way).
   5. Known poses for MapAnything (`camera_poses` input, next to the EXIF

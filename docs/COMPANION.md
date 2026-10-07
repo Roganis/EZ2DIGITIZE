@@ -112,6 +112,12 @@ always help: gravity stands the model upright; the gyroscope picks video
 frames and drops blurred ones; poses guide matching for long captures,
 give plugins a starting placement and set a default scale.
 
+## Until the app exists
+
+`tools/companion/opencamera_sensors.py` turns a video recorded with
+OpenCamera Sensors (gyroscope and accelerometer on the camera's clock, no
+poses) into this format; docs/CAPTURE.md says how.
+
 ## Testing without the app
 
 ```sh

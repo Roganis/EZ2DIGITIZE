@@ -5,8 +5,28 @@ __m128 and __m128d (m128_f32, m128d_f64). clang-cl targets Windows too
 (_WIN32) but its vector types have no such members. The portable branch,
 used everywhere but Windows, reads the floats through a pointer instead;
 it is now used for every compiler but MSVC itself, so MSVC, GCC and Apple
-Clang builds are unchanged. Drop it if Windows goes back to MSVC only.
+Clang builds are unchanged.
 
+Utils.cmake adds its MSVC defines as "/D NAME", with a space. CMake passes
+only the "/D" of each to the resource compiler, whose preprocessor
+(clang-cl, under clang-cl) then fails on "#define /D". "/DNAME" means the
+same to cl and to clang-cl and reaches rc whole.
+
+Drop the patch if Windows goes back to MSVC only.
+
+diff --git a/build/Utils.cmake b/build/Utils.cmake
+index 28cc3e5..426b1bb 100644
+--- a/build/Utils.cmake
++++ b/build/Utils.cmake
+@@ -616,7 +616,7 @@ macro(optimize_default_compiler_settings)
+ 	endif()
+ 
+ 	if(MSVC)
+-	  set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS")
++	  set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /D_CRT_SECURE_NO_DEPRECATE /D_CRT_NONSTDC_NO_DEPRECATE /D_SCL_SECURE_NO_WARNINGS")
+ 	  # 64-bit portability warnings, in MSVC80
+ 	  if(MSVC80)
+ 		set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /Wp64")
 diff --git a/libs/Common/Maths.h b/libs/Common/Maths.h
 index a3216d2..c62269a 100644
 --- a/libs/Common/Maths.h

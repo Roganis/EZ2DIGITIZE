@@ -125,7 +125,7 @@ def markdown(builds: list[Build], rounds: int, images: Path, run_args: list[str]
     lines = [
         "## Backend builds compared",
         "",
-        f"`ez2d run {' '.join(run_args)}` on {count} photos ({images.name}), "
+        f"`{' '.join(['ez2d run', *run_args])}` on {count} photos ({images.name}), "
         f"{rounds} round(s) per build, the builds taking turns; median wall time per "
         f"stage. Ratios are against **{ref.name}**: below 1 is faster.",
         "",

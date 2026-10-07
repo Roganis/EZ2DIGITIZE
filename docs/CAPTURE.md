@@ -78,6 +78,22 @@ log tracked the phone's position in metres (ARCore), the model gets a
 rough real size from it (within a percent or so, worse if the tracking
 drifted); the marker sheet still measures it better and replaces it.
 
+**From an Android phone today**, before that app exists:
+[OpenCamera Sensors](https://github.com/MobileRoboticsSkoltech/OpenCamera-Sensors)
+(free, on F-Droid) records video with the gyroscope and accelerometer on
+the camera's clock. In its settings, turn on Camera2 API and "Enable sync
+video IMU recording" (the IMU settings say whether the phone can), and
+turn video stabilisation off. Record, copy the video and the folder named
+after its date (both in `DCIM/OpenCamera`) to the computer, then run
+
+```sh
+python tools/companion/opencamera_sensors.py VID_20261007_143000.mp4
+```
+
+and import the video as usual: it gets what a GoPro video gets (gravity
+for the upright, frames picked by angle, blurred ones dropped), but no
+camera poses.
+
 ## Turntables
 
 With the camera on a tripod and the object turning, the background stays

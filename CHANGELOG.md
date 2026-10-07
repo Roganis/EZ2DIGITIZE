@@ -35,6 +35,9 @@ The first release.
   passed over. Long videos (over 200 frames) whose CAMM track records the
   camera's position as well are matched by those poses: each frame with
   the ones looking at the same side.
+- Android phone videos recorded with OpenCamera Sensors get the same
+  motion treatment as GoPro videos, through
+  `tools/companion/opencamera_sensors.py` (docs/CAPTURE.md).
 - Motion logs: a capture app can record the phone's motion beside its
   photos or video (`<name>.motion.json`: gyroscope, gravity, tracked poses,
   and when each photo was taken). It is kept with the capture, and the

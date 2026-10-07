@@ -76,7 +76,26 @@ Windows. It then runs the benchmark harness (POSIX only, so not on Windows) on t
 binaries ([`backends-smoke.toml`](../feasibility/plans/backends-smoke.toml))
 and the app's own backend modules on the same scene
 (`tests/backends/test_real_pipeline.py`), and uploads the archives as
-artifacts for 14 days.
+artifacts for 90 days. It runs only when `tools/backends` or the workflow
+changes.
+
+The [Backend tests workflow](../../.github/workflows/backend-tests.yml) runs
+`tests/backends` on all three platforms without building: it takes the
+archives of the newest Backends run (the branch's, then main's), so a change
+to the app's side (`src/`) is checked against the real tools in about ten
+minutes.
+
+Build time on the CI runners, with the vcpkg cache: Linux and macOS about
+25 minutes; Windows took 1 hour 22 minutes, 55 of them linking OpenMVS with
+MSVC's link-time code generation (`/GL`, `/LTCG`). Turning that off made it
+worse: the OpenMVS build went from 58 minutes to 2 hours 47 (the compiler
+then optimises each source file alone, one of them for over an hour, where
+the linker shares the work between threads), so it stays on; only the five
+OpenMVS tools the app runs are built. Without the cache, Windows took over
+3 and a half hours. The cache is saved only when the build added
+packages to it, since every saved copy takes about 800 MB of the
+repository's 10 GB; caches belong to their branch, and a pull request also
+reads main's.
 
 ## Results of the first CI builds
 

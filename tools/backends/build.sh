@@ -122,6 +122,13 @@ fi
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
 prepare_openmvs openmvs "$REPO"
+# Only the tools the app runs, not Tests, TransformScene or the other
+# Interface* importers: on Windows each of those took minutes to link.
+# (MSVC's link-time code generation, /GL and /LTCG, which OpenMVS always
+# turns on, is left alone: without it the OpenMVS build took 2 h 47 min
+# on the CI runner instead of 58 min, single source files taking over an
+# hour to optimise where the linker spreads the same work over threads.)
+OPENMVS_TOOLS=(InterfaceCOLMAP DensifyPointCloud ReconstructMesh RefineMesh TextureMesh)
 cmake -S openmvs -B openmvs-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
@@ -131,8 +138,8 @@ cmake -S openmvs -B openmvs-build -G Ninja \
   -DOpenMVS_USE_OPENMP=ON \
   ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$WORK/openmvs-install"
-cmake --build openmvs-build --parallel "$JOBS"
-for tool in InterfaceCOLMAP DensifyPointCloud ReconstructMesh RefineMesh TextureMesh; do
+cmake --build openmvs-build --parallel "$JOBS" --target "${OPENMVS_TOOLS[@]}"
+for tool in "${OPENMVS_TOOLS[@]}"; do
   cp "$(find openmvs-build/bin -type f -name "$tool$EXE" | head -1)" "$PREFIX/bin/"
 done
 

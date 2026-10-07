@@ -1,0 +1,101 @@
+# Run the app's backend tests (tests/backends) against real COLMAP and
+# OpenMVS on Linux, macOS and Windows, without building them: the archives
+# come from the newest Backends workflow run (this branch first, then main)
+# that uploaded one. Building takes 15 minutes to hours; these tests take
+# about 10. The Backends workflow itself runs the same tests on fresh builds
+# when tools/backends changes.
+name: Backend tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/backends/**"
+      - "tests/conftest.py"
+      - "tools/feasibility/ez2d_bench/**"  # the synthetic scene
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/backend-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/backends/**"
+      - "tests/conftest.py"
+      - "tools/feasibility/ez2d_bench/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/backend-tests.yml"
+
+permissions:
+  contents: read
+  actions: read  # to download the backend archives from the Backends workflow
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04  # as in the Backends workflow (glibc)
+            archive: ez2d-backends-linux-x86_64.tar.gz
+          - os: macos-latest
+            archive: ez2d-backends-macos-arm64.tar.gz
+          - os: windows-latest
+            archive: ez2d-backends-windows-x86_64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      # The Linux build links LAPACK's Fortran runtime and OpenMP dynamically.
+      - name: Runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgfortran5 libgomp1
+
+      - name: Get the backend archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          ARTIFACT: backends-${{ runner.os }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          for branch in "$BRANCH" main; do
+            for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow backends.yml \
+                           --branch "$branch" --limit 20 --json databaseId -q '.[].databaseId'); do
+              if gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$ARTIFACT" -D artifact \
+                 && ls "artifact/backends/$ARCHIVE"; then
+                echo "backends from Backends run $run ($branch)" | tee -a "$GITHUB_STEP_SUMMARY"
+                mkdir -p build/backends/prefix
+                tar -xzf "artifact/backends/$ARCHIVE" -C build/backends/prefix
+                cat build/backends/prefix/BUILDINFO.json
+                exit 0
+              fi
+              rm -rf artifact
+            done
+          done
+          echo "no Backends run with a $ARTIFACT archive found: run the Backends workflow" >&2
+          exit 1
+
+      - name: Backend tests
+        env:
+          EZ2D_REQUIRE_BACKENDS: "1"
+          EZ2D_TEST_DOWNLOADS: "1"  # the learned features' models (49 MB)
+          EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+        # The backend tests don't use Qt; without pytest-qt they also run on
+        # runners without the libraries Qt needs (libEGL on Ubuntu).
+        run: |
+          # A Windows path on Windows (pwd -W in Git Bash), which Python reads.
+          PREFIX="$(pwd -W 2>/dev/null || pwd)/build/backends/prefix"
+          export EZ2D_COLMAP="$PREFIX/bin/colmap$EXE" EZ2D_OPENMVS_DIR="$PREFIX/bin"
+          uv run --all-groups pytest tests/backends -rs -p no:pytest-qt

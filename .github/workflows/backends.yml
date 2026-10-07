@@ -78,7 +78,10 @@ jobs:
           arch: x64
 
       # vcpkg's binary cache. Saved even when the build fails, so a failure late
-      # in a multi-hour build doesn't throw away the dependencies built so far.
+      # in a multi-hour build doesn't throw away the dependencies built so far,
+      # but only when the build added packages to it: each entry is ~800 MB,
+      # and new ones would push main's out of the repository's 10 GB. Caches
+      # belong to their branch; a pull request also reads main's.
       - name: Restore vcpkg cache
         uses: actions/cache/restore@v4
         with:
@@ -86,14 +89,29 @@ jobs:
           key: backends-vcpkg-${{ runner.os }}-${{ github.run_id }}
           restore-keys: backends-vcpkg-${{ runner.os }}-
 
+      - name: List the cached packages
+        run: |
+          mkdir -p build/backends/vcpkg-cache
+          (cd build/backends/vcpkg-cache && find . -type f | sort) > "$RUNNER_TEMP/vcpkg-before.txt"
+          echo "$(wc -l < "$RUNNER_TEMP/vcpkg-before.txt") packages restored"
+
       # Before the build, so the summary step can run even when the build fails.
       - uses: astral-sh/setup-uv@v6
 
       - name: Build
         run: tools/backends/build.sh
 
-      - name: Save vcpkg cache
+      - name: New packages to cache?
+        id: new-packages
         if: always()
+        run: |
+          (cd build/backends/vcpkg-cache && find . -type f | sort) > "$RUNNER_TEMP/vcpkg-after.txt"
+          added=$(comm -13 "$RUNNER_TEMP/vcpkg-before.txt" "$RUNNER_TEMP/vcpkg-after.txt" | wc -l)
+          echo "$added packages built"
+          echo "added=$added" >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg cache
+        if: always() && steps.new-packages.outputs.added != '0'
         uses: actions/cache/save@v4
         with:
           path: build/backends/vcpkg-cache
@@ -135,7 +153,9 @@ jobs:
         if: always()
         with:
           name: backends-${{ runner.os }}
-          retention-days: 14
+          # The Backend tests workflow and the app workflows reuse these
+          # archives; the backends are rebuilt only when tools/backends changes.
+          retention-days: 90
           path: |
             build/backends/ez2d-backends-*.tar.gz
             build/backends/BUILDINFO-*.json

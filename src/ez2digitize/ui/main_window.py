@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
@@ -21,6 +22,7 @@ from ez2digitize import __version__
 from ez2digitize.core.project import Project, ProjectError
 from ez2digitize.ui.backends_dialog import BackendsDialog, locate_ffmpeg, locate_tools
 from ez2digitize.ui.licenses_dialog import LicensesDialog
+from ez2digitize.ui.model_window import ModelWindow, open_dialog_filter, open_model
 from ez2digitize.ui.plugins_dialog import PluginsDialog
 from ez2digitize.ui.project_page import ProjectPage, ToolsFactory
 
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self.settings = settings or QSettings()
         self.tools_factory = tools_factory or (lambda: locate_tools(self.settings))
         self.page: ProjectPage | None = None
+        self.model_windows: list[ModelWindow] = []
 
         self.stack = QStackedWidget()
         self.welcome = self._welcome_page()
@@ -73,6 +76,10 @@ class MainWindow(QMainWindow):
         self.import_action = file_menu.addAction("&Import Photos…")
         self.import_action.setShortcut("Ctrl+I")
         self.import_action.triggered.connect(self._import_photos)
+        model_action = file_menu.addAction("Open &Model File…")
+        model_action.setShortcut("Ctrl+Shift+O")
+        model_action.setToolTip("Look at a mesh or splat file and convert it to another format")
+        model_action.triggered.connect(self.choose_model_to_open)
         self.close_action = file_menu.addAction("&Close Project")
         self.close_action.triggered.connect(self.close_project)
         file_menu.addSeparator()
@@ -111,6 +118,7 @@ class MainWindow(QMainWindow):
         for text, slot in (
             ("New project…", self.choose_new_project),
             ("Open project…", self.choose_project_to_open),
+            ("Open a model file…", self.choose_model_to_open),
         ):
             button = QPushButton(text)
             button.clicked.connect(slot)
@@ -136,6 +144,22 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Open a project folder")
         if path:
             self.open_project(Path(path))
+
+    def choose_model_to_open(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open a mesh or splat file", "", open_dialog_filter()
+        )
+        if path:
+            self.open_model(Path(path))
+
+    def open_model(self, path: Path) -> ModelWindow | None:
+        """Show a model file (mesh, splats, point cloud) in a window of its own."""
+        window = open_model(path, self)
+        if window is not None:
+            # Closed windows delete themselves.
+            self.model_windows = [w for w in self.model_windows if shiboken6.isValid(w)]
+            self.model_windows.append(window)
+        return window
 
     def new_project(self, path: Path) -> bool:
         try:

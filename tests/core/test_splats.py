@@ -151,5 +151,94 @@ def test_read_spz_rejects_other_files(tmp_path: Path) -> None:
     with pytest.raises(SplatFormatError):
         sp.read_spz(tmp_path / "a.spz")
     (tmp_path / "b.spz").write_bytes(gzip.compress(struct.pack("<IIIBBBB", 1, 2, 0, 0, 12, 0, 0)))
-    with pytest.raises(SplatFormatError, match="version 2"):
+    with pytest.raises(SplatFormatError, match="not an SPZ file"):
         sp.read_spz(tmp_path / "b.spz")
+    header = struct.pack("<IIIBBBB", sp.SPZ_MAGIC, 9, 0, 0, 12, 0, 0)
+    (tmp_path / "c.spz").write_bytes(gzip.compress(header))
+    with pytest.raises(SplatFormatError, match="versions 1 to 3"):
+        sp.read_spz(tmp_path / "c.spz")
+
+
+# --- other formats -----------------------------------------------------------------
+
+
+def test_write_ply_reads_back(tmp_path: Path) -> None:
+    splats = random_splats(20, k=8)
+    back = sp.read_ply(sp.write_ply(splats, tmp_path / "s.ply"))
+    assert back.sh_degree == 2
+    for name in ("positions", "scales", "rotations", "opacities", "sh_dc", "sh_rest"):
+        assert np.allclose(getattr(back, name), getattr(splats, name), atol=1e-6), name
+
+
+def test_read_splat_file(tmp_path: Path) -> None:
+    record = np.zeros(2, sp.SPLAT_RECORD)
+    record["position"] = [(1, 2, 3), (4, 5, 6)]
+    record["scale"] = [(0.5, 1, 2), (1, 1, 1)]
+    record["color"] = [(255, 128, 0, 192), (0, 0, 0, 255)]
+    record["rotation"] = [(255, 128, 128, 128), (128, 255, 128, 128)]
+    (tmp_path / "a.splat").write_bytes(record.tobytes())
+    splats = sp.read_splat(tmp_path / "a.splat")
+    assert splats.count == 2 and splats.sh_degree == 0
+    assert np.allclose(splats.scales[0], np.log([0.5, 1, 2]))
+    assert np.allclose(splats.rotations[0], [1, 0, 0, 0], atol=1e-6)
+    assert np.allclose(splats.rotations[1], [0, 1, 0, 0], atol=1e-6)
+    assert np.allclose(0.5 + sp.SH_C0 * splats.sh_dc[0], [1, 128 / 255, 0])
+    assert np.isclose(1 / (1 + np.exp(-splats.opacities[0])), 192 / 255)
+    (tmp_path / "b.splat").write_bytes(b"\0" * 33)
+    with pytest.raises(SplatFormatError, match="multiple of 32"):
+        sp.read_splat(tmp_path / "b.splat")
+
+
+def spz_bytes(splats: Splats, version: int) -> bytes:
+    """An SPZ file of `version` 1 or 3, written by hand (the module writes 2)."""
+    n = splats.count
+    header = struct.pack("<IIIBBBB", sp.SPZ_MAGIC, version, n, 0, 12, 0, 0)
+    if version == 1:
+        positions = splats.positions.astype("<f2").tobytes()
+    else:
+        fixed = np.round(splats.positions * 4096).astype(np.int64) & 0xFFFFFF
+        triples = np.stack([fixed & 255, (fixed >> 8) & 255, fixed >> 16], -1)
+        positions = triples.astype(np.uint8).tobytes()
+    q = splats.rotations / np.linalg.norm(splats.rotations, axis=1, keepdims=True)
+    if version == 1:
+        q = q * np.where(q[:, :1] < 0, -1, 1)
+        rotations = np.clip(np.round(q[:, 1:] * 127.5 + 127.5), 0, 255).astype(np.uint8).tobytes()
+    else:
+        packed = []
+        for w, x, y, z in q:
+            xyzw = np.array([x, y, z, w])
+            largest = int(np.argmax(np.abs(xyzw)))
+            xyzw *= np.sign(xyzw[largest])
+            word = largest
+            for i in range(4):
+                if i != largest:
+                    magnitude = round(abs(xyzw[i]) / math.sqrt(0.5) * 511)
+                    word = (word << 10) | (int(xyzw[i] < 0) << 9) | magnitude
+            packed.append(struct.pack("<I", word))
+        rotations = b"".join(packed)
+    rest = bytes(n) + bytes(3 * n) + bytes(3 * n)  # opacity, colour, scale
+    return gzip.compress(header + positions + rest + rotations)
+
+
+@pytest.mark.parametrize("version", [1, 3])
+def test_read_spz_versions_1_and_3(tmp_path: Path, version: int) -> None:
+    splats = random_splats(40, k=0)
+    (tmp_path / "v.spz").write_bytes(spz_bytes(splats, version))
+    back = sp.read_spz(tmp_path / "v.spz")
+    tolerance = 0.01 if version == 1 else 0.5 / 4096
+    assert np.abs(back.positions - splats.positions).max() <= tolerance
+    q = splats.rotations / np.linalg.norm(splats.rotations, axis=1, keepdims=True)
+    same = np.abs(np.sum(back.rotations * q, axis=1))  # q and -q are the same turn
+    assert same.min() > (0.999 if version == 3 else 0.99)
+
+
+def test_turned_keeps_colours_pointing_the_same_way() -> None:
+    splats = random_splats(5, k=3)
+    flipped = sp.turned(splats, sp.PLY_TO_SPZ)
+    assert np.allclose(flipped.positions, splats.positions * [1, -1, -1])
+    back = sp.turned(flipped, sp.PLY_TO_SPZ)
+    assert np.allclose(back.positions, splats.positions)
+    assert np.allclose(back.sh_rest, splats.sh_rest, atol=1e-9)
+    q = splats.rotations / np.linalg.norm(splats.rotations, axis=1, keepdims=True)
+    r = back.rotations / np.linalg.norm(back.rotations, axis=1, keepdims=True)
+    assert np.allclose(np.abs(np.sum(q * r, axis=1)), 1)

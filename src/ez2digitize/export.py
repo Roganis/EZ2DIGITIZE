@@ -7,7 +7,12 @@ The texture stage writes OpenMVS's textured PLY; exporting converts it into
 there:
 
 - `obj` (+ MTL + textures) and `glb`, textured;
+- `gltf`: glTF with its buffer and texture images as separate files;
+- `usdz`, textured, for Apple's AR Quick Look (iPhone, iPad, Mac);
 - `ply`, OpenMVS's textured PLY as is;
+- `ply-colors`: PLY with a colour per vertex taken from the texture
+  (MeshLab, Blender and other tools that don't read OpenMVS's texture);
+- `off`: OFF with the same vertex colours;
 - `stl` and `3mf` for 3D printing: geometry only, after checking that the
   surface is closed (`export.json` records the open and non-manifold
   edges; `export_notes` says when it isn't printable as is);
@@ -17,8 +22,8 @@ Splats (`export_splat`) go out twice: Brush's PLY as it is, and SPZ, about
 a tenth of the size, stood upright like the mesh (see core.splats).
 
 Units: with the scale set (ez2digitize.scale), STL and 3MF are in
-millimetres, as slicers expect, and OBJ, GLB, the point cloud and SPZ in
-metres (glTF's unit). Without it, everything is in the reconstruction's own
+millimetres, as slicers expect, and the other mesh formats, the point
+cloud and SPZ in metres (glTF's unit). Without it, everything is in the reconstruction's own
 arbitrary units. The `ply` copy is always OpenMVS's file as it is.
 
 Exporting is not a pipeline stage: it runs in-process (mesh export is
@@ -40,7 +45,9 @@ from numpy.typing import NDArray
 
 from ez2digitize import upright
 from ez2digitize.backends.common import BackendError
+from ez2digitize.core import meshfiles
 from ez2digitize.core.files import FormatError, read_json_object, utc_now, write_json_atomic
+from ez2digitize.core.gltf import write_gltf
 from ez2digitize.core.meshio import (
     MeshFormatError,
     TexturedMesh,
@@ -56,12 +63,20 @@ from ez2digitize.core.meshio import (
 from ez2digitize.core.project import Project
 from ez2digitize.core.splats import SplatFormatError, placed, read_ply, write_spz
 from ez2digitize.core.stage import load_manifest
+from ez2digitize.core.usdz import write_usdz
 from ez2digitize.orientation import IDENTITY, Placement, place_rotated
 from ez2digitize.scale import current as current_scale
 from ez2digitize.views import read_points
 
-ExportFormat = Literal["obj", "glb", "ply", "stl", "3mf", "points", "splat", "spz"]
-FORMATS: tuple[ExportFormat, ...] = ("obj", "glb", "ply", "stl", "3mf", "points")
+ExportFormat = Literal[
+    "obj", "glb", "gltf", "usdz", "ply", "ply-colors", "off", "stl", "3mf", "points", "splat",
+    "spz",
+]  # fmt: skip
+FORMATS: tuple[ExportFormat, ...] = (
+    "obj", "glb", "gltf", "usdz", "ply", "ply-colors", "off", "stl", "3mf", "points",
+)  # fmt: skip
+# Written from the converted mesh (core.meshfiles), not meshio's writers.
+CONVERTED_FORMATS = frozenset({"gltf", "usdz", "ply-colors", "off"})
 PRINT_FORMATS = frozenset({"stl", "3mf"})
 # Millimetres per export unit: print formats in mm, the others in metres.
 PRINT_UNIT_MM = 1.0
@@ -127,7 +142,9 @@ def export_mesh(
         "upright": rows,  # the rotation used: the user's correction or the estimate
     }
     if mm_per_unit is not None:
-        info["units"] = {"stl": "mm", "3mf": "mm", "obj": "m", "glb": "m", "points": "m"}
+        units: dict[str, str] = {f: "m" for f in wanted if f != "ply"}
+        units.update({f: "mm" for f in wanted if f in PRINT_FORMATS})
+        info["units"] = units
     placement = place_rotated(mesh.positions, rotation) if rotation is not None else None
     if placement is not None:
         info["placement"] = placement.to_dict()
@@ -144,6 +161,8 @@ def export_mesh(
             files += write_obj(standing, folder / "obj", name)
         if "glb" in wanted:
             files.append(write_glb(standing, folder / f"{name}.glb"))
+        if CONVERTED_FORMATS & set(wanted):
+            files += _export_converted(meshfiles.from_textured(standing), wanted, folder, name)
         if "ply" in wanted:
             files += _copy_ply(source, mesh.textures, folder / "ply", name)
         if PRINT_FORMATS & set(wanted):
@@ -253,7 +272,7 @@ def export_notes(files: list[Path]) -> list[str]:
     if not files:
         return []
     folder = files[0].parent
-    while folder.name in ("obj", "ply"):
+    while folder.name in ("obj", "ply", "gltf"):
         folder = folder.parent
     try:
         info = read_json_object(folder / "export.json")
@@ -274,6 +293,24 @@ def export_notes(files: list[Path]) -> list[str]:
             "and the real distance between them), or scale the model in the slicer"
         )
     return notes
+
+
+def _export_converted(
+    mesh: meshfiles.Mesh, wanted: list[ExportFormat], folder: Path, name: str
+) -> list[Path]:
+    """The formats written through core.meshfiles, from the placed mesh."""
+    files: list[Path] = []
+    if "gltf" in wanted:
+        files += write_gltf(mesh, folder / "gltf" / f"{name}.gltf")
+    if "usdz" in wanted:
+        files += write_usdz(mesh, folder / f"{name}.usdz")
+    if {"ply-colors", "off"} & set(wanted):
+        colored = meshfiles.Mesh(mesh.positions, mesh.faces, meshfiles.vertex_colors(mesh))
+        if "ply-colors" in wanted:
+            files += meshfiles.write_ply(colored, folder / f"{name}_colors.ply")
+        if "off" in wanted:
+            files += meshfiles.write_off(colored, folder / f"{name}.off")
+    return files
 
 
 def _in_units(

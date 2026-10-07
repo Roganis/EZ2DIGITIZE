@@ -67,7 +67,9 @@ RADV, NVIDIA's, Intel's) or Apple silicon.
 7. The finished model opens in the **3D view** tab (turn it with the
    mouse); it also shows the dense cloud, the camera placement and splats.
 8. **Open folder** shows the result in `exports/`: OBJ (with its texture),
-   GLB, and STL/3MF for printing if you chose them. The model stands
+   GLB, and the other formats you chose under **Save as** (USDZ for AR on
+   an iPhone or iPad, glTF, PLY and OFF with vertex colours, STL/3MF for
+   printing). The model stands
    upright, centred, on the ground; with the scale set, STL and 3MF are in
    millimetres and OBJ and GLB in metres.
 
@@ -95,5 +97,21 @@ ez2d status ~/scans/skull
 ```
 
 `ez2d check` lists the tools and GPUs found; `ez2d --help` the rest.
+
+## Mesh and splat files from elsewhere
+
+**File → Open Model File…** shows any mesh or splat file in the 3D view,
+not only a project's: PLY, OBJ, STL, OFF, glTF/GLB and 3MF meshes, PLY,
+SPZ, .splat, .ksplat and SOG splats. If it shows lying down or upside
+down, change **Up**. **Convert…** saves it in another format: a mesh as
+GLB, glTF, OBJ, PLY, STL, 3MF, OFF or USDZ (for AR Quick Look on an iPhone
+or iPad), splats as PLY or SPZ. From the command line:
+
+```sh
+ez2d view statue.ply                   # opens a window
+ez2d convert statue.obj statue.usdz    # textures go along
+ez2d convert part.stl part.glb --scale 0.001   # millimetres to metres
+ez2d convert scene.ply scene.spz       # splats, about ten times smaller
+```
 
 If something goes wrong, see [troubleshooting](TROUBLESHOOTING.md).

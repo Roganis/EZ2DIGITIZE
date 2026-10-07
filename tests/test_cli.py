@@ -100,6 +100,7 @@ def test_format_list_parsing() -> None:
 
     assert _formats("obj,GLB") == ("obj", "glb")
     assert _formats("stl,3MF,points") == ("stl", "3mf", "points")
+    assert _formats("usdz,gltf,ply-colors,off") == ("usdz", "gltf", "ply-colors", "off")
     assert _formats("none") == ()
     with pytest.raises(argparse.ArgumentTypeError, match="unknown format 'step'"):
         _formats("obj,step")
@@ -135,8 +136,8 @@ def test_commands_list_matches_parser() -> None:
 
     assert set(commands()) == {
         "new", "import", "flip", "upload", "watch", "photos", "masks", "crop", "scale",
-        "markers", "orient", "run", "export", "check", "diagnostics", "plugins", "licenses",
-        "status",
+        "markers", "orient", "run", "export", "convert", "view", "check", "diagnostics",
+        "plugins", "licenses", "status",
     }  # fmt: skip
 
 
@@ -411,3 +412,38 @@ def test_refine_poses_flag() -> None:
     assert cli._settings(args, "balanced", "object").refine_poses
     args = cli._parser().parse_args(["run", "p"])
     assert not cli._settings(args, "balanced", "object").refine_poses
+
+
+def test_convert(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from model_files import textured_square
+
+    from ez2digitize.core import gltf
+
+    source = gltf.write_glb(textured_square(), tmp_path / "scan.glb")[0]
+    assert main(["convert", str(source), str(tmp_path / "out" / "scan.obj")]) == 0
+    out = capsys.readouterr().out
+    assert "scan.glb: 2 triangles, 4 vertices, textured" in out
+    assert str(tmp_path / "out" / "scan.mtl") in out
+    assert main(["convert", str(source), str(tmp_path / "scan.stl"), "--scale", "1000"]) == 0
+    capsys.readouterr()
+    assert main(["convert", str(source), str(tmp_path / "scan.spz")]) == 1
+    assert "error: a mesh can't become splats" in capsys.readouterr().err
+
+
+def test_view_opens_the_app_on_the_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ez2digitize import app
+
+    calls: list[list[str]] = []
+
+    def fake_main(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    monkeypatch.setattr(app, "main", fake_main)
+    (tmp_path / "a.spz").write_bytes(b"x")
+    assert main(["view", str(tmp_path / "a.spz")]) == 0
+    assert calls == [["ez2digitize", "--view", str(tmp_path / "a.spz")]]
+    assert main(["view", str(tmp_path / "missing.glb")]) == 1
+    assert "no such file" in capsys.readouterr().err

@@ -135,9 +135,7 @@ def placed(
     positions, rotations, sh_rest = splats.positions, splats.rotations, splats.sh_rest
     if rotation is not None:
         r = np.array(rotation, dtype=np.float64)
-        positions = positions @ r.T
-        rotations = _quaternion_product(_matrix_quaternion(r), rotations)
-        sh_rest = rotate_sh(sh_rest, r)
+        positions, rotations, sh_rest = _turned(splats, r)
         if anchor is not None and len(anchor):
             guide = anchor @ r.T
         else:
@@ -157,6 +155,18 @@ def placed(
         sh_dc=splats.sh_dc,
         sh_rest=sh_rest,
     )
+
+
+def turned(splats: Splats, rotation: Array) -> Splats:
+    """The splats turned about the origin by `rotation` (3x3), each splat's
+    rotation and view-dependent colour with them."""
+    positions, rotations, sh_rest = _turned(splats, np.asarray(rotation, np.float64))
+    return Splats(positions, splats.scales, rotations, splats.opacities, splats.sh_dc, sh_rest)
+
+
+def _turned(splats: Splats, r: Array) -> tuple[Array, Array, Array]:
+    rotations = _quaternion_product(_matrix_quaternion(r), splats.rotations)
+    return splats.positions @ r.T, rotations, rotate_sh(splats.sh_rest, r)
 
 
 def rotate_sh(sh_rest: Array, rotation: Array) -> Array:
@@ -299,36 +309,140 @@ def write_spz(splats: Splats, path: Path) -> Path:
 
 
 def read_spz(path: Path) -> Splats:
-    """Read an SPZ file of version 2 (quaternion x, y, z) back into splats."""
+    """Read an SPZ file (versions 1 to 3) back into splats, in SPZ's frame.
+
+    Version 1 stores positions as half floats, version 2 as 24-bit fixed
+    point with the rotation's x, y, z (w positive), version 3 the rotation's
+    three smallest components and which one was left out.
+    """
     try:
         data = gzip.decompress(path.read_bytes())
         magic, version, n, degree, bits, _flags, _ = struct.unpack_from("<IIIBBBB", data)
-    except (OSError, EOFError, struct.error) as exc:
+    except (OSError, EOFError, gzip.BadGzipFile, struct.error) as exc:
         raise SplatFormatError(f"{path}: not an SPZ file ({exc})") from exc
-    if magic != SPZ_MAGIC or version != SPZ_VERSION or degree > 3:
-        raise SplatFormatError(f"{path}: not an SPZ version 2 file")
+    if magic != SPZ_MAGIC or degree > 3:
+        raise SplatFormatError(f"{path}: not an SPZ file")
+    if version not in (1, 2, 3):
+        raise SplatFormatError(f"{path}: SPZ version {version}; versions 1 to 3 are read")
     k = {0: 0, 1: 3, 2: 8, 3: 15}[degree]
-    sizes = [n * 9, n, n * 3, n * 3, n * 3, n * k * 3]
+    sizes = [n * (6 if version == 1 else 9), n, n * 3, n * 3, n * (4 if version >= 3 else 3)]
+    sizes.append(n * k * 3)
     if len(data) < 16 + sum(sizes):
         raise SplatFormatError(f"{path}: file ends inside the splats")
     chunks, offset = [], 16
     for size in sizes:
-        chunks.append(np.frombuffer(data, np.uint8, size, offset).astype(np.float64))
+        chunks.append(np.frombuffer(data, np.uint8, size, offset))
         offset += size
-    raw = chunks[0].reshape(n, 3, 3).astype(np.int64)
-    fixed = raw[..., 0] + (raw[..., 1] << 8) + (raw[..., 2] << 16)
-    fixed = np.where(fixed >= 1 << 23, fixed - (1 << 24), fixed)
-    xyz = chunks[4].reshape(n, 3) / 127.5 - 1
-    w = np.sqrt(np.clip(1 - (xyz**2).sum(axis=1), 0, None))
-    alpha = np.clip(chunks[1] / 255, 1e-6, 1 - 1e-6)
+    if version == 1:
+        positions = chunks[0].view("<f2").reshape(n, 3).astype(np.float64)
+    else:
+        raw = chunks[0].reshape(n, 3, 3).astype(np.int64)
+        fixed = raw[..., 0] + (raw[..., 1] << 8) + (raw[..., 2] << 16)
+        fixed = np.where(fixed >= 1 << 23, fixed - (1 << 24), fixed)
+        positions = fixed / (1 << bits)
+    if version >= 3:
+        rotations = _smallest_three(chunks[4].reshape(n, 4))
+    else:
+        xyz = chunks[4].reshape(n, 3).astype(np.float64) / 127.5 - 1
+        w = np.sqrt(np.clip(1 - (xyz**2).sum(axis=1), 0, None))
+        rotations = np.column_stack([w, xyz])
+    alpha = np.clip(chunks[1].astype(np.float64) / 255, 1e-6, 1 - 1e-6)
     return Splats(
-        positions=fixed / (1 << bits),
-        scales=chunks[3].reshape(n, 3) / 16 - 10,
-        rotations=np.column_stack([w, xyz]),
+        positions=positions,
+        scales=chunks[3].reshape(n, 3).astype(np.float64) / 16 - 10,
+        rotations=rotations,
         opacities=np.log(alpha / (1 - alpha)),
-        sh_dc=(chunks[2].reshape(n, 3) / 255 - 0.5) / SPZ_COLOR_SCALE,
-        sh_rest=(chunks[5].reshape(n, k, 3) - 128) / 128,
+        sh_dc=(chunks[2].reshape(n, 3).astype(np.float64) / 255 - 0.5) / SPZ_COLOR_SCALE,
+        sh_rest=(chunks[5].reshape(n, k, 3).astype(np.float64) - 128) / 128,
     )
+
+
+def _smallest_three(packed: NDArray[np.uint8]) -> Array:
+    """SPZ 3's rotations (4 bytes each) as quaternions (w, x, y, z).
+
+    The 32 bits, high to low: the index (2 bits) of the largest component of
+    (x, y, z, w), then for the others, last first, a sign bit and 9 bits of
+    magnitude in units of 1/sqrt(2) / 511. The largest is positive.
+    """
+    word = packed.astype(np.uint32)
+    bits = word[:, 0] | (word[:, 1] << 8) | (word[:, 2] << 16) | (word[:, 3] << 24)
+    largest = (bits >> 30).astype(np.int64)
+    xyzw = np.zeros((len(packed), 4))
+    rows = np.arange(len(packed))
+    for slot in (3, 2, 1, 0):
+        # Each splat skips its largest component; the others are read last first.
+        reading = slot != largest
+        magnitude = (bits & 511).astype(np.float64) * (np.sqrt(0.5) / 511)
+        negative = ((bits >> 9) & 1).astype(bool)
+        xyzw[reading, slot] = np.where(negative, -magnitude, magnitude)[reading]
+        bits = np.where(reading, bits >> 10, bits)
+    xyzw[rows, largest] = np.sqrt(np.clip(1 - (xyzw**2).sum(axis=1), 0, None))
+    return np.column_stack([xyzw[:, 3], xyzw[:, :3]])
+
+
+# --- other formats ---------------------------------------------------------------
+
+# 3D Gaussian splatting's PLY (and .splat files made from it) keep COLMAP's
+# frame (x right, y down, z forward); SPZ is x right, y up, z back. A half
+# turn about x goes from one to the other, both ways.
+PLY_TO_SPZ: Array = np.diag([1.0, -1.0, -1.0])
+SH_C0 = 0.28209479177387814  # the constant spherical harmonic
+SPLAT_RECORD = np.dtype(
+    [("position", "<f4", 3), ("scale", "<f4", 3), ("color", "u1", 4), ("rotation", "u1", 4)]
+)
+
+
+def read_splat(path: Path) -> Splats:
+    """A `.splat` file (antimatter15's web viewer): 32 bytes a splat, position
+    and scale as floats, colour and opacity as bytes, the rotation (w, x, y,
+    z) as bytes; no view-dependent colour."""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise SplatFormatError(f"{path}: {exc}") from exc
+    if len(data) % SPLAT_RECORD.itemsize:
+        raise SplatFormatError(f"{path}: not a .splat file (its size isn't a multiple of 32)")
+    table = np.frombuffer(data, SPLAT_RECORD)
+    rgba = table["color"].astype(np.float64) / 255
+    alpha = np.clip(rgba[:, 3], 1e-6, 1 - 1e-6)
+    rotations = (table["rotation"].astype(np.float64) - 128) / 128
+    norms = np.linalg.norm(rotations, axis=1, keepdims=True)
+    rotations = np.where(norms > 0, rotations / np.where(norms > 0, norms, 1), [1.0, 0, 0, 0])
+    return Splats(
+        positions=table["position"].astype(np.float64),
+        scales=np.log(np.clip(table["scale"].astype(np.float64), 1e-12, None)),
+        rotations=rotations,
+        opacities=np.log(alpha / (1 - alpha)),
+        sh_dc=(rgba[:, :3] - 0.5) / SH_C0,
+        sh_rest=np.zeros((len(table), 0, 3)),
+    )
+
+
+def write_ply(splats: Splats, path: Path) -> Path:
+    """The usual 3D Gaussian splatting PLY (what Brush and most tools read)."""
+    k = splats.sh_rest.shape[1]
+    names = ["x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2"]
+    names += [f"f_rest_{i}" for i in range(3 * k)]
+    names += ["opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+    columns = [
+        splats.positions,
+        np.zeros((splats.count, 3)),
+        splats.sh_dc,
+        # Channel by channel: f_rest_[c * k + j] is coefficient j of channel c.
+        splats.sh_rest.transpose(0, 2, 1).reshape(splats.count, 3 * k),
+        splats.opacities[:, None],
+        splats.scales,
+        splats.rotations,
+    ]
+    table = np.ascontiguousarray(np.hstack(columns), "<f4")
+    header = ["ply", "format binary_little_endian 1.0", "comment written by EZ2DIGITIZE"]
+    header += [f"element vertex {splats.count}", *(f"property float {n}" for n in names)]
+    header.append("end_header")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as out:
+        out.write(("\n".join(header) + "\n").encode("ascii"))
+        out.write(table.tobytes())
+    return path
 
 
 def _bytes(values: Array) -> NDArray[np.uint8]:

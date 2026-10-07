@@ -77,8 +77,26 @@ The first release.
   centred and on the ground.
 - Splats also as SPZ, about a tenth of the PLY's size, stood upright like
   the mesh.
+- More mesh formats: USDZ for AR Quick Look on iPhone and iPad, glTF with
+  its buffer and textures as separate files, and PLY and OFF with a colour
+  per vertex taken from the texture (for MeshLab, Blender and other tools
+  that don't read OpenMVS's textured PLY).
 - Common backend failures explained in plain words, and a diagnostics zip
   for bug reports.
+
+### Model files from anywhere
+
+- Open a mesh or splat file that isn't from a project (File → Open Model
+  File…, the welcome page, `ez2d view FILE`, or `ez2digitize FILE`): it
+  shows in the 3D view, with a choice of which way is up. Meshes: PLY,
+  OBJ (with its MTL and textures), STL, OFF, glTF/GLB and 3MF. Splats: PLY,
+  SPZ (versions 1 to 3), .splat, .ksplat and SOG. Point clouds (PLY).
+- Convert them (Convert… in that window, `ez2d convert IN OUT`): meshes to
+  GLB, glTF, OBJ, PLY, STL, 3MF, OFF and USDZ, keeping textures and vertex
+  colours where the format can; splats between PLY and SPZ. A model is
+  turned where the formats disagree on which way is up (STL and 3MF are Z
+  up, splat PLY files keep the training camera's frame); `--scale` changes
+  its units.
 
 ### Plugins
 

@@ -9,9 +9,10 @@ from pathlib import Path
 from PySide6.QtCore import QTemporaryDir, QTimer
 from PySide6.QtWidgets import QApplication
 
-from ez2digitize import __version__
+from ez2digitize import __version__, models
 from ez2digitize.ui import viewer
 from ez2digitize.ui.main_window import MainWindow
+from ez2digitize.ui.model_window import open_model
 
 
 def _heif_works() -> bool:
@@ -28,13 +29,26 @@ def _heif_works() -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv if argv is None else argv
     self_test = "--self-test" in args[1:]
+    # `--view FILE` (ez2d view): only the model's window, no project window.
+    view_only = "--view" in args[1:]
     viewer.prepare()  # QtWebEngine: before the QApplication exists
-    app = QApplication([a for a in args if a != "--self-test"])
+    app = QApplication([a for a in args if a not in ("--self-test", "--view")])
     app.setOrganizationName("EZ2DIGITIZE")
     app.setApplicationName("EZ2DIGITIZE")
     app.setApplicationVersion(__version__)
+    # Model files named on the command line (or opened with the app) open in their windows.
+    files = [
+        Path(a)
+        for a in args[1:]
+        if not a.startswith("-") and Path(a).suffix.lower() in models.OPENABLE
+    ]
+    if view_only:
+        shown = [w for w in (open_model(f) for f in files) if w is not None]
+        return app.exec() if shown else 1
     window = MainWindow()
     window.show()
+    for path in files:
+        window.open_model(path)
     if self_test:
         # For packaging checks: the window came up, and the viewer's page
         # loads (QtWebEngine starts in the bundle); report and quit, with exit

@@ -343,7 +343,10 @@ for the format.
 
 Formats: `obj`, `glb` (textured), `ply` (OpenMVS's own), `stl` and `3mf`
 (geometry for printing, with a watertightness check recorded in
-export.json and reported as a notice), `points` (the dense point cloud).
+export.json and reported as a notice), `points` (the dense point cloud),
+and, written through `core/meshfiles.py` from the same placed mesh,
+`gltf` (separate .bin and images), `usdz` and `ply-colors` / `off` (a
+colour per vertex: the average of the texture under its corners).
 Splats (`export_splat`, `core/splats.py`): Brush's PLY as it is, and SPZ
 version 2 (positions as 24-bit fixed point, the rest quantised to bytes,
 gzipped: about a tenth of the PLY). The SPZ is stood upright: positions and
@@ -395,6 +398,37 @@ reconstruction coordinates and stays.
   metres for OBJ, GLB and the point cloud (glTF's unit). `export.json`
   records `scale_mm_per_unit` and the units, and the factor is part of
   what decides whether an earlier export can be reused.
+
+## Model files (`models.py`, `core/meshfiles.py`, `core/gltf.py`, `core/usdz.py`)
+
+Mesh and splat files from anywhere, opened and converted outside any
+project. `models.identify` says what a file holds (a PLY by its header:
+faces make a mesh, `f_dc_0`/`opacity` splats, else points) and which way is
+up in it by format convention: Y for glTF, OBJ, PLY, OFF and USDZ, Z for
+STL and 3MF, and Y down for splat PLY and .splat (the training camera's
+frame); SPZ is Y up. `models.convert` turns the model where the source and
+target conventions differ, and scales it on request; units are never
+guessed.
+
+- Meshes are one model, `meshfiles.Mesh` (numpy): triangles (polygons
+  become fans as they are read), vertex colours, per-corner texture
+  coordinates and a material (colour and image) per face. Read: PLY (ASCII
+  and binary, both byte orders, uniform lists parsed as one table and
+  ragged ones record by record), OBJ (statements found by pattern, numbers
+  parsed in bulk, MTL `Kd`, `d` and `map_Kd`), STL, OFF, 3MF (items,
+  components, transforms) and glTF/GLB (scene graph, strips and fans,
+  strides, sparse accessors, data URIs; Draco and meshopt are refused).
+  Written: all of those but nothing compressed, and USDZ. About half a
+  million textured faces convert in a few seconds per format.
+- USDZ: a text USD layer (Y up, metres) with UsdPreviewSurface materials
+  (GeomSubsets when there are several) and the images, stored uncompressed
+  at 64-byte offsets. It passes OpenUSD's validators; GLB and glTF pass the
+  Khronos glTF validator.
+- Splats (`core/splats.py`) read PLY, SPZ 1 to 3 and .splat, write PLY and
+  SPZ; .ksplat and SOG are shown by the page (Spark) but not converted.
+- The window (`ui/model_window.py`) is a `ViewerWidget` showing a
+  `views.file_view`: a GLB as it is, other meshes converted into a cached
+  GLB, splats and point clouds as they are; Up re-shows it turned.
 
 ## GUI (`ui/`)
 

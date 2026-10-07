@@ -260,3 +260,31 @@ def test_splat_export(
     (project.stage_dir("splat") / "splat.ply").write_text("not splats")
     with pytest.raises(ExportError, match="cannot read the splats"):
         export_splat(project, align=False)
+
+
+def test_converted_formats(built: Project) -> None:
+    import zipfile
+
+    from model_files import png
+
+    from ez2digitize.core import meshfiles
+
+    # The fake texture is not a real image; the vertex colours need one.
+    (built.stage_dir("texture") / "scene_textured0.png").write_bytes(png((10, 20, 30)))
+    files = export_mesh(built, ["gltf", "usdz", "ply-colors", "off"], now=NOW)
+    folder = built.exports_dir / "20261005-180000"
+    assert sorted(f.relative_to(folder).as_posix() for f in files) == [
+        "My_Skull.off",
+        "My_Skull.usdz",
+        "My_Skull_colors.ply",
+        "gltf/My_Skull.bin",
+        "gltf/My_Skull.gltf",
+        "gltf/My_Skull_texture0.png",
+    ]
+    colored = meshfiles.read_ply(folder / "My_Skull_colors.ply")
+    assert colored.colors is not None and colored.colors.tolist() == [[10, 20, 30]] * 3
+    assert colored.uvs is None
+    with zipfile.ZipFile(folder / "My_Skull.usdz") as package:
+        assert package.namelist() == ["model.usda", "textures/texture0.png"]
+    info = json.loads((folder / "export.json").read_text())
+    assert info["formats"] == ["gltf", "usdz", "ply-colors", "off"]

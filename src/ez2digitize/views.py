@@ -16,6 +16,11 @@ tells it which `View` to draw. A view is one result of the pipeline:
 - `splat-mesh`: the mesh made from the splats (see splat_mesh), as its
   exported GLB, else converted into a cached GLB with vertex colours.
 
+A model file from outside a project (see models) is shown as a `file`
+view (`file_view`): a GLB as it is, another mesh converted into a cached
+GLB, splats and point clouds as they are (the page reads PLY, SPZ, .splat,
+.ksplat and SOG itself).
+
 `available` only looks at which stages succeeded, so it is cheap; `files`
 does the work (reading the sparse model, converting the mesh) when a view
 is shown. Each view carries `upright`: the rotation that stands the model
@@ -26,6 +31,7 @@ or the photos don't say which way is up.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import math
 import sqlite3
@@ -35,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ez2digitize import coverage, splat_mesh, subject, upright
+from ez2digitize import coverage, models, splat_mesh, subject, upright
 from ez2digitize.backends import brush, colmap
 from ez2digitize.backends.colmap_model import read_cameras, read_images
 from ez2digitize.backends.common import BackendError
@@ -45,7 +51,7 @@ from ez2digitize.core.project import Project
 from ez2digitize.core.stage import StageManifest, load_manifest
 from ez2digitize.orientation import Matrix, quaternion_matrix
 
-ViewKey = Literal["cameras", "dense", "mesh", "splat", "splat-mesh"]
+ViewKey = Literal["cameras", "dense", "mesh", "splat", "splat-mesh", "file"]
 # How the page draws a view (viewer.js): GLB mesh, PLY points, splats, or
 # sparse points with camera frustums.
 Kind = Literal["glb", "points", "splat", "cameras"]
@@ -56,6 +62,7 @@ LABELS: dict[ViewKey, str] = {
     "mesh": "Textured mesh",
     "splat": "Gaussian splats",
     "splat-mesh": "Mesh from splats",
+    "file": "Model file",
 }
 ORDER: tuple[ViewKey, ...] = ("mesh", "splat-mesh", "splat", "dense", "cameras")
 
@@ -78,10 +85,26 @@ class View:
     database: Path | None = None
     # The cameras view: rings round an object (not for a room or a scene).
     rings: bool = True
+    # A file view: what the file holds.
+    model: models.ModelFile | None = None
 
     @property
     def label(self) -> str:
-        return LABELS[self.key]
+        return self.model.path.name if self.model is not None else LABELS[self.key]
+
+
+def file_view(model: models.ModelFile, up: models.Up | None = None) -> View:
+    """A model file, turned so that `up` (default: its format's convention) is up."""
+    up = up or model.up
+    kind: Kind = "glb" if model.kind == "mesh" else model.kind
+    try:
+        stat = model.path.stat()
+    except OSError as exc:
+        raise ViewError(f"{model.path}: {exc}") from exc
+    rotation = None if up == "y" else models.UP_MATRICES[up]
+    # A changed file is a new "run": the page reloads it.
+    run_id = f"{stat.st_mtime_ns}-{stat.st_size}"
+    return View("file", kind, run_id, model.path, rotation, model=model)
 
 
 def available(project: Project) -> list[View]:
@@ -138,6 +161,8 @@ def files(view: View, cache: Path) -> dict[str, Path | bytes]:
     Files made for the viewer (the cached GLB) go into `cache`.
     """
     try:
+        if view.key == "file":
+            return {"model": _file_model(view, cache)}
         if view.key == "mesh":
             if view.source.suffix == ".glb":
                 return {"model": view.source}
@@ -153,7 +178,7 @@ def files(view: View, cache: Path) -> dict[str, Path | bytes]:
         rings, weak = camera_coverage(view)
         points, cameras = sparse_scene(view.source, rings, weak)
         return {"model": points, "cameras": cameras}
-    except (OSError, BackendError, MeshFormatError, FormatError) as exc:
+    except (OSError, BackendError, MeshFormatError, FormatError, models.ModelError) as exc:
         raise ViewError(f"{view.label} can't be shown: {exc}") from exc
 
 
@@ -299,6 +324,20 @@ def _exported_glb(project: Project, run_id: str, up: Matrix | None) -> Path | No
                 if str(name).endswith(".glb") and (folder / str(name)).is_file():
                     return folder / str(name)
     return None
+
+
+def _file_model(view: View, cache: Path) -> Path:
+    """The file the page loads for a model file: itself, or a GLB made from a mesh."""
+    if view.model is None or view.kind != "glb" or view.model.suffix == ".glb":
+        return view.source
+    key = hashlib.sha256(f"{view.source.resolve()}|{view.run_id}".encode()).hexdigest()[:16]
+    target = cache / f"file-{key}.glb"
+    if not target.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        partial = cache / f"file-{key}-part.glb"
+        models.write_mesh(models.read_mesh(view.source), partial)
+        partial.replace(target)
+    return target
 
 
 def _cached_splat_mesh(view: View, cache: Path) -> Path:

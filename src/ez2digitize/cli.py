@@ -17,6 +17,8 @@
     ez2d orient ~/scans/skull --tilt x      # it lay on its side: a quarter turn
     ez2d status ~/scans/skull
     ez2d export ~/scans/skull --formats glb # again, e.g. in other formats
+    ez2d convert scan.obj scan.usdz         # any mesh or splat file to another format
+    ez2d view scan.spz                      # look at a model file (opens a window)
     ez2d check                              # which COLMAP and OpenMVS are used
     ez2d plugins install ~/vggt-plugin      # a plugin: read its licenses, accept,
     ez2d plugins use poses vggt             # and use it to place the cameras
@@ -44,6 +46,7 @@ from ez2digitize import (
     licenses,
     markers,
     masks,
+    models,
     motion,
     plugins,
     presets,
@@ -110,6 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ExportError,
         masks.MaskingError,
         markers.MarkerError,
+        models.ModelError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -395,8 +399,9 @@ def _parser() -> argparse.ArgumentParser:
         type=_formats,
         default=("obj", "glb"),
         metavar="FORMATS",
-        help="formats to export, comma-separated: obj, glb, ply, stl, 3mf (printing, no "
-        "texture), points (dense point cloud), or none (default obj,glb)",
+        help="formats to export, comma-separated: obj, glb, gltf, usdz (AR on iPhone and "
+        "iPad), ply, ply-colors and off (vertex colours), stl, 3mf (printing, no texture), "
+        "points (dense point cloud), or none (default obj,glb)",
     )
     run.add_argument("--no-masks", action="store_true", help="ignore the project's masks")
     run.add_argument(
@@ -422,12 +427,39 @@ def _parser() -> argparse.ArgumentParser:
         type=_formats,
         default=("obj", "glb"),
         metavar="FORMATS",
-        help="comma-separated: obj, glb, ply, stl, 3mf, points (default obj,glb)",
+        help="comma-separated: " + ", ".join(FORMATS) + " (default obj,glb)",
     )
     export.add_argument(
         "--no-align", action="store_true", help="keep the reconstruction's own frame"
     )
     export.set_defaults(func=_cmd_export)
+
+    conv = sub.add_parser(
+        "convert",
+        help="convert a mesh or splat file (not only a project's) to another format",
+        description="Meshes: from "
+        + ", ".join(models.MESH_READ)
+        + " to "
+        + ", ".join(models.MESH_WRITE)
+        + ". Splats: from "
+        + ", ".join(models.SPLAT_READ)
+        + " to "
+        + ", ".join(models.SPLAT_WRITE)
+        + ". The model is turned where the formats disagree on which way is up.",
+    )
+    conv.add_argument("source", type=Path, help="the file to convert")
+    conv.add_argument("target", type=Path, help="the new file; its suffix says the format")
+    conv.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="multiply the size, e.g. 0.001 from millimetres (STL) to metres (GLB)",
+    )
+    conv.set_defaults(func=_cmd_convert)
+
+    look = sub.add_parser("view", help="look at a mesh, splat or point cloud file in a window")
+    look.add_argument("file", type=Path)
+    look.set_defaults(func=_cmd_view)
 
     check = sub.add_parser("check", help="find the reconstruction tools and check they run")
     check.add_argument("--colmap", type=Path, help="COLMAP executable")
@@ -1294,6 +1326,22 @@ def _cmd_export(args: argparse.Namespace) -> int:
     for note in export_notes(files):
         print(f"note: {note}")
     return 0
+
+
+def _cmd_convert(args: argparse.Namespace) -> int:
+    model = models.identify(args.source)
+    print(f"{args.source.name}: {models.summary(model)}")
+    for path in models.convert(args.source, args.target, scale=args.scale):
+        print(path)
+    return 0
+
+
+def _cmd_view(args: argparse.Namespace) -> int:
+    models.identify(args.file)  # a clear error here rather than in a window
+    # The one command with a window: Qt loads only now.
+    from ez2digitize import app
+
+    return app.main(["ez2digitize", "--view", str(args.file)])
 
 
 def _formats(text: str) -> tuple[ExportFormat, ...]:

@@ -5,8 +5,10 @@ splats, on any GPU vendor. EZ2DIGITIZE is a desktop app that drives
 open-source reconstruction tools (COLMAP, OpenMVS, Brush) for you.
 
 **Status:** early development ([roadmap](docs/ROADMAP.md)). Photos, a
-video or a phone upload in; a textured mesh (OBJ, GLB, STL, 3MF) or
-Gaussian splats out; from the GUI or the command line. CI builds a Linux
+video or a phone upload in; a textured mesh (OBJ, GLB, glTF, USDZ, STL,
+3MF, PLY, OFF) or Gaussian splats (PLY, SPZ) out; from the GUI or the
+command line. Mesh and splat files from anywhere open in its 3D view and
+convert between those formats. CI builds a Linux
 AppImage, a macOS app and a portable Windows zip with the tools inside;
 tagged versions are published on the
 [releases page](https://github.com/Roganis/EZ2DIGITIZE/releases)
@@ -56,6 +58,8 @@ uv run ez2d orient ~/scans/skull --tilt x           # lying on its side: a quart
 uv run ez2d run ~/scans/skull --quality fast        # fast, balanced (default), high
 uv run ez2d status ~/scans/skull
 uv run ez2d export ~/scans/skull --formats glb      # OBJ and GLB are exported after run
+uv run ez2d convert scan.obj scan.usdz              # any mesh or splat file, another format
+uv run ez2d view scan.spz                           # look at a mesh or splat file
 ```
 
 See [CLAUDE.md](CLAUDE.md) for project rules and

@@ -209,3 +209,40 @@ def test_coverage_rings(qtbot: QtBot, tmp_path: Path) -> None:
     widget.clear()
     assert json.loads(str(call("JSON.stringify(ez2d.gapLabels())"))) == []
     assert errors == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="software WebGL on Linux")
+@pytest.mark.skipif(not viewer.AVAILABLE, reason="no QtWebEngine")
+def test_page_shows_model_files(qtbot: QtBot, tmp_path: Path) -> None:
+    """Meshes in other formats (converted to GLB for the page) and splat files."""
+    import numpy as np
+    from model_files import random_splats, textured_square
+
+    from ez2digitize import models
+    from ez2digitize.core import meshfiles
+    from ez2digitize.core import splats as sp
+
+    obj = meshfiles.write_obj(textured_square(), tmp_path / "m.obj")[0]
+    off = meshfiles.write_off(textured_square(), tmp_path / "m.off")[0]
+    splats = random_splats(50, k=3)
+    splats.rotations /= np.linalg.norm(splats.rotations, axis=1, keepdims=True)
+    ply = sp.write_ply(splats, tmp_path / "s.ply")
+    spz = sp.write_spz(splats, tmp_path / "s.spz")
+    record = np.zeros(7, sp.SPLAT_RECORD)
+    record["scale"], record["color"], record["rotation"] = 0.1, 200, (255, 128, 128, 128)
+    (tmp_path / "s.splat").write_bytes(record.tobytes())
+
+    widget = viewer.ViewerWidget(tmp_path / "cache")
+    qtbot.addWidget(widget)
+    widget.resize(400, 300)
+    widget.show()
+    errors: list[str] = []
+    widget.failed.connect(errors.append)
+    expected = [(obj, "faces", 2), (off, "faces", 2), (ply, "splats", 50),
+                (spz, "splats", 50), (tmp_path / "s.splat", "splats", 7)]  # fmt: skip
+    for path, unit, count in expected:
+        with qtbot.waitSignal(widget.loaded, timeout=TIMEOUT_MS) as loaded:
+            widget.show_view(views.file_view(models.identify(path)))
+        assert errors == [], path
+        assert loaded.args is not None
+        assert (loaded.args[0]["unit"], loaded.args[0]["count"]) == (unit, count), path

@@ -31,6 +31,7 @@
 #   EZ2D_BACKENDS_WORK   work directory          (default: build/backends)
 #   VCPKG_BINARY_CACHE   vcpkg binary cache       (default: $WORK/vcpkg-cache)
 #   JOBS                 parallel build jobs      (default: all cores)
+#   WINDOWS_COMPILER     clang-cl or msvc         (default: clang-cl)
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -78,6 +79,34 @@ if [ "$OS" = windows ]; then
   # The static C runtime, as in the vcpkg libraries (the toolchain leaves the
   # project's own code on the DLL runtime otherwise).
   PLATFORM_ARGS=(-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW)
+  WINDOWS_COMPILER=${WINDOWS_COMPILER:-clang-cl}
+  if [ "$WINDOWS_COMPILER" = clang-cl ]; then
+    # COLMAP's and OpenMVS's own code with clang-cl and lld-link, the vcpkg
+    # libraries staying MSVC's (the same ABI, and the cache still applies).
+    # With MSVC, OpenMVS always turns on link-time code generation, and its
+    # five tools took 55 to 72 minutes to link on the CI runner; turned off,
+    # compiling took 2 h 46. LLVM optimises while compiling, as on Linux and
+    # macOS, where OpenMVS builds in about 2 minutes; clang-cl ignores /GL and
+    # lld-link /LTCG. The clang-cl that comes with Visual Studio matches its
+    # C++ library; a separate LLVM install is the fallback.
+    CLANG_CL="$(cygpath -u "${VCINSTALLDIR:-}")/Tools/Llvm/x64/bin/clang-cl.exe"
+    [ -x "$CLANG_CL" ] || CLANG_CL=$(command -v clang-cl || true)
+    [ -n "$CLANG_CL" ] || { echo "error: clang-cl not found (Visual Studio's C++ Clang tools)" >&2; exit 1; }
+    LLD_LINK=$(dirname "$CLANG_CL")/lld-link.exe
+    # OpenMP: LLVM's runtime as MSVC ships it for /openmp:llvm (libomp.lib,
+    # and libomp140.x86_64.dll in the redistributable, shipped below).
+    LIBOMP_LIB=$(cygpath -m "$(cygpath -u "$VCToolsInstallDir")/lib/x64/libomp.lib")
+    [ -e "$LIBOMP_LIB" ] || { echo "error: $LIBOMP_LIB not found" >&2; exit 1; }
+    PLATFORM_ARGS+=(
+      -DCMAKE_C_COMPILER="$(cygpath -m "$CLANG_CL")"
+      -DCMAKE_CXX_COMPILER="$(cygpath -m "$CLANG_CL")"
+      -DCMAKE_LINKER="$(cygpath -m "$LLD_LINK")"
+      -DOpenMP_C_FLAGS="-Xclang -fopenmp" -DOpenMP_CXX_FLAGS="-Xclang -fopenmp"
+      -DOpenMP_C_LIB_NAMES=libomp -DOpenMP_CXX_LIB_NAMES=libomp
+      -DOpenMP_libomp_LIBRARY="$LIBOMP_LIB"
+    )
+    "$CLANG_CL" --version | head -1
+  fi
 fi
 
 PREFIX=$WORK/prefix
@@ -175,13 +204,16 @@ if [ "$OS" = windows ]; then
   # DLLs even with a static triplet (LAPACK, compiled with MinGW's gfortran,
   # with the GCC runtime). Windows' own DLLs are found nowhere here and skipped.
   CRT=$(dirname "$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name vcruntime140.dll -path '*.CRT*' | head -1)")
+  # LLVM's OpenMP runtime, for code built with clang-cl.
+  OMP_LLVM_DLL=$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name 'libomp140*.dll' -path '*OpenMP.LLVM*' | head -1)
+  OMP_LLVM=$( [ -n "$OMP_LLVM_DLL" ] && dirname "$OMP_LLVM_DLL" || echo /nonexistent)
   while true; do
     added=0
     for dll in $(for f in "$PREFIX"/bin/*.exe "$PREFIX"/bin/*.dll; do
                    dumpbin //nologo //dependents "$(cygpath -w "$f")"
                  done | grep -io '[a-z0-9_.+-]*\.dll' | sort -fu); do
       [ -e "$PREFIX/bin/$dll" ] && continue
-      for dir in "$CRT" "$WORK"/colmap-install/bin "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
+      for dir in "$CRT" "$OMP_LLVM" "$WORK"/colmap-install/bin "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
         if [ -e "$dir/$dll" ]; then
           echo "shipping $dll (from $dir)"
           cp "$dir/$dll" "$PREFIX/bin/"
@@ -243,7 +275,9 @@ else
   GLIBC=none
   DYNAMIC=$(for f in "$PREFIX"/bin/*; do otool -L "$f" | tail -n +2 | awk '{print $1}'; done | sort -u | tr '\n' ' ')
 fi
-if [ "$OS" = windows ]; then
+if [ "$OS" = windows ] && [ "$WINDOWS_COMPILER" = clang-cl ]; then
+  COMPILER="$("$CLANG_CL" --version | head -1 | tr -d '\r') (vcpkg libraries: $(cl 2>&1 | head -1 | tr -d '\r'))"
+elif [ "$OS" = windows ]; then
   COMPILER=$(cl 2>&1 | head -1 | tr -d '\r')
 else
   COMPILER=$(c++ --version | head -1)

@@ -133,12 +133,21 @@ vcpkg 2026.07.29).
 
 ## Patches
 
-`patches/openmvs-*.patch` are upstream OpenMVS fixes released after the
-pinned version; `build.sh` applies them to the checkout and lists them in
-`BUILDINFO.json` (`openmvs_patches`). Each patch's header says what it fixes
-and which upstream commit it comes from. Drop a patch when the pin moves
-past that commit.
+`patches/colmap-*.patch` and `patches/openmvs-*.patch` are fixes to the
+pinned versions; `build.sh` applies them to the checkouts on every platform
+and lists them in `BUILDINFO.json` (`colmap_patches`, `openmvs_patches`).
+Each patch's header says what it fixes and, for upstream fixes, which commit
+it comes from. Drop a patch when the pin moves past that commit.
 
+- `colmap-4.2.1-poisson-centre-vertex.patch` (ours; the bug is also in
+  PoissonRecon master): the Poisson mesher's polygon centre vertices read an
+  uninitialised density (`Vertex c; c *= 0;`). `-ffast-math`, which COLMAP
+  uses for every compiler but MSVC, folds `x * 0` to 0 and hid it; built
+  with clang-cl, the densities came out NaN and the surface trimmer turned
+  every vertex cut from them into NaN.
+- `openmvs-2.4.0-clang-cl.patch` (ours): lets clang-cl, the Windows compiler,
+  compile OpenMVS (SSE sums, resource-compiler defines); MSVC, GCC and
+  Apple Clang compile the same code as before.
 - `openmvs-2.4.0-sample-type.patch`: v2.4.0 samples 8-bit images as if
   they held float colours, so TextureMesh's local seam leveling fills
   the atlas with black blobs and saturated red/green/blue specks (seen on

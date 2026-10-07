@@ -93,10 +93,29 @@ if [ "$OS" = windows ]; then
     [ -x "$CLANG_CL" ] || CLANG_CL=$(command -v clang-cl || true)
     [ -n "$CLANG_CL" ] || { echo "error: clang-cl not found (Visual Studio's C++ Clang tools)" >&2; exit 1; }
     LLD_LINK=$(dirname "$CLANG_CL")/lld-link.exe
-    # OpenMP: LLVM's runtime as MSVC ships it for /openmp:llvm (libomp.lib,
-    # and libomp140.x86_64.dll in the redistributable, shipped below).
-    LIBOMP_LIB=$(cygpath -m "$(cygpath -u "$VCToolsInstallDir")/lib/x64/libomp.lib")
-    [ -e "$LIBOMP_LIB" ] || { echo "error: $LIBOMP_LIB not found" >&2; exit 1; }
+    # OpenMP: LLVM's own runtime (libomp.dll, shipped below), built from the
+    # pinned LLVM release with the same clang-cl in a few seconds. Visual
+    # Studio's build of it for /openmp:llvm (libomp140.x86_64.dll) is only in
+    # its debug_nonredist folder: not licensed for shipping.
+    log "LLVM OpenMP runtime $LLVM_VERSION"
+    fetch_llvm_openmp llvm
+    LLVM_OPENMP=$WORK/llvm-openmp
+    cmake -S llvm/openmp -B llvm-openmp-build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER="$(cygpath -m "$CLANG_CL")" \
+      -DCMAKE_CXX_COMPILER="$(cygpath -m "$CLANG_CL")" \
+      -DCMAKE_LINKER="$(cygpath -m "$LLD_LINK")" \
+      -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
+      -DCMAKE_INSTALL_PREFIX="$(cygpath -m "$LLVM_OPENMP")" \
+      -DOPENMP_STANDALONE_BUILD=ON -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
+      -DLIBOMP_OMPT_SUPPORT=OFF -DLIBOMP_OMPD_SUPPORT=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF \
+      -DLIBOMP_INSTALL_ALIASES=OFF
+    cmake --build llvm-openmp-build --target omp
+    rm -rf "$LLVM_OPENMP"
+    cmake --install llvm-openmp-build
+    LIBOMP_LIB=$(cygpath -m "$LLVM_OPENMP/lib/libomp.lib")
+    [ -e "$LIBOMP_LIB" ] || { echo "error: $LIBOMP_LIB not built" >&2; exit 1; }
+    OMP_FLAGS="-Xclang -fopenmp -I$(cygpath -m "$LLVM_OPENMP/include")"
     # CMake's defaults for clang-cl (written with "-": Git Bash rewrites
     # arguments starting with "/" as paths), and -w: clang-cl's warnings
     # on these sources ran to 35,000, 350,000 lines of log.
@@ -106,7 +125,7 @@ if [ "$OS" = windows ]; then
       -DCMAKE_C_COMPILER="$(cygpath -m "$CLANG_CL")"
       -DCMAKE_CXX_COMPILER="$(cygpath -m "$CLANG_CL")"
       -DCMAKE_LINKER="$(cygpath -m "$LLD_LINK")"
-      -DOpenMP_C_FLAGS="-Xclang -fopenmp" -DOpenMP_CXX_FLAGS="-Xclang -fopenmp"
+      -DOpenMP_C_FLAGS="$OMP_FLAGS" -DOpenMP_CXX_FLAGS="$OMP_FLAGS"
       -DOpenMP_C_LIB_NAMES=libomp -DOpenMP_CXX_LIB_NAMES=libomp
       -DOpenMP_libomp_LIBRARY="$LIBOMP_LIB"
     )
@@ -135,6 +154,7 @@ TOOLCHAIN=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 # dev packages are installed just to satisfy the lookup (checked below).
 log "COLMAP $COLMAP_VERSION"
 fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
+patch_colmap colmap "$REPO"
 [ "$OS" = windows ] && prepare_colmap colmap
 cmake -S colmap -B colmap-build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -221,22 +241,8 @@ if [ "$OS" = windows ]; then
   # DLLs even with a static triplet (LAPACK, compiled with MinGW's gfortran,
   # with the GCC runtime). Windows' own DLLs are found nowhere here and skipped.
   CRT=$(dirname "$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name vcruntime140.dll -path '*.CRT*' | head -1)")
-  # LLVM's OpenMP runtime, for code built with clang-cl.
-  # Visual Studio 2022 has it in the redistributable's OpenMP.LLVM folder;
-  # where it isn't, the Visual C++ runtime installed on the machine (in
-  # System32) carries the same file.
-  OMP_LLVM_DLL=$(find "$(cygpath -u "$VCToolsRedistDir")" -iname libomp140.x86_64.dll \
-    -not -path '*debug*' -not -path '*onecore*' -path '*/x64/*' | head -1)
-  SYSTEM_OMP=$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32/libomp140.x86_64.dll
-  [ -n "$OMP_LLVM_DLL" ] || { [ -e "$SYSTEM_OMP" ] && OMP_LLVM_DLL=$SYSTEM_OMP; } || true
-  # Searched on its own (System32 holds Windows' DLLs too, never shipped).
-  OMP_LLVM=$WORK/omp-llvm
-  rm -rf "$OMP_LLVM" && mkdir -p "$OMP_LLVM"
-  [ -z "$OMP_LLVM_DLL" ] || cp "$OMP_LLVM_DLL" "$OMP_LLVM/"
-  if [ "${WINDOWS_COMPILER:-}" = clang-cl ]; then
-    echo "LLVM OpenMP runtime: ${OMP_LLVM_DLL:-not found}"
-    find "$(cygpath -u "$VCINSTALLDIR")" -iname 'libomp140*.dll' 2>/dev/null | sed 's/^/  in Visual Studio: /'
-  fi
+  # LLVM's OpenMP runtime, for code built with clang-cl (built above).
+  OMP_LLVM=${LLVM_OPENMP:-/nonexistent}/bin
   while true; do
     added=0
     for dll in $(for f in "$PREFIX"/bin/*.exe "$PREFIX"/bin/*.dll; do
@@ -259,6 +265,7 @@ fi
 log "licenses"
 cp colmap/LICENSE.txt "$PREFIX/licenses/colmap.txt" 2>/dev/null || cp colmap/COPYING.txt "$PREFIX/licenses/colmap.txt"
 cp openmvs/LICENSE "$PREFIX/licenses/openmvs.txt"
+[ -z "${LLVM_OPENMP:-}" ] || cp llvm/openmp/LICENSE.TXT "$PREFIX/licenses/llvm-openmp.txt"
 # Code COLMAP compiles in that isn't a vcpkg port, so has no copyright file
 # below: from its own tree (LSD is AGPL-3.0; SiftGPU is only built with a GPU)
 # and fetched while configuring (FetchContent: PoseLib, faiss).
@@ -317,8 +324,10 @@ cat > "$PREFIX/BUILDINFO.json" <<EOF
   "colmap": "$COLMAP_VERSION",
   "onnxruntime": "$ONNX_VERSION",
   "openmvs": "$OPENMVS_VERSION",
+  "colmap_patches": "$(cd "$REPO/tools/backends/patches" && ls colmap-*.patch | tr '\n' ' ' | sed 's/ $//')",
   "openmvs_patches": "$(cd "$REPO/tools/backends/patches" && ls openmvs-*.patch | tr '\n' ' ' | sed 's/ $//')",
   "vcpkg_overlay_ports": "$(ls "${VCPKG_OVERLAY_PORTS:-/nonexistent}" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')",
+  "llvm_openmp": "${LLVM_OPENMP:+$LLVM_VERSION}",
   "vcpkg": "$VCPKG_VERSION",
   "triplet": "$TRIPLET",
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",

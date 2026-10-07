@@ -149,7 +149,8 @@ COLMAP 4.2.1    BSD-3-Clause        https://github.com/colmap/colmap
                 PoissonRecon (MIT) and VLFeat (BSD-2-Clause) from its own
                 tree, and PoseLib (BSD-3-Clause) and faiss 1.14.1 (MIT),
                 which its build fetches; their license texts are in
-                backends/licenses as colmap-<name>.txt
+                backends/licenses as colmap-<name>.txt. Built with the
+                fix to PoissonRecon in tools/backends/patches applied.
 ONNX Runtime    MIT                 https://github.com/microsoft/onnxruntime
   1.30.0        Microsoft's release library, as COLMAP's build fetches it
                 (for ALIKED and LightGlue), shipped next to COLMAP; its
@@ -157,7 +158,7 @@ ONNX Runtime    MIT                 https://github.com/microsoft/onnxruntime
                 are in backends/licenses as onnxruntime*.txt
 OpenMVS v2.4.0  AGPL-3.0            https://github.com/cdcseacave/openMVS
                 (depends on CGAL, parts of which are GPL-3.0+), with the
-                upstream fix in tools/backends/patches applied
+                fixes in tools/backends/patches applied
 Brush 0.3.0     Apache-2.0          https://github.com/ArthurBrussee/brush
                 The release binary, unmodified, with its LICENSE under
                 backends/licenses/brush, and THIRD-PARTY-NOTICES.txt there:
@@ -169,10 +170,15 @@ GCC runtime     GPL-3.0 with the GCC Runtime Library Exception
                 (libgomp, libgfortran, libquadmath; AppImage only, copied
                 from the build machine for the backends; in the Windows
                 backend builds, the MinGW runtime DLLs LAPACK needs, if any)
-libomp          Apache-2.0 with LLVM exceptions (macOS app only, Homebrew's)
+libomp          Apache-2.0 with LLVM exceptions
+                LLVM's OpenMP runtime. macOS app: Homebrew's. Windows
+                backend builds: libomp.dll, built from the LLVM 22.1.3
+                source release (openmp/, pinned in tools/backends/pins.sh),
+                with its LICENSE.TXT in backends/licenses/llvm-openmp.txt.
 MSVC runtime    Microsoft's redistributable runtime (Windows backend builds
-                only: vcomp140.dll, the OpenMP runtime, and any C++ runtime
-                DLL it needs; the rest is linked statically). Part of the
+                only: the C++ runtime DLLs the bundled DLLs need, and
+                vcomp140.dll, MSVC's OpenMP runtime, when built with MSVC;
+                the rest is linked statically). Part of the
                 compiler, so a System Library in GPL-3.0 section 1 terms;
                 redistributed under the Visual Studio license's terms for
                 its redistributable files.

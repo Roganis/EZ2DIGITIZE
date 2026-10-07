@@ -6,7 +6,7 @@ A bundle is a folder under `captures/` holding the original files, copied
 byte for byte, plus a `capture.json`:
 
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "id": "20261005-203200",
       "source": "folder",            # folder, video, upload, android, ...
       "created": "2026-10-05T20:32:00+00:00",
@@ -21,7 +21,10 @@ byte for byte, plus a `capture.json`:
     }
 
 `metadata` holds what was learned about a file: the photo checks store
-their inspection under `metadata["photo"]` (see core.photos). `excluded`
+their inspection under `metadata["photo"]` (see core.photos). A file of
+kind "motion" is a motion log recorded with the photos or video (see
+ez2digitize.motion_log; version 2 added the kind, so version 1 readers,
+which would reject it, refuse the bundle instead). `excluded`
 marks a file the user left out of the reconstruction; the file itself stays
 in the bundle, untouched, so it can be brought back. Readers older than
 this field ignore it (and use every file). `flipped` marks the second side
@@ -53,9 +56,14 @@ from ez2digitize.core.files import (
 from ez2digitize.core.project import Project
 
 CAPTURE_FILE = "capture.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# MIGRATIONS[n] upgrades capture.json data from version n to n + 1.
+MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    1: lambda data: data,  # 2 only added the "motion" kind
+}
 
-FileKind = Literal["image", "video"]
+FileKind = Literal["image", "video", "motion"]
+MOTION_LOG_SUFFIX = ".motion.json"  # see ez2digitize.motion_log
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".heif", ".webp"})
 VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".m4v", ".mkv", ".webm"})
 
@@ -68,6 +76,8 @@ class CaptureError(Exception):
 
 def classify(path: Path) -> FileKind | None:
     """Kind of a capture file from its extension, or None if not supported."""
+    if path.name.lower().endswith(MOTION_LOG_SUFFIX):
+        return "motion"
     suffix = path.suffix.lower()
     if suffix in IMAGE_SUFFIXES:
         return "image"
@@ -105,7 +115,7 @@ class CaptureFile:
         size, sha = data.get("size"), data.get("sha256")
         if not isinstance(name, str) or Path(name).name != name or name.startswith("."):
             raise CaptureError(f"invalid file name: {name!r}")
-        if kind not in ("image", "video"):
+        if kind not in ("image", "video", "motion"):
             raise CaptureError(f"{name}: invalid kind {kind!r}")
         if not isinstance(size, int) or not isinstance(sha, str):
             raise CaptureError(f"{name}: 'size' and 'sha256' are required")
@@ -144,8 +154,11 @@ class CaptureBundle:
         except FormatError as exc:
             raise CaptureError(str(exc)) from exc
         version = data.get("schema_version")
-        if version != SCHEMA_VERSION:
+        if not isinstance(version, int) or not 1 <= version <= SCHEMA_VERSION:
             raise CaptureError(f"{root / CAPTURE_FILE}: unsupported schema_version {version!r}")
+        while version < SCHEMA_VERSION:
+            data = MIGRATIONS[version](data)
+            version += 1
         bundle_id, source, created = data.get("id"), data.get("source"), data.get("created")
         if not all(isinstance(v, str) for v in (bundle_id, source, created)):
             raise CaptureError(f"{root / CAPTURE_FILE}: 'id', 'source', 'created' are required")
@@ -312,6 +325,12 @@ def assemble_bundle(
         entries = fill(staging)
         if not entries:
             raise CaptureError("nothing to import")
+        if any(e.kind == "motion" for e in entries):
+            # Imported here, not at the top: motion_log builds on this module.
+            from ez2digitize import motion_log
+
+            if problem := motion_log.annotate(staging, entries):
+                info["motion_log_error"] = problem
         bundle = CaptureBundle(
             root=staging,
             id=bundle_id,
@@ -382,20 +401,29 @@ def add_file(folder: Path, name: str, *, original_name: str, kind: FileKind) -> 
 def import_folder(
     project: Project, folder: Path, *, now: datetime | None = None, flipped: bool = False
 ) -> tuple[CaptureBundle, list[Path]]:
-    """Import the photos directly inside `folder` (not subfolders).
+    """Import the photos directly inside `folder` (not subfolders), and their motion log.
 
     Returns the bundle and the files that were skipped: unsupported ones,
-    and videos, which are imported one by one (`ez2digitize.video`).
-    Hidden files (macOS `._*` and the like) are ignored silently.
+    and videos, which are imported one by one (`ez2digitize.video`) with
+    the motion log named after them. Hidden files (macOS `._*` and the
+    like) are ignored silently.
     """
     if not folder.is_dir():
         raise CaptureError(f"{folder}: not a folder")
     candidates = sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
-    accepted = [p for p in candidates if classify(p) == "image"]
-    skipped = [p for p in candidates if classify(p) != "image"]
-    if not accepted:
-        videos = [p for p in candidates if classify(p) == "video"]
-        hint = f"; import videos one by one, e.g. {videos[0].name}" if videos else ""
+    videos = {p.stem.lower() for p in candidates if classify(p) == "video"}
+
+    def wanted(path: Path) -> bool:
+        kind = classify(path)
+        if kind == "motion":  # unless it belongs to a video
+            return path.name[: -len(MOTION_LOG_SUFFIX)].lower() not in videos
+        return kind == "image"
+
+    accepted = [p for p in candidates if wanted(p)]
+    skipped = [p for p in candidates if not wanted(p)]
+    if not any(classify(p) == "image" for p in accepted):
+        found = [p for p in candidates if classify(p) == "video"]
+        hint = f"; import videos one by one, e.g. {found[0].name}" if found else ""
         raise CaptureError(f"{folder}: no supported photos{hint}")
     bundle = import_files(
         project,

@@ -236,6 +236,43 @@ def test_matching_many_photos(
     assert "sequential_matcher" in log and "--SequentialMatching.loop_detection 1" in log
 
 
+def test_matching_by_recorded_poses(
+    project: Project, tools: Tools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beyond EXHAUSTIVE_MAX_IMAGES, frames whose poses were recorded (CAMM's
+    6DoF samples) are paired by them, plus a few after each in the video."""
+    monkeypatch.setattr(pipeline, "EXHAUSTIVE_MAX_IMAGES", 2)
+    monkeypatch.setattr(pipeline, "POSE_SEQUENTIAL", 1)
+    (bundle,) = list_bundles(project)
+    bundle.source = "video"
+    # a.jpg and c.jpg side by side looking along +z; b.jpg far off, turned back.
+    poses = {
+        "a.jpg": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
+        "b.jpg": [[-1, 0, 0, 50], [0, 1, 0, 0], [0, 0, -1, 0]],
+        "c.jpg": [[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0]],
+    }
+    for file in bundle.files:
+        file.metadata["motion"] = {"camera_to_world": poses[file.name]}
+    bundle.save()
+
+    events, handler = _collect()
+    pipeline.run_sparse(project, tools, on_event=handler)
+    matching = project.stage_dir("matching")
+    assert "matches_importer" in (matching / "log.txt").read_text()
+    names = {name: f"{bundle.id}/{name}" for name in poses}
+    expected = [(names["a.jpg"], names["b.jpg"]), (names["a.jpg"], names["c.jpg"])]
+    expected.append((names["b.jpg"], names["c.jpg"]))  # next in the video only
+    assert (matching / "pairs.txt").read_text() == "".join(f"{a} {b}\n" for a, b in expected)
+    notices = [e.message for e in events if isinstance(e, Notice)]
+    assert any(n.startswith("3 photos with recorded camera poses") for n in notices)
+
+    # A frame without a pose: the usual matching.
+    del bundle.files[1].metadata["motion"]
+    bundle.save()
+    pipeline.run_sparse(project, tools)
+    assert "sequential_matcher" in (matching / "log.txt").read_text()
+
+
 def test_learned_features(project: Project, tools: Tools) -> None:
     """ALIKED + LightGlue: the models are fetched first (here: already there)."""
     from ez2digitize import presets

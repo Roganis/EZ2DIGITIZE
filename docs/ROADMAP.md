@@ -449,7 +449,13 @@ fails, they can see which stage failed and why.
   real mesher (within 3-4% of the radius). The surface-trained methods can
   come as plugins (a "mesh from splats" slot) once one is wanted.
 - Android capture companion, sending capture bundles through the Phase 3
-  upload endpoint. Its value over the upload page is control of the camera,
+  upload endpoint. The endpoint is ready for it (`upload.py`): `GET api`
+  for the API version, limits and accepted files, `POST capture` for the
+  source, device, app and turned-over side; motion logs travel with the
+  photos, and videos (with their logs) are imported as frames. The
+  contract the app is to be written against, with the Android clock and
+  axes conversions, is docs/COMPANION.md; `tools/companion/send_capture.py`
+  sends a capture as the app should. Its value over the upload page is control of the camera,
   which a browser can't do:
   - focus, exposure and white balance locked for the whole capture, and one
     lens only (phones otherwise switch lenses and readjust between shots);
@@ -461,7 +467,11 @@ fails, they can see which stage failed and why.
     on the camera frames' clock (Android stamps sensors and frames with
     the same one on most phones). A sidecar file in the bundle, named in
     `capture.json` (a schema bump with its migration); the video and
-    photos stay untouched. ARCore wants to drive the camera itself, often
+    photos stay untouched. The desktop side is done
+    (`ez2digitize.motion_log`): the format (`<name>.motion.json`), read at
+    folder and video import, kept in the bundle as kind "motion"
+    (capture.json version 2, migrated from 1), each listed photo given its
+    motion entry, and `metric` poses passed as such to plugins. ARCore wants to drive the camera itself, often
     below full resolution, which conflicts with the locked full-quality
     capture above; its shared-camera mode may reconcile them, to try on a
     real phone. The raw sensors have no such conflict, so they are always
@@ -476,8 +486,31 @@ fails, they can see which stage failed and why.
      by time. Needs only the gyroscope.
   3. Matching guided by the poses: compare only photos that look at the
      same side, as GPS positions already do for large sets.
+     Done for recorded 6DoF poses (`pipeline._pose_guided_pairs`): beyond
+     200 photos, when every one has a pose from one recording, each is
+     matched with its 20 nearest looking within 60°, plus the next 5 in
+     order. On a synthetic 240-frame orbit with poses 2° and 4% of the
+     radius off, against today's sequential matching with loops found by
+     the vocabulary tree: both placed all 240 frames, 0.025° median
+     rotation error; the poses' pairs all verified (2665 of 2665, against
+     2251 of 2596) and matching took 33 s instead of 52 s, with no tree to
+     download. The gyroscope alone isn't enough: integrated, it agreed
+     with COLMAP within 2-7° over 8 s on GoPro's HERO6 sample but was off
+     by 15-40°, about as much as the camera turned, on the HERO5 and HERO7
+     ones (stabilisation turning the image against the body would explain
+     it).
   4. A default scale from ARCore's metres (accuracy to measure; the marker
      sheet stays the precise way).
+     Done (`scale.measure_tracking`, `from_tracking`; after camera
+     placement, from poses a motion log marks metric): the median ratio of
+     distances between tracked cameras to those between the same cameras
+     placed by COLMAP, from at least 5 cameras that moved at least 15 cm.
+     Markers replace it, a scale set by hand is kept and compared. On the
+     synthetic 240-frame orbit (0.39 m radius) placed by COLMAP, with the
+     tracked positions drifting as a random walk of 1, 2 and 5 cm over the
+     recording, the scale came out 0.2, 0.3 and 0.8 % off (median of 20
+     runs; 0.6, 1.1 and 2.7 % at worst). ARCore's real drift on a small
+     orbit waits for the app.
   5. Known poses for MapAnything (`camera_poses` input, next to the EXIF
      focal length the plugin already passes) and as position priors for
      COLMAP's mapper (check what the pinned 4.2.1 supports).

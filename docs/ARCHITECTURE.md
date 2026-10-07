@@ -35,6 +35,8 @@ my-scan/
                       left out; `flipped` for the turned-over side of a
                       two-sided scan
       IMG_0001.jpg    original files, copied byte for byte
+      x.motion.json   optional: the motion recorded with them
+                      (ez2digitize.motion_log)
   masks/              optional; masks/<capture id>/<file>.png in use,
                       .../dropped/ the ones dropped in review, auto.json
                       which are automatic (ez2digitize.masks)
@@ -66,6 +68,17 @@ my-scan/
   `bundle.images` and `bundle.videos` are the files in use, and a bundle's
   cache fingerprint covers only those, so leaving a photo out re-runs the
   pipeline from feature extraction and bringing it back reuses the old run.
+- capture.json has its own `schema_version` (2 since motion logs, a file
+  kind version 1 readers would reject) and `MIGRATIONS` in `core.capture`;
+  older bundles load migrated and are written back in the new version.
+- Motion logs (`motion_log.py`): a capture app records the phone's motion
+  in `<name>.motion.json` (gyroscope, accelerometer, gravity and tracked
+  poses on the camera's clock, and when each photo was taken). It is kept
+  in the bundle as a file of kind "motion", and when the bundle is
+  assembled each photo it lists gets its `metadata["motion"]` entry, as
+  video frames get theirs from GPMF or CAMM. A video's log
+  (`<video stem>.motion.json` next to it) replaces its own track. Poses
+  from a log that says `metric` are marked so, for plugins and the scale.
 - JSON files are written atomically (temporary file, fsync, rename).
 
 ## Phone upload (`upload.py`, `ui/phone_upload.py`)
@@ -76,9 +89,18 @@ the LAN address while the dialog is open. The URL carries a random token
 private ranges get a 403. The page sends each file in 4 MB PUTs that must
 start where the stored part ends (a 409 tells it where to resume), so a
 Wi-Fi drop costs at most one chunk. File names are reduced to their last
-component and must be photos or videos. `finish` moves the complete files
-into a capture bundle (`source: "upload"`, the phone's user agent as
-device) through `assemble_bundle`; `close` deletes what wasn't imported.
+component and must be photos, videos or motion logs. `finish` moves the
+complete photos into a capture bundle (`source: "upload"`, the phone's user
+agent as device) through `assemble_bundle`, with a motion log if one came;
+each video, with the log named after it, goes to a hidden
+`captures/.received-videos-*` folder and is handed back (`Received`) for
+the caller to import as frames (`video.import_video`, one after another in
+the GUI), then deleted. `close` deletes what wasn't imported.
+
+A capture app talks to the same server: `GET api` says which API version
+(`API_VERSION`), limits and file names it accepts, and `POST capture`
+records the source (e.g. "android"), device, app and whether the object
+was turned over, used for the bundles instead of the user agent.
 
 ## Watch folder (`watch.py`, `ui/watch_dialog.py`, `ez2d watch`)
 
@@ -418,7 +440,12 @@ import -> checks -> masks -> [features -> matching -> mapping -> undistort
   `run_mesh` runs both. Each stage goes through `run_stage`, so an unchanged
   stage is reused and `force_from` re-runs a stage and everything after it.
 - Matching (`_matching`) is exhaustive up to 200 images, which take about
-  3 minutes; pairs grow with the square. Beyond that: video frames
+  3 minutes; pairs grow with the square. Beyond that, if every image has a
+  recorded pose from one recording (`motion.known_poses`, CAMM's 6DoF
+  samples), the pairs come from the poses (`_pose_guided_pairs`:
+  `colmap.nearby_pairs`, the 20 nearest looking within 60°, plus the next 5
+  frames; run by `colmap.match_listed`, `matches_importer`, like the
+  refinement of a plugin's poses). Otherwise: video frames
   sequentially, with loop detection by COLMAP's vocabulary tree; photos by
   their EXIF GPS position if 90% have one (`spatial`); else by image
   retrieval with the vocabulary tree (`vocab_tree`); else sequentially in

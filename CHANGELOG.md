@@ -32,7 +32,18 @@ The first release.
   every frame, and the model is stood upright from it instead of from how
   the camera was held. Their frames are spaced by the angle the camera
   turned rather than by time, and frames taken while it swung fast are
-  passed over.
+  passed over. Long videos (over 200 frames) whose CAMM track records the
+  camera's position as well are matched by those poses: each frame with
+  the ones looking at the same side.
+- Motion logs: a capture app can record the phone's motion beside its
+  photos or video (`<name>.motion.json`: gyroscope, gravity, tracked poses,
+  and when each photo was taken). It is kept with the capture, and the
+  photos get the same benefits as videos with a motion track. Capture
+  folders written by this version can't be read by older ones.
+- Videos sent from the phone are imported as frames, like Import video,
+  instead of sitting unused in the capture. The upload server also answers
+  capture apps: which version it speaks, and what the app says about the
+  capture (device, turned-over side).
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.
@@ -54,7 +65,8 @@ The first release.
     that matched few others.
   - A crop box: the dense cloud and mesh keep only what is inside.
   - Real-world scale from two picked points and their measured distance, or
-    by itself from a printed sheet of markers in the photos.
+    by itself from a printed sheet of markers in the photos, or roughly from
+    the phone's tracking when a motion log recorded it in metres.
   - Upright: which way is up comes from how the photos were held, or is
     set by hand (level on three points, tip, turn).
 

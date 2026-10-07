@@ -18,6 +18,7 @@ Primary platform: Linux with an AMD GPU. Secondary: macOS on Apple Silicon.
 - [Capturing a small object](docs/CAPTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Plugins](docs/PLUGINS.md): tools you install yourself
+- [Capture companion](docs/COMPANION.md): what a phone capture app sends
 - [Contributing](CONTRIBUTING.md)
 
 ## Development

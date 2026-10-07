@@ -96,3 +96,12 @@ def known_poses(priors: Path, names: list[str]) -> tuple[list[NDArray[np.float64
         pose[:3, :] = np.array(images[name]["camera_to_world"], dtype=np.float64)
         poses.append(pose)
     return poses, f"known poses for all {len(names)} photos"
+
+
+def poses_are_metric(priors: Path, names: list[str]) -> bool:
+    """Whether every photo's known pose is in metres (a motion log that says so)."""
+    try:
+        images = json.loads(priors.read_text(encoding="utf-8")).get("images", {})
+    except (OSError, ValueError, AttributeError):
+        return False
+    return bool(names) and all(images.get(n, {}).get("metric") is True for n in names)

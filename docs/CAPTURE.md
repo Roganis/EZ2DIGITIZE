@@ -68,6 +68,16 @@ so slowing down or pausing on one side doesn't crowd the frames there,
 and frames taken while the camera swung fast are left out.
 The import says when a video has such data.
 
+A capture app can also record the phone's motion in a file of its own,
+next to the photos or the video (`<name>.motion.json`, described in
+`src/ez2digitize/motion_log.py`; for a video, named after it, e.g.
+`VID_0001.motion.json`). Importing the folder, or the video, picks it up,
+and the photos get the same treatment as frames of a video with a motion
+track. This is the format the planned Android app will write. When the
+log tracked the phone's position in metres (ARCore), the model gets a
+rough real size from it (within a percent or so, worse if the tracking
+drifted); the marker sheet still measures it better and replaces it.
+
 ## Turntables
 
 With the camera on a tripod and the object turning, the background stays
@@ -140,7 +150,9 @@ an object), and plain walls and floors are kept when meshing.
   COLMAP's vocabulary tree, which is downloaded once. Without it, each
   photo is compared with those taken just before and after it, so take
   them in order then. Videos are compared frame by frame, with the tree
-  finding where a walk comes back to its start.
+  finding where a walk comes back to its start; a video whose motion track
+  records where the camera was (CAMM, from ARCore-style tracking apps)
+  compares each frame with those seeing the same side instead.
 - **Size and memory.** Large scenes need far more memory in the dense
   step. Start with Fast, and use the crop box to keep only the part you
   want.

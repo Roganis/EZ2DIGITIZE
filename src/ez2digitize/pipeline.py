@@ -46,7 +46,7 @@ from ez2digitize.core.stage import StageManifest, StageSpec, load_manifest, run_
 from ez2digitize.diagnosis import explain
 from ez2digitize.export import ExportError, ExportFormat, export_mesh, export_notes, export_splat
 from ez2digitize.masks import has_masks
-from ez2digitize.motion import measured_downs
+from ez2digitize.motion import known_poses, measured_downs, metric_poses
 from ez2digitize.subject import Subject
 
 # "poses", "triangulation" and "pose-check": a camera placement plugin's poses
@@ -512,6 +512,8 @@ def _sparse(
     )
     if (note := markers.auto_scale(project)) is not None:
         run.emit(Notice(note))
+    if (note := _tracking_scale(project, model, bundles)) is not None:
+        run.emit(Notice(note))
     warped = None
     if masks is not None:
         try:
@@ -602,6 +604,29 @@ def _refined_mapping(
         raise PipelineError(f"refining the camera placement: {exc}") from exc
 
 
+def _tracking_scale(project: Project, model: Path, bundles: list[CaptureBundle]) -> str | None:
+    """The scale from camera positions tracked in metres (scale.from_tracking), if any.
+
+    Each recording has its own world, so the one with the most placed
+    photos is used.
+    """
+    metric = metric_poses(bundles)
+    by_world: dict[str, dict[str, tuple[float, float, float]]] = {}
+    for name, (world, pose) in known_poses(bundles).items():
+        if name in metric:
+            by_world.setdefault(world, {})[name] = (pose[0][3], pose[1][3], pose[2][3])
+    if not by_world:
+        return None
+    try:
+        placed = colmap_model.read_images(model)
+    except BackendError:
+        return None
+    centres = {name: image.centre for name, image in placed.items()}
+    tracked = max(by_world.values(), key=lambda poses: len(set(poses) & set(centres)))
+    measured = scale.measure_tracking(centres, tracked)
+    return None if measured is None else scale.from_tracking(project, measured)
+
+
 def _plugin_spec(build: Callable[[plugins.Plugin], StageSpec], plugin: plugins.Plugin) -> StageSpec:
     try:
         return build(plugin)
@@ -621,13 +646,28 @@ def _colmap_mapping(
     """COLMAP's camera placement: features, matching, mapping."""
     sfm = tools.colmap
     features, kind, lightglue, groups = _features(project, tools, settings, bundles, masks, run)
-    matching_options = _matching(settings.matching, bundles, run, kind)
-    matching_options = replace(matching_options, features=kind, lightglue=lightglue)
-    matching = run(
-        colmap.match_features(
-            sfm, project, features, options=matching_options, camera_groups=groups or None
+    pairs = _pose_guided_pairs(bundles, run) if settings.matching is None else None
+    if pairs is not None:
+        options = colmap.MatchOptions(features=kind, lightglue=lightglue)
+        matching = run(
+            colmap.match_listed(
+                sfm,
+                project,
+                features,
+                pairs,
+                mode="known_poses",
+                options=options,
+                camera_groups=groups or None,
+            )
         )
-    )
+    else:
+        matching_options = _matching(settings.matching, bundles, run, kind)
+        matching_options = replace(matching_options, features=kind, lightglue=lightglue)
+        matching = run(
+            colmap.match_features(
+                sfm, project, features, options=matching_options, camera_groups=groups or None
+            )
+        )
     return run(
         colmap.map_sparse(sfm, project, matching, total_images=total, options=settings.mapper)
     )
@@ -848,6 +888,49 @@ EXHAUSTIVE_MAX_IMAGES = 200
 # Beyond that, photos with GPS positions are paired by distance if at least
 # this share has one (outdoors, from a phone).
 GPS_SHARE = 0.9
+
+
+# With known poses, each photo is also matched with this many after it (in
+# name order: a video's frames, or photos as taken), whatever the poses say:
+# a glitch in the recorded track then costs a few pairs, not the photo's
+# place in the model.
+POSE_SEQUENTIAL = 5
+
+
+def _pose_guided_pairs(bundles: list[CaptureBundle], run: _Run) -> list[tuple[str, str]] | None:
+    """Pairs from the poses the photos were recorded with, beyond EXHAUSTIVE_MAX_IMAGES.
+
+    Only when every photo has one (motion.known_poses: CAMM's 6DoF samples
+    or a motion log, from ARCore-style tracking) and all are from one
+    recording, since each
+    recording has its own world. The gyroscope alone isn't enough: GoPro's
+    stabilisation turns the image against the body, so on its sample clips
+    the integrated gyroscope and COLMAP disagreed by 15-40° within seconds.
+    """
+    images = sum(len(b.images) for b in bundles)
+    if images <= EXHAUSTIVE_MAX_IMAGES:
+        return None
+    poses = known_poses(bundles)
+    if len(poses) < images or len({world for world, _pose in poses.values()}) != 1:
+        return None
+    cameras = {
+        name: (
+            (pose[0][3], pose[1][3], pose[2][3]),
+            (pose[0][2], pose[1][2], pose[2][2]),  # the camera's z axis in the world
+        )
+        for name, (_world, pose) in poses.items()
+    }
+    pairs = set(colmap.nearby_pairs(cameras))
+    names = sorted(poses)  # the frames in video order
+    for i, a in enumerate(names):
+        pairs.update((a, b) for b in names[i + 1 : i + 1 + POSE_SEQUENTIAL])
+    run.emit(
+        Notice(
+            f"{images} photos with recorded camera poses: each is matched with "
+            "those its pose says see the same side"
+        )
+    )
+    return sorted(pairs)
 
 
 def _matching(

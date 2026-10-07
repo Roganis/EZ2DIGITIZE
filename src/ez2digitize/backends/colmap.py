@@ -24,6 +24,7 @@ never modified and both stay valid for caching.
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import re
 import shutil
@@ -497,6 +498,106 @@ def match_features(
         argv=argv,
         parameters=parameters,
         inputs={"features": stage_input(features)},
+        parse_line=ColmapProgress(),
+        prepare=prepare,
+    )
+
+
+PAIRS = "pairs.txt"
+# Pairs from known poses: each photo with this many nearest others (by
+# camera position) among those looking within MAX_PAIR_ANGLE_DEG of it.
+PAIR_NEIGHBOURS = 20
+MAX_PAIR_ANGLE_DEG = 60.0
+
+Vector = tuple[float, float, float]
+
+
+def nearby_pairs(
+    cameras: Mapping[str, tuple[Vector, Vector]],
+    *,
+    neighbours: int = PAIR_NEIGHBOURS,
+    max_angle_deg: float = MAX_PAIR_ANGLE_DEG,
+) -> list[tuple[str, str]]:
+    """The photo pairs worth matching, from known poses: (name, name), each once.
+
+    `cameras`: image name -> (camera centre, viewing direction), all in one
+    world. Each photo is paired with its nearest neighbours among those
+    looking the same way; only distances are compared, so the world's unit
+    doesn't matter.
+    """
+    names = sorted(cameras)
+    cos_limit = math.cos(math.radians(max_angle_deg))
+    views = {name: _unit(cameras[name][1]) for name in names}
+    pairs: set[tuple[str, str]] = set()
+    for a in names:
+        centre = cameras[a][0]
+        candidates = [
+            b
+            for b in names
+            if b != a and sum(x * y for x, y in zip(views[a], views[b], strict=True)) >= cos_limit
+        ]
+        candidates.sort(key=lambda b: math.dist(centre, cameras[b][0]))
+        for b in candidates[:neighbours]:
+            pairs.add((a, b) if a < b else (b, a))
+    return sorted(pairs)
+
+
+def _unit(v: Vector) -> Vector:
+    length = math.sqrt(sum(c * c for c in v)) or 1.0
+    return (v[0] / length, v[1] / length, v[2] / length)
+
+
+def match_listed(
+    colmap: Colmap,
+    project: Project,
+    features: StageManifest,
+    pairs: Sequence[tuple[str, str]],
+    *,
+    stage: str = "matching",
+    mode: str = "pairs",
+    options: MatchOptions | None = None,
+    camera_groups: Mapping[str, str] | None = None,
+) -> StageSpec:
+    """Feature matching of exactly these pairs (`matches_importer`).
+
+    `mode` names where the pairs came from in the manifest's parameters;
+    `options.mode` is not used.
+    """
+    if not pairs:
+        raise BackendError("no photo pairs to match")
+    options = options or MatchOptions()
+    stage_dir = project.stage_dir(stage)
+    spec = match_features(
+        colmap, project, features, stage=stage, options=options, camera_groups=camera_groups
+    )
+    argv: list[str | Path] = [
+        colmap.path, "matches_importer",
+        "--database_path", stage_dir / DATABASE,
+        "--match_list_path", stage_dir / PAIRS,
+        "--match_type", "pairs",
+        "--FeatureMatching.use_gpu", "0",
+    ]  # fmt: skip
+    if options.features == "aliked":
+        argv += [
+            "--FeatureMatching.type", "ALIKED_LIGHTGLUE",
+            "--AlikedMatching.lightglue_model_path", options.lightglue or "",
+        ]  # fmt: skip
+    if options.threads:
+        argv += ["--FeatureMatching.num_threads", str(options.threads)]
+    prepare_database = spec.prepare
+    lines = "".join(f"{a} {b}\n" for a, b in pairs)
+
+    def prepare(folder: Path) -> None:
+        if prepare_database is not None:
+            prepare_database(folder)
+        (folder / PAIRS).write_text(lines, encoding="utf-8")
+
+    return StageSpec(
+        name=stage,
+        backend=colmap.backend,
+        argv=argv,
+        parameters={**spec.parameters, "mode": mode, "pairs": fingerprint(list(pairs))},
+        inputs=spec.inputs,
         parse_line=ColmapProgress(),
         prepare=prepare,
     )

@@ -81,9 +81,9 @@ known-first-party = ["ez2digitize", "ez2d_bench"]
 strict = true
 files = [
     "src", "tests", "tools/feasibility", "tools/spikes", "tools/packaging", "tools/viewer",
-    "tools/plugins",
+    "tools/plugins", "tools/companion",
 ]
-mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging:tools/plugins/vggt-poses:tools/plugins/mapanything-poses"
+mypy_path = "src:tests:tools/feasibility:tools/spikes/viewer:tools/spikes/packaging:tools/packaging:tools/plugins/vggt-poses:tools/plugins/mapanything-poses:tools/companion"
 explicit_package_bases = true
 # The plugins share feedforward_colmap.py as identical copies (checked by
 # tests/test_mapanything_plugin.py); type check one of them.
@@ -101,7 +101,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = [
     "tools/feasibility", "tools/packaging", "tools/plugins/vggt-poses",
-    "tools/plugins/mapanything-poses",
+    "tools/plugins/mapanything-poses", "tools/companion",
 ]
 qt_api = "pyside6"
 # A test stuck this long prints every thread's stack, so a hang in CI shows

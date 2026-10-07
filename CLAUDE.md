@@ -39,6 +39,10 @@ pinned by npm integrity hash; don't edit them by hand.
 Plugins (user-installed backends, `ez2digitize.plugins`) are described in
 `docs/PLUGINS.md`; `tools/plugins/example-poses` is a working one to copy.
 
+The planned Android capture app's contract with the desktop (upload API,
+motion log format) is `docs/COMPANION.md`; `tools/companion/send_capture.py`
+is a reference client for it.
+
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.
 

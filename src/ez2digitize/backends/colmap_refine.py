@@ -39,28 +39,22 @@ database only has a guess from EXIF, and the triangulation holds them).
 from __future__ import annotations
 
 import contextlib
-import math
 import sqlite3
 import struct
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from ez2digitize.backends import colmap
 from ez2digitize.backends.colmap_model import CAMERA_MODELS, Camera, read_cameras, read_images
 from ez2digitize.backends.common import BackendError
-from ez2digitize.core.files import fingerprint
 from ez2digitize.core.project import Project
 from ez2digitize.core.stage import StageManifest, StageSpec, stage_input
 
-PAIRS = "pairs.txt"
 # Photos seeing fewer points than this after triangulation are placed afresh.
 MIN_POINTS = 25
 KNOWN_POSES = "known_poses"
-# Pairs from the plugin's poses: each photo with this many nearest others
-# (by camera position) among those looking within MAX_PAIR_ANGLE_DEG of it.
-PAIR_NEIGHBOURS = 20
-MAX_PAIR_ANGLE_DEG = 60.0
 CAMERA_SENSOR = 0  # COLMAP's SensorType::CAMERA
 
 Vector = tuple[float, float, float]
@@ -72,46 +66,15 @@ Vector = tuple[float, float, float]
 def pose_pairs(
     model_dir: Path,
     *,
-    neighbours: int = PAIR_NEIGHBOURS,
-    max_angle_deg: float = MAX_PAIR_ANGLE_DEG,
+    neighbours: int = colmap.PAIR_NEIGHBOURS,
+    max_angle_deg: float = colmap.MAX_PAIR_ANGLE_DEG,
 ) -> list[tuple[str, str]]:
-    """The photo pairs worth matching, from a model's poses: (name, name), each once."""
-    images = read_images(model_dir)
-    names = sorted(images)
-    centres, views = {}, {}
-    for name in names:
-        pose = images[name]
-        r = _rotation(pose.qvec)  # world to camera
-        t = pose.tvec
-        centres[name] = tuple(-sum(r[k][i] * t[k] for k in range(3)) for i in range(3))
-        views[name] = r[2]  # the camera's z axis in the world
-    cos_limit = math.cos(math.radians(max_angle_deg))
-    pairs: set[tuple[str, str]] = set()
-    for a in names:
-        candidates = [
-            b
-            for b in names
-            if b != a and sum(x * y for x, y in zip(views[a], views[b], strict=True)) >= cos_limit
-        ]
-        candidates.sort(key=lambda b: _distance(centres[a], centres[b]))
-        for b in candidates[:neighbours]:
-            pairs.add((a, b) if a < b else (b, a))
-    return sorted(pairs)
-
-
-def _rotation(q: tuple[float, float, float, float]) -> tuple[Vector, Vector, Vector]:
-    w, x, y, z = q
-    n = math.sqrt(w * w + x * x + y * y + z * z) or 1.0
-    w, x, y, z = w / n, x / n, y / n, z / n
-    return (
-        (1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
-        (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
-        (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
-    )
-
-
-def _distance(a: Sequence[float], b: Sequence[float]) -> float:
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+    """The photo pairs worth matching, from a model's poses (`colmap.nearby_pairs`)."""
+    cameras = {
+        name: (pose.centre, pose.rotation[2])  # rotation[2]: the camera's z axis in the world
+        for name, pose in read_images(model_dir).items()
+    }
+    return colmap.nearby_pairs(cameras, neighbours=neighbours, max_angle_deg=max_angle_deg)
 
 
 # --- the known-poses model -----------------------------------------------------------
@@ -232,46 +195,20 @@ def match_pairs(
     camera_groups: Mapping[str, str] | None = None,
 ) -> StageSpec:
     """Feature matching of the pairs the plugin's poses suggest (`pose_pairs`)."""
-    options = options or colmap.MatchOptions()
-    model = _model(project, poses)
-    pairs = pose_pairs(model)
+    pairs = pose_pairs(_model(project, poses))
     if not pairs:
         raise BackendError("the plugin's camera placement gives no photos to match")
-    stage_dir = project.stage_dir(stage)
-    spec = colmap.match_features(
-        sfm, project, features, stage=stage, options=options, camera_groups=camera_groups
+    spec = colmap.match_listed(
+        sfm,
+        project,
+        features,
+        pairs,
+        stage=stage,
+        mode="pose_pairs",
+        options=options,
+        camera_groups=camera_groups,
     )
-    argv: list[str | Path] = [
-        sfm.path, "matches_importer",
-        "--database_path", stage_dir / colmap.DATABASE,
-        "--match_list_path", stage_dir / PAIRS,
-        "--match_type", "pairs",
-        "--FeatureMatching.use_gpu", "0",
-    ]  # fmt: skip
-    if options.features == "aliked":
-        argv += [
-            "--FeatureMatching.type", "ALIKED_LIGHTGLUE",
-            "--AlikedMatching.lightglue_model_path", options.lightglue or "",
-        ]  # fmt: skip
-    if options.threads:
-        argv += ["--FeatureMatching.num_threads", str(options.threads)]
-    prepare_database = spec.prepare
-
-    def prepare(folder: Path) -> None:
-        if prepare_database is not None:
-            prepare_database(folder)
-        lines = "".join(f"{a} {b}\n" for a, b in pairs)
-        (folder / PAIRS).write_text(lines, encoding="utf-8")
-
-    return StageSpec(
-        name=stage,
-        backend=sfm.backend,
-        argv=argv,
-        parameters={**spec.parameters, "mode": "pose_pairs", "pairs": fingerprint(pairs)},
-        inputs={**spec.inputs, "poses": stage_input(poses)},
-        parse_line=colmap.ColmapProgress(),
-        prepare=prepare,
-    )
+    return replace(spec, inputs={**spec.inputs, "poses": stage_input(poses)})
 
 
 def triangulate(

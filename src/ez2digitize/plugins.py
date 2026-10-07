@@ -561,16 +561,17 @@ def pose_priors(bundles: Sequence[CaptureBundle], names: Sequence[str]) -> dict[
 
     `{"version": 1, "images": {name: {"camera_to_world": 3 x 4 rows,
     "frame": capture id, "metric": false}}}`, OpenCV camera axes (x right,
-    y down, z forward). Poses come from a video's 6DoF motion track (see
-    motion.known_poses); each capture's are in its own world (`frame`), and
-    their unit isn't guaranteed (`metric`).
+    y down, z forward). Poses come from a video's 6DoF motion track or a
+    motion log (see motion.known_poses); each capture's are in its own world
+    (`frame`), in metres where `metric` (a log that says so; CAMM doesn't).
     """
     known = motion.known_poses(bundles)
+    metric = motion.metric_poses(bundles)
     images = {}
     for name in names:
         if name in known:
             frame, rows = known[name]
-            images[name] = {"camera_to_world": rows, "frame": frame, "metric": False}
+            images[name] = {"camera_to_world": rows, "frame": frame, "metric": name in metric}
     return {"version": 1, "images": images}
 
 

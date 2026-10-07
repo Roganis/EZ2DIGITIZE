@@ -85,6 +85,18 @@ archives of the newest Backends run (the branch's, then main's), so a change
 to the app's side (`src/`) is checked against the real tools in about ten
 minutes.
 
+Off main, the Backends workflow's `compare` job then checks that a change
+to the Windows build doesn't make reconstructions slower:
+[`compare.py`](compare.py) runs the app's pipeline (`ez2d run`) on a
+40-photo synthetic scene with this run's build and with main's newest, on
+one runner, two rounds each with the builds taking turns, and puts the wall
+time of every stage side by side in the run's summary. It also runs
+locally, for any builds:
+
+```sh
+uv run python tools/backends/compare.py PHOTOS --backend main=PREFIX_A --backend new=PREFIX_B
+```
+
 Build time on the CI runners, with the vcpkg cache: Linux and macOS about
 25 minutes; Windows took 1 hour 22 minutes, 55 of them linking OpenMVS with
 MSVC's link-time code generation (`/GL`, `/LTCG`). Turning that off made it

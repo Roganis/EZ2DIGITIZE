@@ -1,7 +1,8 @@
 # Build pinned, CPU-only COLMAP and OpenMVS (tools/backends/build.sh) for
 # Linux x86_64, macOS arm64 and Windows x64, check them with the benchmark
 # harness (not on Windows) and the app's own backend modules on the synthetic
-# scene, and upload the packages as artifacts.
+# scene, and upload the packages as artifacts. Off main, also time the
+# Windows build against main's (the compare job).
 name: Backends
 
 on:
@@ -160,3 +161,92 @@ jobs:
             build/backends/ez2d-backends-*.tar.gz
             build/backends/BUILDINFO-*.json
             build/smoke-report/
+
+  # Is the new build slower to use? Times the app's own pipeline (`ez2d run`)
+  # with this run's Windows build and main's newest, on one runner, taking
+  # turns (tools/backends/compare.py), and puts the per-stage table in the
+  # summary. Windows only, where the compiler choice is open (MSVC or
+  # clang-cl); not on main, where both builds would be the same.
+  compare:
+    needs: build
+    if: ${{ !cancelled() && github.event_name != 'workflow_call' && github.ref != 'refs/heads/main' }}
+    runs-on: windows-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read  # main's archive, from another run
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: This run's build
+        uses: actions/download-artifact@v4
+        with:
+          name: backends-Windows
+          path: build/compare/branch-artifact
+
+      - name: Main's newest build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow backends.yml \
+                         --branch main --limit 20 --json databaseId -q '.[].databaseId'); do
+            if gh run download "$run" -R "$GITHUB_REPOSITORY" -n backends-Windows \
+                 -D build/compare/main-artifact \
+               && ls build/compare/main-artifact/backends/ez2d-backends-windows-x86_64.tar.gz; then
+              echo "main: Backends run $run" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            rm -rf build/compare/main-artifact
+          done
+          echo "no Windows build from main to compare with" >&2
+          exit 1
+
+      - name: Unpack both
+        run: |
+          for build in main branch; do
+            archive=build/compare/$build-artifact/backends/ez2d-backends-windows-x86_64.tar.gz
+            [ -e "$archive" ] || { echo "no $build archive (did its build fail?)" >&2; exit 1; }
+            mkdir -p "build/compare/$build"
+            tar -xzf "$archive" -C "build/compare/$build"
+          done
+
+      # 40 photos of 1600 × 1200: big enough that the backends' compute, not
+      # process start-up, decides the times. Rendering takes about 10 minutes,
+      # so the scene is kept until the renderer changes.
+      - name: Benchmark scene (cache)
+        id: scene
+        uses: actions/cache@v4
+        with:
+          path: build/compare/scene
+          key: compare-scene-${{ hashFiles('tools/feasibility/ez2d_bench/synthetic.py') }}
+
+      - name: Render the benchmark scene
+        if: steps.scene.outputs.cache-hit != 'true'
+        run: |
+          uv run --group feasibility tools/feasibility/bench.py synth build/compare/scene \
+            --views-per-ring 20 --width 1600 --height 1200
+
+      - name: Compare
+        run: |
+          # Windows paths (pwd -W in Git Bash), which Python reads.
+          ROOT="$(pwd -W)/build/compare"
+          uv run --all-groups python tools/backends/compare.py "$ROOT/scene/images" \
+            --backend "main=$ROOT/main" --backend "branch=$ROOT/branch" --rounds 2 \
+            --markdown "$ROOT/compare.md" --json "$ROOT/compare.json"
+
+      - name: Summary
+        if: always()
+        run: cat build/compare/compare.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compare-Windows
+          path: |
+            build/compare/compare.md
+            build/compare/compare.json

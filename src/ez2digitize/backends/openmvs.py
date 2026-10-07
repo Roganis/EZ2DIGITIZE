@@ -365,6 +365,9 @@ def mesh_output(project: Project, mesh: StageManifest) -> Path:
 _APP_PREFIX = re.compile(r"^\d\d:\d\d:\d\d \[\w+\s*\] ")
 _COUNTED = re.compile(r"^([A-Z][A-Za-z -]*?) (\d+) \((\d+(?:\.\d+)?)%")
 _COMPLETED = re.compile(r"^(.+?) completed\b")
+_SELECTED = re.compile(r"^Selecting images for dense reconstruction completed: (\d+) images")
+_DEPTH_MAP = re.compile(r"^Depth-map for image +(\d+) estimated\b")
+_DEPTH_PASSES = ("Estimated depth-maps", "Geometric-consistent estimated depth-maps")
 
 
 class OpenMVSProgress:
@@ -373,12 +376,37 @@ class OpenMVSProgress:
     Long loops print `Estimated depth-maps 12 (37.50%, 1m24s, ETA 2m)...`;
     each phase restarts at 0 %, so the message names the phase. Finished
     steps (`... completed: ...`) become messages without a fraction.
+
+    Those counters only go to the console, which on Windows is a window of
+    OpenMVS's own: there the app reads the log file, whose lines carry no
+    counter. Its `Depth-map for image 7 estimated ...` lines, one per image
+    and pass, are counted instead, out of the images selected; an image seen
+    again starts the next pass (the geometric-consistency ones).
     """
+
+    def __init__(self) -> None:
+        self._images = 0
+        self._pass = 0
+        self._estimated: set[int] = set()
 
     def __call__(self, line: str) -> Progress | None:
         text = _APP_PREFIX.sub("", line).strip()
         if m := _COUNTED.match(text):
             return Progress(m.group(1), min(round(float(m.group(3)) / 100, 4), 1.0))
+        if m := _DEPTH_MAP.match(text):
+            return self._depth_map(int(m.group(1)))
+        if m := _SELECTED.match(text):
+            self._images = int(m.group(1))
         if m := _COMPLETED.match(text):
             return Progress(f"{m.group(1)} completed")
         return None
+
+    def _depth_map(self, image: int) -> Progress | None:
+        if image in self._estimated:
+            self._pass += 1
+            self._estimated.clear()
+        self._estimated.add(image)
+        if not self._images:
+            return None
+        phase = _DEPTH_PASSES[min(self._pass, len(_DEPTH_PASSES) - 1)]
+        return Progress(phase, min(round(len(self._estimated) / self._images, 4), 1.0))

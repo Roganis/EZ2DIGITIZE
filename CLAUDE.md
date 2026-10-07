@@ -41,7 +41,8 @@ Plugins (user-installed backends, `ez2digitize.plugins`) are described in
 
 The planned Android capture app's contract with the desktop (upload API,
 motion log format) is `docs/COMPANION.md`; `tools/companion/send_capture.py`
-is a reference client for it.
+is a reference client for it. The app itself is in `android/` (Kotlin;
+`./gradlew testDebugUnitTest assembleDebug` there, see its README).
 
 Phase 1 spikes (viewer, packaging) live in `tools/spikes/`, each with a
 README holding its results; same rules as the benchmark tooling.

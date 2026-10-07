@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The desktop's upload page is plain HTTP on the local network (its URL
+     carries a one-time token), at whatever address the computer has, so
+     cleartext can't be limited to known domains. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration" />
+</network-security-config>

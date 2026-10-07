@@ -4,7 +4,8 @@ The companion app is planned (docs/ROADMAP.md, Phase 7). This page is the
 contract between it and the desktop app, so the app can be written
 against something that already works: everything here is implemented and
 tested on the desktop side, and `tools/companion/send_capture.py` is a
-reference client that sends a capture exactly as the app should.
+reference client that sends a capture exactly as the app should. The
+app's first skeleton is in `android/` (see its README).
 
 Before building the app, run `ez2d photos PROJECT --exposure` on real
 phone captures: it shows whether the phone's automatic exposure actually

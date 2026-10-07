@@ -43,7 +43,9 @@ def test_receive_and_import(dialog: PhoneUploadDialog) -> None:
     assert dialog.files.topLevelItemCount() == 2
     dialog.import_button.click()
     assert dialog.result() == QDialog.DialogCode.Accepted
-    assert dialog.bundle is not None and [f.name for f in dialog.bundle.files] == ["a.jpg", "b.jpg"]
+    received = dialog.received
+    assert received is not None and received.bundle is not None
+    assert [f.name for f in received.bundle.files] == ["a.jpg", "b.jpg"]
     assert list_bundles(dialog.session.project)[0].source == "upload"
 
 

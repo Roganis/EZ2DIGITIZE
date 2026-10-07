@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ez2digitize.core.capture import CaptureBundle, CaptureError
+from ez2digitize.core.capture import CaptureError
 from ez2digitize.core.project import Project
-from ez2digitize.upload import UploadSession
+from ez2digitize.upload import Received, UploadSession
 
 POLL_MS = 500
 
@@ -39,13 +39,17 @@ def qr_pixmap(text: str, scale: int = 6) -> QPixmap:
 
 
 class PhoneUploadDialog(QDialog):
-    """Serves the upload page while open; Import makes a capture bundle."""
+    """Serves the upload page while open; Import makes a capture bundle of the photos.
+
+    Videos come back in `received.videos`, for the project page to import
+    as frames.
+    """
 
     def __init__(self, project: Project, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add photos from phone")
         self.session = UploadSession(project)
-        self.bundle: CaptureBundle | None = None
+        self.received: Received | None = None
         url = self.session.start()
 
         qr = QLabel()
@@ -134,7 +138,7 @@ class PhoneUploadDialog(QDialog):
                 self.timer.start(POLL_MS)
                 return
         try:
-            self.bundle = self.session.finish()
+            self.received = self.session.finish()
         except CaptureError as exc:
             QMessageBox.warning(self, "Import failed", str(exc))
             self.reject()

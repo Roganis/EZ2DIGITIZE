@@ -89,9 +89,18 @@ the LAN address while the dialog is open. The URL carries a random token
 private ranges get a 403. The page sends each file in 4 MB PUTs that must
 start where the stored part ends (a 409 tells it where to resume), so a
 Wi-Fi drop costs at most one chunk. File names are reduced to their last
-component and must be photos or videos. `finish` moves the complete files
-into a capture bundle (`source: "upload"`, the phone's user agent as
-device) through `assemble_bundle`; `close` deletes what wasn't imported.
+component and must be photos, videos or motion logs. `finish` moves the
+complete photos into a capture bundle (`source: "upload"`, the phone's user
+agent as device) through `assemble_bundle`, with a motion log if one came;
+each video, with the log named after it, goes to a hidden
+`captures/.received-videos-*` folder and is handed back (`Received`) for
+the caller to import as frames (`video.import_video`, one after another in
+the GUI), then deleted. `close` deletes what wasn't imported.
+
+A capture app talks to the same server: `GET api` says which API version
+(`API_VERSION`), limits and file names it accepts, and `POST capture`
+records the source (e.g. "android"), device, app and whether the object
+was turned over, used for the bundles instead of the user agent.
 
 ## Watch folder (`watch.py`, `ui/watch_dialog.py`, `ez2d watch`)
 

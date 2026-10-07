@@ -166,6 +166,28 @@ def _clip(tmp_path: Path) -> Path:
     return clip
 
 
+def test_videos_from_the_phone(qtbot: QtBot, video_page: ProjectPage) -> None:
+    """Videos sent from the phone are imported one after the other, then cleared away."""
+    from ez2digitize.core.capture import list_bundles
+    from ez2digitize.upload import Received
+
+    page = video_page
+    page.video_frames.setValue(20)
+    folder = page.project.captures_dir / ".received-videos-test"
+    folder.mkdir()
+    for name in ("VID_1.mp4", "VID_2.mp4"):
+        (folder / name).write_bytes(b"video")
+    page._phone_videos = Received(None, sorted(folder.iterdir()), folder, flipped=True)
+    page._import_next_phone_video()
+    qtbot.waitUntil(lambda: len(list_bundles(page.project)) == 2, timeout=TIMEOUT_MS)
+    qtbot.waitUntil(lambda: page._phone_videos is None, timeout=TIMEOUT_MS)
+    assert not folder.exists()
+    bundles = list_bundles(page.project)
+    assert sorted(b.source_info["video"] for b in bundles) == ["VID_1.mp4", "VID_2.mp4"]
+    assert all(b.flipped for b in bundles)
+    assert page.video_importer.wait() and page.photo_checks.wait()
+
+
 def test_video_import(qtbot: QtBot, video_page: ProjectPage, tmp_path: Path) -> None:
     page = video_page
     page.video_frames.setValue(20)

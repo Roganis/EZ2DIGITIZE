@@ -449,7 +449,10 @@ fails, they can see which stage failed and why.
   real mesher (within 3-4% of the radius). The surface-trained methods can
   come as plugins (a "mesh from splats" slot) once one is wanted.
 - Android capture companion, sending capture bundles through the Phase 3
-  upload endpoint. Its value over the upload page is control of the camera,
+  upload endpoint. The endpoint is ready for it (`upload.py`): `GET api`
+  for the API version, limits and accepted files, `POST capture` for the
+  source, device, app and turned-over side; motion logs travel with the
+  photos, and videos (with their logs) are imported as frames. Its value over the upload page is control of the camera,
   which a browser can't do:
   - focus, exposure and white balance locked for the whole capture, and one
     lens only (phones otherwise switch lenses and readjust between shots);

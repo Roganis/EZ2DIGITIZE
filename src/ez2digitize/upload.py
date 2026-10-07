@@ -7,14 +7,25 @@ scans a QR code with the session's URL, picks photos (or videos) taken
 with its camera app, and the page sends each file in chunks:
 
     GET  /<token>/                  the page
+    GET  /<token>/api               what this end accepts (for apps, below)
+    POST /<token>/capture           an app describes the capture (JSON)
     GET  /<token>/files/<id>        bytes received so far, to resume
     PUT  /<token>/files/<id>?offset=N&name=...&size=...   one chunk
     POST /<token>/done              the phone says it has finished
 
 Files are stored bit for bit (no re-encoding, EXIF kept). A chunk must
 start where the stored part ends, so after a Wi-Fi drop the page asks how
-much arrived and continues from there. `finish` turns the complete files
-into a capture bundle (source "upload"); incomplete ones are dropped.
+much arrived and continues from there. `finish` turns the complete photos
+into a capture bundle (source "upload"), with their motion log if one
+came; each video, with the log named after it, is handed back to be
+imported as frames (ez2digitize.video). Incomplete files are dropped.
+
+A capture app (the planned Android companion) uses the same endpoints.
+`GET api` returns `{"api": API_VERSION, ...}` with the limits and the file
+names accepted, so the app can tell whether it can talk to this version.
+`POST capture` takes `{"source": "android", "device": {"make": ...,
+"model": ...}, "app": "name version", "flipped": false}` (each optional),
+recorded in the bundles made from the upload.
 
 Safety: the URL carries a random token and every other path is refused;
 the server listens on the local network address only, refuses clients
@@ -38,7 +49,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from ez2digitize import __version__
 from ez2digitize.core.capture import (
+    IMAGE_SUFFIXES,
+    MOTION_LOG_SUFFIX,
+    VIDEO_SUFFIXES,
     CaptureBundle,
     CaptureError,
     CaptureFile,
@@ -51,6 +66,31 @@ from ez2digitize.core.project import Project
 
 CHUNK_LIMIT = 16 * 1024 * 1024  # the page sends 4 MB; refuse anything above this
 FILE_LIMIT = 8 * 1024**3
+API_VERSION = 1
+CAPTURE_LIMIT = 64 * 1024  # bytes of a capture description
+_SOURCE = re.compile(r"^[a-z0-9-]{1,32}$")
+_VIDEOS_DIR = ".received-videos-"
+
+
+@dataclass
+class Received:
+    """What an upload became: the photos' bundle, and videos still to import.
+
+    Each video sits in `folder` under the name it arrived with, its motion
+    log beside it (motion_log.log_for finds it), to be imported with
+    video.import_video; `discard` removes them afterwards.
+    """
+
+    bundle: CaptureBundle | None
+    videos: list[Path]
+    folder: Path | None = None
+    flipped: bool = False
+
+    def discard(self) -> None:
+        if self.folder is not None:
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 
@@ -92,6 +132,7 @@ class UploadSession:
         self.files: dict[str, UploadFile] = {}
         self.phone_done = False
         self.user_agent: str | None = None
+        self.capture: dict[str, Any] = {}  # as an app described it (POST capture)
         self.lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -120,18 +161,50 @@ class UploadSession:
         self._stop()
         shutil.rmtree(self.folder, ignore_errors=True)
 
-    def finish(self, *, now: datetime | None = None) -> CaptureBundle:
-        """Stop serving and turn the complete files into a capture bundle."""
+    def finish(self, *, now: datetime | None = None) -> Received:
+        """Stop serving; the complete photos become a bundle, the videos are handed back."""
         self._stop()
-        complete = [f for f in self.status() if f.complete]
+        complete = sorted((f for f in self.status() if f.complete), key=lambda f: f.name.lower())
         if not complete:
             self.close()
-            raise CaptureError("no photo was received completely")
+            raise CaptureError("no photo or video was received completely")
+        videos = [f for f in complete if classify(Path(f.name)) == "video"]
+        stems = {Path(v.name).stem.lower() for v in videos}
+        with_videos = [
+            f for f in complete if classify(Path(f.name)) == "motion" and _log_stem(f.name) in stems
+        ]
+        photos = [f for f in complete if f not in videos and f not in with_videos]
+        flipped = self.capture.get("flipped") is True
+        try:
+            bundle = None
+            if any(classify(Path(f.name)) == "image" for f in photos):
+                bundle = self._photo_bundle(photos, flipped, now)
+            folder, held = None, []
+            if videos:
+                folder = self.project.captures_dir / f"{_VIDEOS_DIR}{secrets.token_hex(4)}"
+                folder.mkdir()
+                used: set[str] = set()
+                for video in videos:
+                    name = _unique(video.name, used)
+                    (self.folder / video.id).rename(folder / name)
+                    held.append(folder / name)
+                    stem = Path(video.name).stem.lower()
+                    for log in (f for f in with_videos if _log_stem(f.name) == stem):
+                        (self.folder / log.id).rename(folder / f"{Path(name).stem}.motion.json")
+            if bundle is None and not held:
+                raise CaptureError("no photo or video was received completely")
+            return Received(bundle, held, folder, flipped)
+        finally:
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+    def _photo_bundle(
+        self, photos: list[UploadFile], flipped: bool, now: datetime | None
+    ) -> CaptureBundle:
         used: set[str] = set()
 
         def fill(staging: Path) -> list[CaptureFile]:
             entries = []
-            for upload in sorted(complete, key=lambda f: f.name.lower()):
+            for upload in photos:
                 name = _unique(upload.name, used)
                 (self.folder / upload.id).rename(staging / name)
                 kind = classify(Path(name))
@@ -139,17 +212,51 @@ class UploadSession:
                 entries.append(add_file(staging, name, original_name=upload.name, kind=kind))
             return add_jpeg_copies(staging, entries, used)
 
-        try:
-            return assemble_bundle(
-                self.project,
-                fill,
-                source="upload",
-                device={"user_agent": self.user_agent} if self.user_agent else None,
-                source_info={"files": len(complete)},
-                now=now,
-            )
-        finally:
-            shutil.rmtree(self.folder, ignore_errors=True)
+        info: dict[str, Any] = {"files": len(photos)}
+        if isinstance(self.capture.get("app"), str):
+            info["app"] = self.capture["app"]
+        return assemble_bundle(
+            self.project,
+            fill,
+            source=self.capture.get("source", "upload"),
+            device=self._device(),
+            source_info=info,
+            now=now,
+            flipped=flipped,
+        )
+
+    def _device(self) -> dict[str, str] | None:
+        device = self.capture.get("device")
+        if isinstance(device, dict) and device:
+            return device
+        return {"user_agent": self.user_agent} if self.user_agent else None
+
+    def describe_capture(self, data: Any) -> None:
+        """Record what an app says about the capture (POST capture); ValueError if invalid."""
+        if not isinstance(data, dict):
+            raise ValueError("the capture description must be a JSON object")
+        capture: dict[str, Any] = {}
+        if "source" in data:
+            if not isinstance(data["source"], str) or not _SOURCE.match(data["source"]):
+                raise ValueError("'source' must be a short lowercase name, e.g. android")
+            capture["source"] = data["source"]
+        if "device" in data:
+            device = data["device"]
+            if not isinstance(device, dict) or not all(
+                k in ("make", "model") and isinstance(v, str) for k, v in device.items()
+            ):
+                raise ValueError('\'device\' must be {"make": ..., "model": ...}')
+            capture["device"] = {k: v[:100] for k, v in device.items()}
+        if "app" in data:
+            if not isinstance(data["app"], str):
+                raise ValueError("'app' must be a string")
+            capture["app"] = data["app"][:100]
+        if "flipped" in data:
+            if not isinstance(data["flipped"], bool):
+                raise ValueError("'flipped' must be true or false")
+            capture["flipped"] = data["flipped"]
+        with self.lock:
+            self.capture = capture
 
     def _stop(self) -> None:
         if self._server is not None:
@@ -185,6 +292,26 @@ class UploadSession:
                 part.write(data)
             upload.received += len(data)
             return upload.received, True
+
+
+def _log_stem(name: str) -> str:
+    return name[: -len(MOTION_LOG_SUFFIX)].lower()
+
+
+def api_description() -> dict[str, Any]:
+    """What `GET api` returns: enough for an app to know whether it can talk to us."""
+    return {
+        "api": API_VERSION,
+        "app": "EZ2DIGITIZE",
+        "version": __version__,
+        "chunk_limit": CHUNK_LIMIT,
+        "file_limit": FILE_LIMIT,
+        "accepts": {
+            "image": sorted(IMAGE_SUFFIXES),
+            "video": sorted(VIDEO_SUFFIXES),
+            "motion": [MOTION_LOG_SUFFIX],
+        },
+    }
 
 
 def _unique(name: str, used: set[str]) -> str:
@@ -231,6 +358,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+        elif segments == ["api"]:
+            self._reply(200, api_description())
         elif len(segments) == 2 and segments[0] == "files" and _ID.match(segments[1]):
             upload = self.session.files.get(segments[1])
             self._reply(200, {"received": upload.received if upload else 0})
@@ -270,6 +399,16 @@ class _Handler(BaseHTTPRequestHandler):
         segments, _ = route
         if segments == ["done"]:
             self.session.phone_done = True
+            self._reply(200, {"ok": True})
+        elif segments == ["capture"]:
+            try:
+                length = int(self.headers.get("Content-Length", "-1"))
+                if not 0 <= length <= CAPTURE_LIMIT:
+                    raise ValueError("capture description too large")
+                self.session.describe_capture(json.loads(self.rfile.read(length) or b"null"))
+            except (ValueError, UnicodeDecodeError) as exc:  # JSONDecodeError is a ValueError
+                self._reply(400, {"error": str(exc)})
+                return
             self._reply(200, {"ok": True})
         else:
             self._reply(404, {"error": "not found"})

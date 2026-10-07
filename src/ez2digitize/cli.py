@@ -164,6 +164,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     phone.add_argument("project", type=Path)
     phone.add_argument("--port", type=int, default=0, help="port to listen on (default: any)")
+    phone.add_argument(
+        "--frames",
+        type=int,
+        default=video.DEFAULT_FRAMES,
+        help=f"frames to keep from each video sent (default {video.DEFAULT_FRAMES})",
+    )
+    phone.add_argument("--ffmpeg", type=Path, help="FFmpeg to import videos with")
     phone.set_defaults(func=_cmd_upload)
 
     synced = sub.add_parser(
@@ -587,8 +594,18 @@ def _cmd_upload(args: argparse.Namespace) -> int:
         session.close()
         print("cancelled; nothing imported", file=sys.stderr)
         return 130
-    bundle = session.finish()
-    print(f"{len(bundle.files)} files -> capture {bundle.id}")
+    result = session.finish()
+    try:
+        if result.bundle is not None:
+            print(f"{len(result.bundle.files)} files -> capture {result.bundle.id}")
+        for path in result.videos:
+            print(f"importing {path.name}...", flush=True)
+            bundle = _import_video(project, path, args)
+            if result.flipped:
+                bundle.set_flipped(True)
+            print(f"{bundle.source_info.get('frames')} frames -> capture {bundle.id}")
+    finally:
+        result.discard()
     _check_photos(project)
     return 0
 

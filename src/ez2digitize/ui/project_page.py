@@ -70,6 +70,7 @@ from ez2digitize.ui.sides_panel import SidesPanel
 from ez2digitize.ui.video_import import VideoImporter
 from ez2digitize.ui.view_panel import ViewPanel
 from ez2digitize.ui.watch_dialog import WatchFolderDialog
+from ez2digitize.upload import Received
 
 STAGE_LABELS = {
     "features": "Find features",
@@ -138,6 +139,12 @@ class ProjectPage(QWidget):
         self.ffmpeg_factory = ffmpeg_factory
         self.runner = PipelineRunner(self)
         self.video_importer = VideoImporter(self)
+        # Videos sent from the phone, imported one after another: the next
+        # starts once the importer has stopped.
+        self._phone_videos: Received | None = None
+        self.video_importer.running_changed.connect(
+            lambda running: None if running else self._import_next_phone_video()
+        )
         self.last_result: MeshResult | SplatResult | None = None
         self.last_failure: Failure | None = None
         self._stage_items: dict[str, QTreeWidgetItem] = {}
@@ -579,11 +586,30 @@ class ProjectPage(QWidget):
 
     def add_from_phone(self) -> None:
         dialog = PhoneUploadDialog(self.project, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.bundle is not None:
-            self.status.setText(f"Imported {len(dialog.bundle.files)} files from the phone.")
+        if dialog.exec() != QDialog.DialogCode.Accepted or (received := dialog.received) is None:
+            return
+        if received.bundle is not None:
+            self.status.setText(f"Imported {len(received.bundle.files)} files from the phone.")
             self.refresh()
             self.tabs.setCurrentWidget(self.photo_checks)
             self.project_changed.emit()
+        if received.videos:
+            self._phone_videos = received
+            self._import_next_phone_video()
+
+    def _import_next_phone_video(self) -> None:
+        """Import the next video the phone sent, or clean up after the last."""
+        received = self._phone_videos
+        if received is None:
+            return
+        if not received.videos:
+            received.discard()
+            self._phone_videos = None
+            return
+        self.import_video(received.videos.pop(0))
+        if not self.video_importer.running:  # FFmpeg missing: drop the rest
+            received.discard()
+            self._phone_videos = None
 
     def add_from_synced_folder(self) -> None:
         dialog = WatchFolderDialog(self.project, parent=self)
@@ -764,6 +790,8 @@ class ProjectPage(QWidget):
         self.overall.setValue(int((start + share * fraction) * 1000))
 
     def _on_video_imported(self, bundle: CaptureBundle) -> None:
+        if self._phone_videos is not None and self._phone_videos.flipped:
+            bundle.set_flipped(True)
         info = bundle.source_info
         self.overall.setValue(1000)
         text = (
@@ -784,6 +812,8 @@ class ProjectPage(QWidget):
     def _on_video_cancelled(self) -> None:
         self.overall.setValue(0)
         self.status.setText("Video import cancelled")
+        if self._phone_videos is not None:  # the rest too
+            self._phone_videos.videos.clear()
 
     # --- runner signals -----------------------------------------------------
 

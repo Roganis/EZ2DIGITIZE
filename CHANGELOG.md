@@ -40,6 +40,10 @@ The first release.
   and when each photo was taken). It is kept with the capture, and the
   photos get the same benefits as videos with a motion track. Capture
   folders written by this version can't be read by older ones.
+- Videos sent from the phone are imported as frames, like Import video,
+  instead of sitting unused in the capture. The upload server also answers
+  capture apps: which version it speaks, and what the app says about the
+  capture (device, turned-over side).
 - Phone upload over Wi-Fi from a QR code, or from the folder a phone syncs
   its photos to (Syncthing, iCloud Drive...), imported once they have all
   arrived.

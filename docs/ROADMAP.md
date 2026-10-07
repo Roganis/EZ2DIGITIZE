@@ -455,7 +455,11 @@ fails, they can see which stage failed and why.
   photos, and videos (with their logs) are imported as frames. The
   contract the app is to be written against, with the Android clock and
   axes conversions, is docs/COMPANION.md; `tools/companion/send_capture.py`
-  sends a capture as the app should. Its value over the upload page is control of the camera,
+  sends a capture as the app should. A first skeleton of the app is in
+  `android/` (Kotlin, ARCore): it scans the QR code, records ARCore's poses
+  and the motion sensors, takes photos from ARCore's camera image and sends
+  them with their log; it builds and its unit tests pass in CI, but it
+  hasn't run on a phone yet. What it still lacks is in android/README.md. Its value over the upload page is control of the camera,
   which a browser can't do:
   - focus, exposure and white balance locked for the whole capture, and one
     lens only (phones otherwise switch lenses and readjust between shots);

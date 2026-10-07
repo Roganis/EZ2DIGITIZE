@@ -228,3 +228,30 @@ rembg models    downloaded at first use, licensed per model:
                 u2net / u2netp                        Apache-2.0
                 Check the license of any other rembg model before using it;
                 some (e.g. anime-specific ones) carry other terms.
+
+
+4. Android capture app (android/; its own APK, not in the desktop installer)
+---------------------------------------------------------------------------
+
+ARCore SDK for Android (com.google.ar:core 1.56.0)
+  License:  Apache-2.0 (the client library)
+  Source:   https://github.com/google-ar/arcore-android-sdk
+  Notes:    At run time it talks to Google Play Services for AR, which the
+            user installs from the Play Store (proprietary, not bundled, like
+            a system service). Using ARCore is also subject to Google's
+            ARCore Additional Terms of Service
+            (https://developers.google.com/ar/develop/terms): check them
+            before publishing the app.
+
+ZXing core (com.google.zxing:core 3.5.4)
+  License:  Apache-2.0
+  Source:   https://github.com/zxing/zxing
+  Notes:    Reads the desktop's QR code from the camera image.
+
+Kotlin standard library
+  License:  Apache-2.0
+  Source:   https://github.com/JetBrains/kotlin
+
+Build and test only (not in the APK): Gradle and its wrapper
+(gradle-wrapper.jar), Apache-2.0; Android Gradle Plugin, Apache-2.0;
+Kotlin Gradle plugin, Apache-2.0; JUnit 4, EPL-1.0 (unit tests).

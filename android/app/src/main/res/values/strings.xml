@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 EZ2DIGITIZE contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="app_name">EZ2DIGITIZE Capture</string>
+    <string name="connect">Connect</string>
+    <string name="shoot">Shoot</string>
+    <string name="send">Send</string>
+    <string name="other_side">Other side</string>
+    <string name="url_hint">Scan the QR code, or type the address shown on the computer</string>
+    <string name="start">Connect to the computer, then shoot all around the object</string>
+</resources>

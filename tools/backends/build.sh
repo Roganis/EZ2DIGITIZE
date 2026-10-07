@@ -232,10 +232,9 @@ fi
 
 if [ "$OS" = windows ]; then
   log "runtime DLLs"
-  # Microsoft's redistributable runtime, from the compiler that built them.
-  VCOMP=$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name vcomp140.dll -path '*OpenMP*' | head -1)
-  [ -n "$VCOMP" ] || { echo "error: vcomp140.dll not found under \$VCToolsRedistDir" >&2; exit 1; }
-  cp "$VCOMP" "$PREFIX/bin/"
+  # Microsoft's redistributable runtime, from the compiler that built them:
+  # MSVC's OpenMP runtime (vcomp140.dll) for an MSVC build.
+  VCOMP=$(dirname "$(find "$(cygpath -u "$VCToolsRedistDir")/x64" -name vcomp140.dll -path '*OpenMP*' | head -1)")
   # Copy the DLLs the binaries need, until none is missing: vcomp140 may
   # need the C++ runtime (redistributable too), and a few vcpkg ports build
   # DLLs even with a static triplet (LAPACK, compiled with MinGW's gfortran,
@@ -249,7 +248,7 @@ if [ "$OS" = windows ]; then
                    dumpbin //nologo //dependents "$(cygpath -w "$f")"
                  done | grep -io '[a-z0-9_.+-]*\.dll' | sort -fu); do
       [ -e "$PREFIX/bin/$dll" ] && continue
-      for dir in "$CRT" "$OMP_LLVM" "$WORK"/colmap-install/bin "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
+      for dir in "$VCOMP" "$CRT" "$OMP_LLVM" "$WORK"/colmap-install/bin "$WORK"/colmap-vcpkg_installed/"$TRIPLET"/bin "$WORK"/openmvs-vcpkg_installed/"$TRIPLET"/bin; do
         if [ -e "$dir/$dll" ]; then
           echo "shipping $dll (from $dir)"
           cp "$dir/$dll" "$PREFIX/bin/"

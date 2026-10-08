@@ -11,6 +11,11 @@ VCPKG_VERSION=2026.07.29   # used for OpenMVS; COLMAP pins its own vcpkg baselin
 COLMAP_URL=https://github.com/colmap/colmap.git
 OPENMVS_URL=https://github.com/cdcseacave/openMVS.git
 VCPKG_URL=https://github.com/microsoft/vcpkg.git
+# LLVM's OpenMP runtime for the clang-cl build on Windows: the release of the
+# clang-cl in Visual Studio. LLVM 22 publishes only the whole source tree.
+LLVM_VERSION=22.1.3
+LLVM_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/llvm-project-$LLVM_VERSION.src.tar.xz
+LLVM_SHA256=2488c33a959eafba1c44f253e5bbe7ac958eb53fa626298a3a5f4b87373767cd
 
 platform() {  # sets TRIPLET (vcpkg), OS, ARCH and EXE (".exe" on Windows)
   EXE=
@@ -18,7 +23,7 @@ platform() {  # sets TRIPLET (vcpkg), OS, ARCH and EXE (".exe" on Windows)
     Linux-x86_64)  TRIPLET=x64-linux-release;  OS=linux; ARCH=x86_64 ;;
     Darwin-arm64)  TRIPLET=arm64-osx-release;  OS=macos; ARCH=arm64 ;;
     # Everything static, the C runtime included (/MT): the binaries then need
-    # only Windows, plus MSVC's OpenMP runtime, which exists only as a DLL.
+    # only Windows, plus the OpenMP runtime, which exists only as a DLL.
     MINGW*-x86_64 | MSYS*-x86_64)
       TRIPLET=x64-windows-static-release; OS=windows; ARCH=x86_64; EXE=.exe ;;
     *) echo "unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
@@ -104,6 +109,39 @@ prepare_vcpkg_overlays() {  # prepare_vcpkg_overlays <vcpkg root> <repo root> <o
 # Python for the manifest edits below (Windows has no python3 by that name).
 PYTHON=${PYTHON:-$(command -v python3 || command -v python)}
 
+fetch_llvm_openmp() {  # fetch_llvm_openmp <dir>: LLVM's openmp/ and cmake/ (all it needs)
+  [ -d "$1/openmp" ] && return
+  local archive
+  archive=$(basename "$LLVM_URL")
+  [ -e "$archive" ] || curl -sSfL -o "$archive" "$LLVM_URL"
+  if ! echo "$LLVM_SHA256  $archive" | sha256sum -c --status -; then
+    echo "error: $archive doesn't match its pinned checksum" >&2
+    rm -f "$archive"
+    return 1
+  fi
+  mkdir -p "$1"
+  tar -xJf "$archive" -C "$1" --strip-components=1 \
+    "llvm-project-$LLVM_VERSION.src/openmp" "llvm-project-$LLVM_VERSION.src/cmake"
+}
+
+apply_patches() {  # apply_patches <checkout> <patch>...
+  # A checkout kept from an earlier run may already carry them.
+  local checkout=$1 patch
+  shift
+  for patch in "$@"; do
+    if git -C "$checkout" apply --reverse --check "$patch" 2>/dev/null; then
+      echo "already applied: $(basename "$patch")"
+    else
+      git -C "$checkout" apply "$patch"
+    fi
+  done
+}
+
+patch_colmap() {  # patch_colmap <checkout> <repo root>: every platform
+  # Fixes to COLMAP's code (see each patch's header).
+  apply_patches "$1" "$2"/tools/backends/patches/colmap-*.patch
+}
+
 prepare_colmap() {  # prepare_colmap <checkout>: Windows only
   # COLMAP 4.2.1 looks for GLEW at configure time even for a headless build
   # (Linux and macOS satisfy it with a system package). On Windows it comes
@@ -121,14 +159,7 @@ PYEOF
 
 prepare_openmvs() {  # prepare_openmvs <checkout> <repo root>: patches and manifest
   # Upstream fixes released after the pinned version (see each patch's header).
-  # A checkout kept from an earlier run may already carry them.
-  for patch in "$2"/tools/backends/patches/openmvs-*.patch; do
-    if git -C "$1" apply --reverse --check "$patch" 2>/dev/null; then
-      echo "already applied: $(basename "$patch")"
-    else
-      git -C "$1" apply "$patch"
-    fi
-  done
+  apply_patches "$1" "$2"/tools/backends/patches/openmvs-*.patch
   # OpenMVS asks for vcpkg's "opencv" with its default features, which on Linux
   # include the GTK GUI backend: a large GTK/X11 build (it failed on at-spi2-core)
   # for windows OpenMVS only opens in debug builds. Ask for OpenCV without

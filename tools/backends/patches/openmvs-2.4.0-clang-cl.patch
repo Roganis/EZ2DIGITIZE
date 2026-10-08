@@ -1,0 +1,51 @@
+Ours, not upstream: let clang-cl compile OpenMVS v2.4.0 on Windows.
+
+On Windows, Maths.h sums SSE vectors through the members MSVC gives
+__m128 and __m128d (m128_f32, m128d_f64). clang-cl targets Windows too
+(_WIN32) but its vector types have no such members. The portable branch,
+used everywhere but Windows, reads the floats through a pointer instead;
+it is now used for every compiler but MSVC itself, so MSVC, GCC and Apple
+Clang builds are unchanged.
+
+Utils.cmake adds its MSVC defines as "/D NAME", with a space. CMake passes
+only the "/D" of each to the resource compiler, whose preprocessor
+(clang-cl, under clang-cl) then fails on "#define /D". "/DNAME" means the
+same to cl and to clang-cl and reaches rc whole.
+
+Drop the patch if Windows goes back to MSVC only.
+
+diff --git a/build/Utils.cmake b/build/Utils.cmake
+index 28cc3e5..426b1bb 100644
+--- a/build/Utils.cmake
++++ b/build/Utils.cmake
+@@ -616,7 +616,7 @@ macro(optimize_default_compiler_settings)
+ 	endif()
+ 
+ 	if(MSVC)
+-	  set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS")
++	  set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /D_CRT_SECURE_NO_DEPRECATE /D_CRT_NONSTDC_NO_DEPRECATE /D_SCL_SECURE_NO_WARNINGS")
+ 	  # 64-bit portability warnings, in MSVC80
+ 	  if(MSVC80)
+ 		set(BUILD_EXTRA_FLAGS "${BUILD_EXTRA_FLAGS} /Wp64")
+diff --git a/libs/Common/Maths.h b/libs/Common/Maths.h
+index a3216d2..c62269a 100644
+--- a/libs/Common/Maths.h
++++ b/libs/Common/Maths.h
+@@ -719,7 +719,7 @@ struct sse_f_t {
+ 	static inline sse_t sqrt(sse_t s)            {return _mm_sqrt_ps(s);}
+ 	static inline sse_t rsqrt(sse_t s)           {return _mm_rsqrt_ps(s);}
+ 	static inline int floor2int(real_t f)        {return _mm_cvtt_ss2si(_mm_load_ss(&f));}
+-	#ifdef _WIN32
++	#if defined(_MSC_VER) && !defined(__clang__)
+ 	static inline real_t sum(sse_t s)            {return (s.m128_f32[0]+s.m128_f32[2])+(s.m128_f32[1]+s.m128_f32[3]);}
+ 	static inline real_t sum3(sse_t s)           {return (s.m128_f32[0]+s.m128_f32[2])+s.m128_f32[1];}
+ 	#else
+@@ -790,7 +790,7 @@ public:
+ 	static inline sse_t cmpeq(sse_t s1, sse_t s2){return _mm_cmpeq_pd(s1,s2);}
+ 	static inline sse_t sqrt(sse_t s)            {return _mm_sqrt_pd(s);}
+ 	static inline int floor2int(const real_t& f) {return _mm_cvttsd_si32(_mm_load_sd(&f));}
+-	#ifdef _WIN32
++	#if defined(_MSC_VER) && !defined(__clang__)
+ 	static inline real_t sum(sse_t s)            {return s.m128d_f64[0]+s.m128d_f64[1];}
+ 	#else
+ 	static inline real_t sum(sse_t s)            {real_t *d = (real_t*)(&s); return d[0]+d[1];}

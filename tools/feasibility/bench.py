@@ -34,7 +34,9 @@ def cmd_sysinfo(args: argparse.Namespace) -> int:
 
 
 def cmd_synth(args: argparse.Namespace) -> int:
-    n = synthetic.generate(args.out, views_per_ring=args.views_per_ring)
+    n = synthetic.generate(
+        args.out, views_per_ring=args.views_per_ring, width=args.width, height=args.height
+    )
     print(f"wrote {n} images to {args.out / 'images'} and masks to {args.out / 'masks'}")
     return 0
 
@@ -151,6 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("synth", help="render a small synthetic dataset for smoke tests")
     p.add_argument("out", type=Path)
     p.add_argument("--views-per-ring", type=int, default=16)
+    p.add_argument("--width", type=int, default=640)
+    p.add_argument("--height", type=int, default=480)
     p.set_defaults(func=cmd_synth)
 
     p = sub.add_parser("frames", help="extract the sharpest frames from a video")

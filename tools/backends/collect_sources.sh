@@ -10,6 +10,7 @@
 #
 # Output: build/backend-sources/ez2d-backends-source-<os>-<arch>.tar with
 #   colmap-<tag>/, openmvs-<tag>/   the projects as tagged
+#   llvm-openmp-<version>/          Windows: LLVM's OpenMP runtime (openmp/, cmake/)
 #   ez2digitize-backends/           tools/backends from this repository:
 #                                   build.sh, pins.sh, patches/ (how they are built)
 #   vcpkg-<release>/                vcpkg as pinned
@@ -48,10 +49,15 @@ prefetch_sources "$VCPKG_DOWNLOADS"
 [ "$OS" = windows ] && prepare_vcpkg_overlays vcpkg "$REPO" "$WORK/vcpkg-overlays"
 log "COLMAP $COLMAP_VERSION"
 fetch colmap "$COLMAP_URL" "$COLMAP_VERSION"
+patch_colmap colmap "$REPO"
 [ "$OS" = windows ] && prepare_colmap colmap
 log "OpenMVS $OPENMVS_VERSION"
 fetch openmvs "$OPENMVS_URL" "$OPENMVS_VERSION"
 prepare_openmvs openmvs "$REPO"
+if [ "$OS" = windows ]; then
+  log "LLVM OpenMP runtime $LLVM_VERSION"
+  fetch_llvm_openmp llvm
+fi
 
 download() {  # download <manifest dir>
   # vcpkg reports success even when a download failed (it only halts that
@@ -83,6 +89,7 @@ mkdir -p "$OUT"
 git -C colmap archive --prefix="colmap-$COLMAP_VERSION/" HEAD | tar -x -C "$OUT"
 git -C openmvs archive --prefix="openmvs-$OPENMVS_VERSION/" HEAD | tar -x -C "$OUT"
 git -C vcpkg archive --prefix="vcpkg-$VCPKG_VERSION/" HEAD | tar -x -C "$OUT"
+[ "$OS" != windows ] || cp -R llvm "$OUT/llvm-openmp-$LLVM_VERSION"
 mkdir -p "$OUT/ez2digitize-backends"
 cp -R "$REPO/tools/backends/build.sh" "$REPO/tools/backends/pins.sh" \
   "$REPO/tools/backends/patches" "$REPO/tools/backends/README.md" "$OUT/ez2digitize-backends/"
@@ -105,8 +112,9 @@ cat > "$OUT/SOURCES.txt" <<TXT
 Source of the EZ2DIGITIZE backends ($OS $ARCH, vcpkg triplet $TRIPLET)
 
 COLMAP   $COLMAP_VERSION   colmap-$COLMAP_VERSION/      ($COLMAP_URL)
+         built with ez2digitize-backends/patches/colmap-*.patch applied
 OpenMVS  $OPENMVS_VERSION  openmvs-$OPENMVS_VERSION/    ($OPENMVS_URL)
-         built with ez2digitize-backends/patches/ applied and the OpenCV
+         built with ez2digitize-backends/patches/openmvs-*.patch applied and the OpenCV
          features set in ez2digitize-backends/pins.sh (prepare_openmvs;
          on Windows, prepare_colmap adds GLEW to COLMAP's manifest)
 vcpkg    $VCPKG_VERSION    vcpkg-$VCPKG_VERSION/        ($VCPKG_URL)
@@ -114,6 +122,12 @@ vcpkg    $VCPKG_VERSION    vcpkg-$VCPKG_VERSION/        ($VCPKG_URL)
          versions are in vcpkg-versioned-ports/. On Windows, the ports that
          ez2digitize-backends/patches/vcpkg-*.patch fixes are used patched
          (pins.sh, prepare_vcpkg_overlays)
+TXT
+[ "$OS" != windows ] || cat >> "$OUT/SOURCES.txt" <<TXT
+LLVM OpenMP runtime $LLVM_VERSION  llvm-openmp-$LLVM_VERSION/
+         openmp/ and cmake/ of $LLVM_URL
+TXT
+cat >> "$OUT/SOURCES.txt" <<TXT
 Dependencies: downloads/ holds each port's source archive as vcpkg
 downloaded it. The license of every library is in the app, under
 backends/licenses/.

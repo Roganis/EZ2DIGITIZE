@@ -53,18 +53,20 @@ Prerequisites:
   copies it into the archive's `lib/` and points the binaries at it
   (`@executable_path/../lib`), so the archive doesn't need Homebrew; the
   build fails if any Homebrew path is left.
-- **Windows:** Visual Studio 2022 (or its Build Tools) with the C++
-  workload, and Git for Windows. Run the script from Git Bash with the MSVC
+- **Windows:** Visual Studio 2022 or newer (or its Build Tools) with the
+  C++ workload and its "C++ Clang tools for Windows" (clang-cl; not needed
+  with `WINDOWS_COMPILER=msvc`), and Git for Windows. Run the script from Git Bash with the MSVC
   environment loaded (for example `vcvars64.bat`, then `bash`), and a short
   work folder: `EZ2D_BACKENDS_WORK=C:/ez2d tools/backends/build.sh`, since
   vcpkg's build trees easily pass Windows' 260-character path limit.
   Everything is linked statically, the C runtime included (triplet
-  `x64-windows-static-release`). The exception is MSVC's OpenMP runtime,
-  which exists only as a DLL: `vcomp140.dll` is copied next to the binaries
-  from Visual Studio's redistributable folder. Any other DLL the binaries
-  need is copied too, from there or from vcpkg's output (the C++ runtime, if
-  `vcomp140.dll` needs it; LAPACK, which vcpkg builds with MinGW's gfortran
-  as DLLs even for a static triplet, with the GCC runtime). The build fails
+  `x64-windows-static-release`). The exception is the OpenMP runtime,
+  which exists only as a DLL: LLVM's `libomp.dll`, built with the rest (see
+  "Windows: clang-cl"), or with `WINDOWS_COMPILER=msvc`, MSVC's
+  `vcomp140.dll` from Visual Studio's redistributable folder. Any other DLL
+  the binaries need is copied too, from there or from vcpkg's output (the
+  C++ runtime; LAPACK, which vcpkg builds with MinGW's gfortran as DLLs
+  even for a static triplet, with the GCC runtime). The build fails
   if a binary still needs a DLL that isn't part of Windows. On Windows COLMAP's GLEW lookup is satisfied by adding
   vcpkg's `glew` to its manifest; GLEW isn't linked.
 
@@ -85,17 +87,71 @@ archives of the newest Backends run (the branch's, then main's), so a change
 to the app's side (`src/`) is checked against the real tools in about ten
 minutes.
 
+Off main, the Backends workflow's `compare` job then checks that a change
+to the Windows build doesn't make reconstructions slower:
+[`compare.py`](compare.py) runs the app's pipeline (`ez2d run`) on a
+40-photo synthetic scene with this run's build and with main's newest, on
+one runner, two rounds each with the builds taking turns, and puts the wall
+time of every stage side by side in the run's summary. It also runs
+locally, for any builds:
+
+```sh
+uv run python tools/backends/compare.py PHOTOS --backend main=PREFIX_A --backend new=PREFIX_B
+```
+
 Build time on the CI runners, with the vcpkg cache: Linux and macOS about
-25 minutes; Windows took 1 hour 22 minutes, 55 of them linking OpenMVS with
-MSVC's link-time code generation (`/GL`, `/LTCG`). Turning that off made it
-worse: the OpenMVS build went from 58 minutes to 2 hours 47 (the compiler
-then optimises each source file alone, one of them for over an hour, where
-the linker shares the work between threads), so it stays on; only the five
-OpenMVS tools the app runs are built. Without the cache, Windows took over
-3 and a half hours. The cache is saved only when the build added
-packages to it, since every saved copy takes about 800 MB of the
+25 minutes, Windows about 16 with clang-cl (below). With MSVC, Windows took
+1 hour 22 to 1 hour 57, most of it linking OpenMVS. Without the cache,
+Windows took over 3 and a half hours. The cache is saved only when the build
+added packages to it, since every saved copy takes about 800 MB of the
 repository's 10 GB; caches belong to their branch, and a pull request also
 reads main's.
+
+## Windows: clang-cl
+
+COLMAP's and OpenMVS's own code is compiled with clang-cl and linked with
+lld-link, the LLVM tools that come with Visual Studio; the vcpkg libraries
+stay MSVC-built (the same ABI, and the cache still applies).
+`WINDOWS_COMPILER=msvc tools/backends/build.sh` builds everything with MSVC
+as before.
+
+Why: OpenMVS always turns on MSVC's link-time code generation (`/GL`,
+`/LTCG`), and linking its five tools took 55 to 72 minutes on the CI
+runner; turning it off made compiling take 2 hours 46 instead (one source
+file alone over an hour). LLVM optimises while compiling, as on Linux and
+macOS, and ignores `/GL`. On the same runner (Backends run 37669421809):
+
+| Windows build step | MSVC | clang-cl |
+|---|---|---|
+| COLMAP | 41 min | 13 min |
+| OpenMVS | 62 min (57 of them linking) | 3.5 min |
+| Whole build | 1 h 44 | 16 min |
+
+Without link-time optimisation the binaries are no slower: the `compare`
+job ran the app's pipeline on 40 photos, two rounds per build, and the
+clang-cl build took 0.97× MSVC's time overall (run 37669421809, with
+Visual Studio's OpenMP runtime) and 1.01× (run 37688019224, with LLVM's
+`libomp.dll` as shipped; a slower runner, 9.7 minutes for MSVC's build
+against 6.3). Densify, about three quarters of the run, came out at 0.95×
+and 1.02×: within the runner's noise. Linux has never had link-time optimisation either (COLMAP
+turns it off for GCC; OpenMVS only uses it with MSVC).
+
+What it takes:
+
+- COLMAP picks its Windows settings by compiler ID, which for clang-cl is
+  "Clang", not "MSVC": `build.sh` sets `IS_MSVC=TRUE` to give them back
+  (and `IPO_ENABLED=OFF`). Flags are written with `-`, since Git Bash turns
+  arguments starting with `/` into paths.
+- Two patches (see Patches): `openmvs-2.4.0-clang-cl.patch`, without which
+  clang-cl doesn't compile OpenMVS, and
+  `colmap-4.2.1-poisson-centre-vertex.patch`, for a bug that MSVC's luck and
+  the other platforms' `-ffast-math` had hidden.
+- OpenMP: LLVM's own runtime, `libomp.dll`, built from the LLVM release that
+  matches Visual Studio's clang-cl (`LLVM_VERSION` in `pins.sh`, the source
+  archive pinned by hash) in about two minutes, and shipped with its
+  license. Visual Studio's build of it for `/openmp:llvm`
+  (`libomp140.x86_64.dll`) is only in its `debug_nonredist` folder, not
+  ours to ship.
 
 ## Results of the first CI builds
 
@@ -121,12 +177,21 @@ vcpkg 2026.07.29).
 
 ## Patches
 
-`patches/openmvs-*.patch` are upstream OpenMVS fixes released after the
-pinned version; `build.sh` applies them to the checkout and lists them in
-`BUILDINFO.json` (`openmvs_patches`). Each patch's header says what it fixes
-and which upstream commit it comes from. Drop a patch when the pin moves
-past that commit.
+`patches/colmap-*.patch` and `patches/openmvs-*.patch` are fixes to the
+pinned versions; `build.sh` applies them to the checkouts on every platform
+and lists them in `BUILDINFO.json` (`colmap_patches`, `openmvs_patches`).
+Each patch's header says what it fixes and, for upstream fixes, which commit
+it comes from. Drop a patch when the pin moves past that commit.
 
+- `colmap-4.2.1-poisson-centre-vertex.patch` (ours; the bug is also in
+  PoissonRecon master): the Poisson mesher's polygon centre vertices read an
+  uninitialised density (`Vertex c; c *= 0;`). `-ffast-math`, which COLMAP
+  uses for every compiler but MSVC, folds `x * 0` to 0 and hid it; built
+  with clang-cl, the densities came out NaN and the surface trimmer turned
+  every vertex cut from them into NaN.
+- `openmvs-2.4.0-clang-cl.patch` (ours): lets clang-cl, the Windows compiler,
+  compile OpenMVS (SSE sums, resource-compiler defines); MSVC, GCC and
+  Apple Clang compile the same code as before.
 - `openmvs-2.4.0-sample-type.patch`: v2.4.0 samples 8-bit images as if
   they held float colours, so TextureMesh's local seam leveling fills
   the atlas with black blobs and saturated red/green/blue specks (seen on

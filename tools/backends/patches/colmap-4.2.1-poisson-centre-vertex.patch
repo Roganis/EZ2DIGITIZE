@@ -1,0 +1,30 @@
+Ours, not upstream (also in PoissonRecon master and COLMAP main as of
+2026-10): give the Poisson mesher's polygon centre vertices a defined value.
+
+When a polygon of the extracted iso-surface is split into triangles around
+its centre, AddIsoPolygons starts the centre vertex as `Vertex c; c *= 0;`.
+The position is zeroed by its constructor, but the density value isn't
+initialised, and stack garbage times 0 is NaN when the garbage is NaN or
+infinite. -ffast-math, which COLMAP uses everywhere but MSVC, folds x*0 to 0
+and hides it; clang without it (clang-cl on Windows, or plain clang -O2)
+writes NaN densities, and the surface trimmer then turns every vertex it
+interpolates from them into NaN (seen as test_poisson_onsphere_splats
+failing). Starting from the first corner gives the same mean without the
+uninitialised read.
+
+diff --git a/src/thirdparty/PoissonRecon/FEMTree.LevelSet.3D.inl b/src/thirdparty/PoissonRecon/FEMTree.LevelSet.3D.inl
+index 50c85b0..0253d87 100644
+--- a/src/thirdparty/PoissonRecon/FEMTree.LevelSet.3D.inl
++++ b/src/thirdparty/PoissonRecon/FEMTree.LevelSet.3D.inl
+@@ -1924,9 +1924,8 @@ public:
+ 					}
+ 			if( isCoplanar )
+ 			{
+-				Vertex c;
+-				c *= 0;
+-				for( unsigned int i=0 ; i<polygon.size() ; i++ ) c += polygon[i].second;
++				Vertex c = polygon[0].second;
++				for( unsigned int i=1 ; i<polygon.size() ; i++ ) c += polygon[i].second;
+ 				c /= ( typename Vertex::Real )polygon.size();
+ 
+ 				node_index_type cIdx = (node_index_type)vertexStream.write( thread , c );
